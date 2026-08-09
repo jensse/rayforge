@@ -1,3 +1,17 @@
+This is a HACK to build Rayforge on debian, exelent tool.
+- This build will produce a Rauforge deb package that "works on my computer".  A fully maintained Debian package require som more work, but feel I hope somone can use this.
+
+Thanks for a excelent pice of softvare, i spent at least 20 minutes to figure out how to use it with my old ORTUR 20W led laser engraver.
+
+
+It doesn't touch pixi.toml; pixi keeps lint/test/translations, mise only owns Debian packaging. The file is in this build for your convinece.
+                                                                            Installing pulls 94 packages, ~679 MB, and you have 405 MB free on your drive. Biggest items are libvtk9.3 (142 MB), libllvm17t64 (119 MB), python3-scipy (73 MB).
+
+Thanks to AIs for the packages/translations, I cold not have done this without you.
+
+Best regards
+Me.
+
 [![GitHub Release](https://img.shields.io/github/release/barebaric/rayforge.svg?style=flat)](https://github.com/barebaric/rayforge/releases/)
 [![PyPI version](https://img.shields.io/pypi/v/rayforge)](https://pypi.org/project/rayforge/)
 [![Snap Release](https://snapcraft.io/rayforge/badge.svg)](https://snapcraft.io/rayforge)
