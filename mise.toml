@@ -1,0 +1,85 @@
+# Reproducible Debian package build for Rayforge.
+#
+# Upstream CI (.github/workflows/publish-deb.yml) only builds for Ubuntu 24.04
+# "noble". These tasks build the same package on Debian 13 "trixie" and work
+# around two host-specific traps that bite on a developer machine:
+#
+#   1. `python3` on PATH may be a linuxbrew/pyenv/conda build (e.g. 3.14) while
+#      Debian packages for the SYSTEM python (3.13 on trixie). scripts/build-deb.sh
+#      vendors wheels with `python3 -m pip download`, so the wrong python silently
+#      produces cp314 wheels inside a package that dh_python3 installs for 3.13 —
+#      it builds, installs, and then fails at import. The [env] block below puts
+#      /usr/bin first so `python3` is always the system interpreter.
+#
+#   2. cargo/rustc from rustup (~/.cargo/bin) are invisible to the build: the
+#      script runs dpkg-buildpackage under `env -i` with a sanitised PATH. The
+#      distro `rustc`/`cargo` packages are therefore required — they are in the
+#      deb:deps task, and are what actually compile the raygeo extension.
+#
+# Dev tasks (lint/test/translations) live in pixi.toml and are unaffected.
+
+# Note: a plain `_.path` prepend is NOT enough here — a linuxbrew/pyenv shim can
+# still win, and it silently did on the machine this was written on. The packaging
+# tasks below therefore pin PATH outright. Every binary the build needs (git, rsync,
+# tar, python3, pip, dch, dpkg-buildpackage, rustc, cargo) lives in /usr/bin, and
+# this mirrors what build-deb.sh already does internally via `env -i`.
+
+[tasks."deb:deps"]
+description = "Install the Debian build dependencies (requires sudo)"
+run = """
+set -e
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends \
+  build-essential devscripts debhelper dh-python cython3 \
+  python3-all python3-dev python3-maturin python3-numpy python3-pip \
+  python3-poetry-core python3-setuptools python3-wheel \
+  pybuild-plugin-pyproject python3-pyclipper pkg-config \
+  rustc cargo equivs rsync
+"""
+
+[tasks."deb:doctor"]
+description = "Check the host can build the package before starting"
+env = { PATH = "/usr/bin:/bin:/usr/sbin:/sbin" }
+run = """
+set -e
+echo "system python : $(/usr/bin/python3 -V)"
+echo "PATH python   : $(command -v python3) -> $(python3 -V 2>&1)"
+if [ "$(command -v python3)" != "/usr/bin/python3" ]; then
+  echo "ERROR: python3 is not the system interpreter; vendored wheels would not match" >&2
+  exit 1
+fi
+for c in dpkg-buildpackage debuild dch dh dh_python3 pybuild cython3 maturin rustc cargo rsync; do
+  command -v "$c" >/dev/null || { echo "MISSING: $c (run 'mise run deb:deps')" >&2; exit 1; }
+done
+echo "toolchain     : complete"
+echo "root fs free  : $(df -h / | awk 'NR==2 {print $4}')  (build itself runs in \\$TMPDIR)"
+echo "version       : $(git describe --tags --always --long 2>/dev/null)"
+"""
+
+[tasks.deb]
+description = "Build the .deb for this host's Debian release into dist/"
+depends = ["deb:doctor"]
+env = { PATH = "/usr/bin:/bin:/usr/sbin:/sbin" }
+run = "bash scripts/build-deb.sh"
+
+[tasks."deb:install"]
+description = "Install the most recently built .deb"
+run = """
+set -e
+DEB=$(find dist -maxdepth 1 -name 'rayforge_*.deb' -printf '%T@ %p\\n' | sort -rn | cut -d' ' -f2- | sed -n 1p)
+if [ -z "$DEB" ]; then echo "No .deb in dist/ — run 'mise run deb' first" >&2; exit 1; fi
+echo "Installing $DEB"
+sudo apt-get install -y "./$DEB"
+"""
+
+[tasks."deb:verify"]
+description = "Smoke-test the installed package"
+run = """
+set -e
+dpkg -l rayforge
+rayforge --version
+"""
+
+[tasks."deb:clean"]
+description = "Remove build artifacts from dist/"
+run = "rm -rf dist"
