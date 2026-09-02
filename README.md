@@ -1,3 +1,7 @@
+My quick and dirty changes to build and install on Debian 13. and use my Ortur CNC-Laser.  This is truly a great application, and it deserves a Debian package maintainer, It now builds, and installs. Unfortunately I dont have the time to maintain it right now.
+
+
+
 [![GitHub Release](https://img.shields.io/github/release/barebaric/rayforge.svg?style=flat)](https://github.com/barebaric/rayforge/releases/)
 [![PyPI version](https://img.shields.io/pypi/v/rayforge)](https://pypi.org/project/rayforge/)
 [![Snap Release](https://snapcraft.io/rayforge/badge.svg)](https://snapcraft.io/rayforge)
