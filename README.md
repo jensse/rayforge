@@ -1,3 +1,72 @@
+# Rayforge for Debian 13
+
+**This is an unofficial fork of [Rayforge](https://github.com/barebaric/rayforge)
+that builds and installs on Debian 13 "trixie".** The upstream packages target
+Ubuntu 24.04 and do not install on Debian 13. This fork changes only the
+packaging; the application is upstream's, unchanged.
+
+It is not made or supported by the Rayforge developers. Report problems with
+this Debian package [here](https://github.com/jensse/rayforge/issues), and everything else
+[upstream](https://github.com/barebaric/rayforge/issues).
+
+Tested on Debian 13 amd64 with an Ortur laser engraver.
+
+## Install
+
+1. Download the `.deb` from the latest [release](https://github.com/jensse/rayforge/releases).
+2. Install it with apt, which also installs its dependencies:
+
+   ```sh
+   sudo apt-get install ./rayforge_*_amd64.deb
+   ```
+
+   Rayforge pulls in a lot of dependencies: on a desktop install expect
+   about 90 packages and 700 MB, mostly VTK, LLVM and SciPy.
+
+3. If the Ubuntu PPA is in your apt sources, hold the package so that
+   `apt upgrade` does not replace it with the Ubuntu build:
+
+   ```sh
+   sudo apt-mark hold rayforge
+   ```
+
+Ignore the note `Download is performed unsandboxed as root` when the `.deb`
+is in your home directory. It is harmless.
+
+## Build it yourself
+
+With [mise](https://mise.jdx.dev/) on a Debian 13 machine:
+
+```sh
+mise run deb:deps     # install the build dependencies (uses sudo)
+mise run deb          # build the .deb into dist/
+mise run deb:install  # install it
+```
+
+The `mise.toml` comments explain the two traps this avoids: a non-system
+`python3` on `PATH`, and a `rustup` toolchain that the build cannot see.
+
+## How the packages are built
+
+[`.github/workflows/build-deb-debian13.yml`](.github/workflows/build-deb-debian13.yml)
+builds the package in a Debian 13 container, installs it and starts
+Rayforge as a smoke test, on every push. Each run keeps the `.deb` as a
+workflow artifact. Pushing a tag such as `1.13.2+deb13.1` (the upstream
+version, then a packaging revision) also publishes it as a release.
+
+## Help wanted
+
+Rayforge deserves a proper Debian package and a Debian maintainer. This
+fork only gets it working. If you want to take that on, you are welcome
+to build on it.
+
+Thanks to the Rayforge developers for an excellent tool. The packaging
+here was made with help from AI tools.
+
+---
+
+The upstream README follows.
+
 [![GitHub Release](https://img.shields.io/github/release/barebaric/rayforge.svg?style=flat)](https://github.com/barebaric/rayforge/releases/)
 [![PyPI version](https://img.shields.io/pypi/v/rayforge)](https://pypi.org/project/rayforge/)
 [![Snap Release](https://snapcraft.io/rayforge/badge.svg)](https://snapcraft.io/rayforge)
