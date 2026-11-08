@@ -1,10 +1,13 @@
 ---
-description: "Frame outline operations trace a rectangle around your design. Use for positioning, test runs, and alignment before cutting."
+description:
+  "Frame outline operations trace a rectangle around your design. Use for positioning, test runs,
+  and alignment before cutting."
 ---
 
 # Frame Outline
 
-Frame Outline creates a simple rectangular cutting path around your entire design. It's the quickest way to add a clean border or cut your work free from the material sheet.
+Frame Outline creates a simple rectangular cutting path around your entire design. It's the quickest
+way to add a clean border or cut your work free from the material sheet.
 
 ## Overview
 
@@ -53,13 +56,14 @@ Configure the frame parameters:
 
 ## Key Settings
 
-The step settings dialog has three tabs: **Step Settings**, **Laser**, and **Post Processing**. Settings are described in tab order below.
+The step settings dialog has four tabs: **Step Settings**, **Laser**, **Post Processing**, and
+**Workpieces**. Settings are described in tab order below.
 
 ### Geometry
 
-![Frame Outline step settings](/screenshots/step-settings-frame-outline-general.png)
+![Frame Outline step settings](/screenshots/step-settings-frame-outline-general.webp)
 
-The **Geometry** group on the *Step Settings* tab controls the frame's shape.
+The **Geometry** group on the _Step Settings_ tab controls the frame's shape.
 
 #### Cut Side
 
@@ -84,9 +88,21 @@ Controls where the laser cuts relative to the frame path:
 - **2-5mm:** Small margin for clean appearance
 - **10mm+:** Large border for mounting or handling
 
+#### Round Corners
+
+Enable **Round Corners** to replace the frame's sharp 90° corners with rounded arcs, then set the
+**Corner Radius** in mm. The radius is automatically reduced when it is too large to fit the frame.
+
+- **0mm:** Sharp corners (default)
+- **3-10mm:** Softer corners that are easier to handle
+- **Larger:** Heavily rounded frame, clamped to half the frame's shorter side
+
+Rounded corners are useful for materials that chip or splinter at sharp angles, and avoid the need
+to post-process the frame or hand-draw a rounded outline.
+
 ### Laser settings
 
-![Laser settings](/screenshots/step-settings-frame-outline-laser.png)
+![Laser settings](/screenshots/step-settings-frame-outline-laser.webp)
 
 Power, speed, and laser head selection live on the **Laser** page of the step settings dialog.
 
@@ -102,6 +118,16 @@ Power, speed, and laser head selection live on the **Laser** page of the step se
 - How fast the laser moves
 - Slower for thicker materials
 
+#### Power Mode
+
+The Power Mode setting controls how laser power is emitted during moves:
+
+- **Dynamic (M4)** scales power with head speed (default)
+- **Constant (M3)** keeps power fixed regardless of speed
+
+Dynamic power ramps power down when the head slows into a corner, which can leave corners
+under-burned on some machines. Switch to **Constant (M3)** if the frame's corners burn too lightly.
+
 To cut the frame more than once, add a [Multi-Pass](../multi-pass.md) post-processor.
 
 #### Kerf Compensation
@@ -114,7 +140,7 @@ Frame outline supports kerf compensation:
 
 ## Post-Processing
 
-![Frame Outline post-processing settings](/screenshots/step-settings-frame-outline-post.png)
+![Frame Outline post-processing settings](/screenshots/step-settings-frame-outline-post.webp)
 
 Frame Outline operations support several post-processing options:
 

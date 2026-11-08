@@ -197,6 +197,8 @@ def main():
     class App(Adw.Application):
         def __init__(self, args):
             super().__init__(application_id="org.rayforge.rayforge")
+            GLib.set_prgname("rayforge")
+            Gtk.Window.set_default_icon_name("org.rayforge.rayforge")
             from rayforge.ui_gtk.shared.keyboard import PRIMARY_ACCEL
 
             self.args = args
@@ -369,11 +371,22 @@ def main():
                     vectorization_spec=vectorization_spec,
                 )
 
-            if self.args.exit:
-                get_context().exit_after_settle = True
-                editor.document_settled.connect(self._on_document_settled_exit)
+            if self.args.exit and not self.args.uiscript:
+                self._setup_exit_watch()
 
             return GLib.SOURCE_REMOVE
+
+        def _setup_exit_watch(self):
+            """
+            Arms the --exit watcher so the app quits once the editor
+            settles. Deferred until after the uiscript has started so the
+            script gets a chance to kick off the pipeline.
+            """
+            get_context().exit_after_settle = True
+            assert self.win is not None
+            self.win.doc_editor.document_settled.connect(
+                self._on_document_settled_exit
+            )
 
         def _on_document_settled_exit(self, sender):
             ctx = get_context()
@@ -396,6 +409,10 @@ def main():
             from rayforge.uiscript import run_script
 
             run_script(Path(self.args.uiscript), self, self.win)
+
+            if self.args.exit:
+                self._setup_exit_watch()
+
             return GLib.SOURCE_REMOVE
 
         def _load_startup_files(self, widget):
@@ -431,11 +448,8 @@ def main():
                     f"Startup project path {project_path} does not exist"
                 )
 
-            if self.args.exit:
-                get_context().exit_after_settle = True
-                self.win.doc_editor.document_settled.connect(
-                    self._on_document_settled_exit
-                )
+            if self.args.exit and not self.args.uiscript:
+                self._setup_exit_watch()
 
             return GLib.SOURCE_REMOVE
 
@@ -499,6 +513,17 @@ def main():
     )
 
     parser.add_argument(
+        "--script",
+        metavar="SCRIPT",
+        help=_(
+            "Path to a Python script to execute early during startup, "
+            "before addons are loaded and before the main window is "
+            "created. Useful for registering plugins, services, or "
+            "configuring the application context."
+        ),
+    )
+
+    parser.add_argument(
         "--config",
         metavar="DIR",
         help=_(
@@ -540,6 +565,8 @@ def main():
     gi.require_version("Pango", "1.0")
     gi.require_version("PangoCairo", "1.0")
     gi.require_version("Gtk", "4.0")
+    gi.require_version("Gdk", "4.0")
+    gi.require_version("Graphene", "1.0")
     gi.require_version("GdkPixbuf", "2.0")
 
     # Initialize the 3D canvas module to check for OpenGL availability.
@@ -562,6 +589,15 @@ def main():
     # before the TaskManager is initialized. This breaks the circular
     # dependency chain (app -> config -> machine -> task_manager).
     get_context()
+
+    # Run the early-startup script (if any) before the TaskManager is
+    # initialized and before addons are loaded. This lets the script
+    # register plugins with the pluggy plugin manager, configure
+    # services, or set environment variables that influence startup.
+    if args.script:
+        from rayforge.script import run_script
+
+        run_script(Path(args.script))
 
     # Initialize the TaskManager with the worker initializer.
     # This MUST happen before accessing addon_mgr because the

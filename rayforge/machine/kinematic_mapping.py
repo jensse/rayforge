@@ -35,7 +35,7 @@ def _is_valid_replacement_module(module):
     positive ``mm_per_rotation`` *or* their target axis is one of the
     standard XYZ axes (which can accept degree values directly).
     """
-    if module.mode != RotaryMode.AXIS_REPLACEMENT:
+    if not module.is_replacement():
         return True
     if module.mm_per_rotation > 0:
         return True
@@ -263,6 +263,9 @@ class KinematicMapping:
                 the object geometry directly, without the roller
                 encoding.
         """
+
+        if not machine.rotary_modules or not doc.has_rotary_layer:
+            return
 
         def _on_layer(layer_uid: str, layer_ops: Ops) -> None:
             layer = _resolve_rotary_layer_by_uid(layer_uid, doc)

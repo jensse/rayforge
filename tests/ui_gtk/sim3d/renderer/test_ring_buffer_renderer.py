@@ -6,7 +6,10 @@ import numpy as np
 import pytest
 
 from rayforge.core.color import ColorSet
-from rayforge.ui_gtk.sim3d.gl_utils import ShaderSet
+from rayforge.ui_gtk.sim3d.gl_utils import (
+    LINE_DEPTH_WINDOW_BIAS,
+    ShaderSet,
+)
 from rayforge.ui_gtk.sim3d.render_context import (
     CameraContext,
     KinematicsContext,
@@ -25,6 +28,9 @@ _SET_LINE_WIDTH = (
 class _FakePlayer:
     def __init__(self, current_index):
         self.current_index = current_index
+
+    def playback_progress(self):
+        return (self.current_index + 1, 0.0)
 
 
 def _make_ctx(op_player=None, ring_vertex_count=0):
@@ -47,7 +53,8 @@ def test_prepare_computes_ring_exec_count():
 
     ring.prepare(ctx)
 
-    assert ring._exec_ring == 1
+    # No vertices uploaded yet (empty position data): nothing to reveal.
+    assert ring._exec_ring == 0
 
 
 @pytest.mark.ui
@@ -65,21 +72,29 @@ def test_render_publishes_ring_exec_count():
     ctx, ring = _make_ctx(op_player=_FakePlayer(0), ring_vertex_count=8)
     ring.ring_offsets = np.array([0, 1, 2], dtype=np.int32)
     ring.prepare(ctx)
-    assert ring._exec_ring == 1
+    assert ring._exec_ring == 0
 
     shader = MagicMock()
     with (
+        patch("OpenGL.GL.glEnable"),
+        patch("OpenGL.GL.glBlendFunc"),
         patch("OpenGL.GL.glBindVertexArray"),
         patch("OpenGL.GL.glBindTexture"),
         patch("OpenGL.GL.glActiveTexture"),
-        patch("OpenGL.GL.glDepthFunc"),
+        patch("OpenGL.GL.glDepthFunc") as mock_depth_func,
         patch("OpenGL.GL.glDepthMask"),
         patch("OpenGL.GL.glDrawArrays"),
         patch(_SET_LINE_WIDTH),
     ):
         ring.render(ctx, ShaderSet(main=shader))
 
-    assert ctx.playback.executed_vertex_count == 1
+    assert ctx.playback.executed_vertex_count == 0
+    # The trail must depth-test against the laser head model instead of
+    # always drawing on top; a small window-space bias keeps it above
+    # the coplanar raster texture.  0x0203 is GL.GL_LEQUAL (no GL
+    # import in tests).
+    assert mock_depth_func.call_args[0][0] == 0x0203
+    shader.set_float.assert_any_call("uFragDepthBias", LINE_DEPTH_WINDOW_BIAS)
 
 
 @pytest.mark.ui
@@ -89,6 +104,8 @@ def test_render_noop_when_empty():
 
     shader = MagicMock()
     with (
+        patch("OpenGL.GL.glEnable"),
+        patch("OpenGL.GL.glBlendFunc"),
         patch("OpenGL.GL.glBindVertexArray"),
         patch("OpenGL.GL.glBindTexture"),
         patch("OpenGL.GL.glActiveTexture"),

@@ -30,6 +30,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_REBUILD_DEBOUNCE_SECONDS = 0.3
+
 
 class MachineController:
     """
@@ -57,20 +59,29 @@ class MachineController:
         self.laser_power_changed = Signal()
 
         self.driver: Driver = NoDeviceDriver(context, machine)
+
+        # The WCS that the device has actually confirmed via $G query.
+        # Used to guard _sync_wcs_offset_from_wco against stale WCO
+        # from status reports after a UI-initiated WCS switch. Must be
+        # set before _connect_driver_signals(), which may process an
+        # already-populated device state right away.
+        self._confirmed_active_wcs: str | None = None
+
         self._connect_driver_signals()
 
         # Track the last driver configuration to detect changes
         self._last_driver_name = self.machine.driver_name
         self._last_driver_args = self.machine.driver_args.copy()
 
-        # The WCS that the device has actually confirmed via $G query.
-        # Used to guard _sync_wcs_offset_from_wco against stale WCO
-        # from status reports after a UI-initiated WCS switch.
-        self._confirmed_active_wcs: str | None = None
-
         # Listen to machine's changed signal to rebuild driver when
         # driver configuration changes
         self.machine.changed.connect(self._on_machine_changed)
+
+        # Listen for dialect edits so the live driver re-reads its
+        # dialect templates
+        self.context.dialect_mgr.dialects_changed.connect(
+            self._on_dialects_changed
+        )
 
         # If the machine already has a driver_name configured, rebuild
         # the driver instance to match
@@ -88,6 +99,7 @@ class MachineController:
     async def disconnect(self):
         """Public method to disconnect the driver."""
         task_mgr.cancel_task((self.machine.id, "driver-connect"))
+        task_mgr.cancel_task((self.machine.id, "rebuild-driver-on-change"))
         if self.driver is not None:
             await self.driver.cleanup()
             task_mgr.add_coroutine(
@@ -117,7 +129,10 @@ class MachineController:
     def _on_machine_changed(self, sender=None, **kwargs):
         """
         Callback when the machine's configuration changes.
-        Triggers driver rebuild only if the driver configuration has changed.
+        Triggers driver rebuild only if the driver configuration has
+        changed. The rebuild is debounced so that bursts of changes
+        (e.g. per-keystroke edits in the settings UI) coalesce into a
+        single driver rebuild and a single connection attempt.
         """
         current_driver_name = self.machine.driver_name
         current_driver_args = self.machine.driver_args
@@ -129,9 +144,25 @@ class MachineController:
             self._last_driver_name = current_driver_name
             self._last_driver_args = current_driver_args.copy()
             task_mgr.add_coroutine(
-                self.rebuild_driver,
+                self._debounced_rebuild,
                 key=(self.machine.id, "rebuild-driver-on-change"),
             )
+
+    async def _debounced_rebuild(self, ctx: Optional["ExecutionContext"]):
+        """
+        Waits for a quiet period before rebuilding the driver. Because
+        re-scheduling with the same task key cancels the pending sleep,
+        only the last change of a burst reaches rebuild_driver.
+
+        The cancellation flag is re-checked after the sleep: a cancel
+        that raced with the task starting up does not necessarily
+        propagate to the running coroutine, and a cancelled rebuild
+        must never touch driver state.
+        """
+        await asyncio.sleep(_REBUILD_DEBOUNCE_SECONDS)
+        if ctx is not None and ctx.is_cancelled():
+            return
+        await self.rebuild_driver(ctx)
 
     def _connect_driver_signals(self):
         if self.driver is None:
@@ -166,24 +197,33 @@ class MachineController:
     def _on_dialects_changed(self, sender=None, **kwargs):
         """
         Callback when dialects are updated.
-        Sends machine's changed signal to trigger recalculation.
+        Sends machine's changed signal to trigger recalculation, and
+        lets the live driver re-read its dialect templates so manual
+        commands use the edited definitions without waiting for a
+        reconnect or job. The machine's own handler is registered
+        before this one, so its cached dialect is already invalidated
+        when the driver resolves the templates.
         """
         self.machine.changed.send(self.machine)
+        if self.driver is not None:
+            self.driver.refresh_dialect()
 
     async def rebuild_driver(self, ctx: Optional["ExecutionContext"] = None):
         """
-        Instantiates and sets up the driver based on the machine's current
-        configuration. Connects if auto_connect is enabled and the new driver
-        is not NoDeviceDriver.
+        Applies the machine's current driver configuration.
+
+        If the driver class is unchanged and the driver has not been
+        cleaned up, the live driver is asked via update_settings() to
+        absorb the new arguments. Drivers that opt in keep running
+        without interruption; everything else falls
+        through to a full rebuild, which instantiates the driver, and
+        connects if auto_connect is enabled and the new driver is not
+        NoDeviceDriver.
         """
         logger.info(
             f"Machine '{self.machine.name}' (id:{self.machine.id}) rebuilding "
             f"driver to '{self.machine.driver_name}'"
         )
-
-        old_driver = self.driver
-        self._disconnect_driver_signals()
-        self.machine.set_precheck_error(None)
 
         if self.machine.driver_name:
             driver_cls = get_driver_cls(self.machine.driver_name)
@@ -197,10 +237,29 @@ class MachineController:
                 f"Precheck failed for driver {self.machine.driver_name}: {e}"
             )
             self.machine.set_precheck_error(str(e))
+        else:
+            self.machine.set_precheck_error(None)
+
+        if (
+            isinstance(self.driver, driver_cls)
+            and self.driver.did_setup
+            and self.driver.update_settings(**self.machine.driver_args)
+        ):
+            logger.info(
+                f"Machine '{self.machine.name}' (id:{self.machine.id}) "
+                "driver accepted updated settings"
+            )
+            self._last_driver_name = self.machine.driver_name
+            self._last_driver_args = self.machine.driver_args.copy()
+            self._scheduler(self.machine.changed.send, self.machine)
+            return
+
+        old_driver = self.driver
+        self._disconnect_driver_signals()
 
         new_driver = driver_cls(self.context, self.machine)
-        new_driver.setup(**self.machine.driver_args)
         new_driver.config = self.machine.driver_config.copy()
+        new_driver.setup(**self.machine.driver_args)
 
         self.driver = new_driver
         self._connect_driver_signals()
@@ -467,13 +526,14 @@ class MachineController:
             )
             return
 
+        emit_z = z if self.machine.has_z_axis else None
         if not self.machine.is_connected():
             self.machine.update_wcs_offset(slot, (x, y, z))
             self._scheduler(self.wcs_updated.send, self.machine)
             self._scheduler(self.machine.changed.send, self.machine)
             return
 
-        await self.driver.set_wcs_offset(slot, x, y, z)
+        await self.driver.set_wcs_offset(slot, x, y, emit_z)
         await self.driver.read_wcs_offsets()
 
     async def select_wcs(self, wcs: str) -> None:
@@ -521,10 +581,23 @@ class MachineController:
 
         new_x, new_y, new_z = current_offsets
 
+        # A pointer laser mounted beside the beam marks the stock at a
+        # fixed displacement from the cutting spot. While pointer
+        # alignment is on, compensate so the work origin lands where
+        # the pointer was pointing, not where the (hidden) beam is.
+        # With alignment off, zero at the beam position.
+        if self.machine.pointer_alignment_enabled:
+            pointer_dx, pointer_dy = self.machine.get_pointer_offset()
+        else:
+            pointer_dx = pointer_dy = 0.0
+
+        # Mask out axes the machine does not have (e.g. Z on a 2-axis
+        # laser) so we never set a Z origin for a no-Z machine.
+        axes &= self.machine.available_axes
         if axes & Axis.X and m_pos[0] is not None:
-            new_x = m_pos[0]
+            new_x = m_pos[0] + pointer_dx
         if axes & Axis.Y and m_pos[1] is not None:
-            new_y = m_pos[1]
+            new_y = m_pos[1] + pointer_dy
         if axes & Axis.Z and m_pos[2] is not None:
             new_z = m_pos[2]
 
@@ -576,8 +649,9 @@ class MachineController:
         """
         Switches the active WCS on both the model and the device.
 
-        Sends the G-code WCS command (e.g. G54), then queries $G
-        to confirm the switch before updating _confirmed_active_wcs.
+        Selects the WCS through the driver (the G-code command, e.g.
+        G54, for G-code controllers), then queries $G to confirm the
+        switch before updating _confirmed_active_wcs.
         This prevents stale WCO from status reports corrupting the
         newly-selected WCS offset.
         """
@@ -587,7 +661,7 @@ class MachineController:
 
         if self.machine.is_connected():
             try:
-                await self.driver.run_raw(wcs)
+                await self.driver.select_wcs(wcs)
                 confirmed = await self.driver.read_parser_state()
                 if confirmed == wcs:
                     self._confirmed_active_wcs = wcs

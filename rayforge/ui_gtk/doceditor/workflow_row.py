@@ -104,17 +104,13 @@ class WorkflowRow(Gtk.Box):
         self.add_controller(self._drop_target)
 
     def _connect_machine(self):
-        machine = get_context().machine
-        if machine:
-            machine.changed.connect(self._on_machine_changed)
+        get_context().config.changed.connect(self._on_machine_changed)
 
     def _disconnect_machine(self):
-        machine = get_context().machine
-        if machine:
-            try:
-                machine.changed.disconnect(self._on_machine_changed)
-            except (TypeError, ValueError):
-                pass
+        try:
+            get_context().config.changed.disconnect(self._on_machine_changed)
+        except (TypeError, ValueError):
+            pass
 
     def _on_machine_changed(self, sender, **kwargs):
         self._rebuild()
@@ -129,6 +125,9 @@ class WorkflowRow(Gtk.Box):
             )
             self._workflow.descendant_updated.connect(
                 self._on_workflow_changed
+            )
+            self._workflow.descendant_renamed.connect(
+                self._on_workflow_renamed
             )
             self._workflow.updated.connect(self._on_workflow_changed)
 
@@ -145,6 +144,9 @@ class WorkflowRow(Gtk.Box):
             self._workflow.descendant_updated.disconnect(
                 self._on_workflow_changed
             )
+            self._workflow.descendant_renamed.disconnect(
+                self._on_workflow_renamed
+            )
             self._workflow.updated.disconnect(self._on_workflow_changed)
         except (TypeError, ValueError):
             pass
@@ -157,6 +159,9 @@ class WorkflowRow(Gtk.Box):
             self._rebuild()
 
     def _on_workflow_changed(self, sender, **kwargs):
+        self._rebuild()
+
+    def _on_workflow_renamed(self, sender, **kwargs):
         self._rebuild()
 
     def _get_step_icon(self, step) -> str:

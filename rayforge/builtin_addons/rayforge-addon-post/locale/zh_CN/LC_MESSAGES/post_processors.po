@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-06 00:18+0200\n"
+"POT-Creation-Date: 2026-10-18 02:42+0200\n"
 "PO-Revision-Date: 2026-03-18 23:38+0100\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -33,12 +33,64 @@ msgid "Keep the first workpiece at its original position"
 msgstr "将第一个工件保持在原始位置"
 
 #: post_processors/widgets/optimize_group.py
+msgid "Choose Best Start Point"
+msgstr "选择最佳起点"
+
+#: post_processors/widgets/optimize_group.py
+msgid ""
+"Start closed paths at the vertex nearest the laser head to shorten travel "
+"moves."
+msgstr "从最靠近激光头的顶点开始闭合路径，以缩短移动路径。"
+
+#: post_processors/widgets/optimize_group.py
+msgid "Prefer Corners"
+msgstr "优先选择拐角"
+
+#: post_processors/widgets/optimize_group.py
+msgid ""
+"Start closed paths at a sharp corner where the path has one, which makes the "
+"seam less visible."
+msgstr "路径存在尖锐拐角时，从该拐角开始闭合路径，使接缝更不明显。"
+
+#: post_processors/widgets/optimize_group.py
+msgid "Merge Scanlines"
+msgstr "合并扫描线"
+
+#: post_processors/widgets/optimize_group.py
+msgid ""
+"Merges nearby parallel cut lines into longer scanlines when this is faster "
+"for the machine's acceleration."
+msgstr "在对机器加速度更快时，将附近的平行切线合并为更长的扫描线。"
+
+#: post_processors/widgets/optimize_group.py
+msgid "Max gap"
+msgstr "最大间隙"
+
+#: post_processors/widgets/optimize_group.py
+msgid ""
+"Maximum gap to bridge at zero power; 0 decides automatically from the "
+"machine's acceleration"
+msgstr "以零功率桥接的最大间隙；0 表示根据机器加速度自动决定"
+
+#: post_processors/widgets/optimize_group.py
 msgid "Toggle Flipping"
 msgstr "切换翻转"
 
 #: post_processors/widgets/optimize_group.py
 msgid "Toggle Preserve First Workpiece"
 msgstr "切换保留第一个工件"
+
+#: post_processors/widgets/optimize_group.py
+msgid "Toggle Choose Best Start Point"
+msgstr "切换选择最佳起点"
+
+#: post_processors/widgets/optimize_group.py
+msgid "Toggle Prefer Corners"
+msgstr "切换优先选择拐角"
+
+#: post_processors/widgets/optimize_group.py
+msgid "Change maximum bridged gap"
+msgstr "更改最大桥接间隙"
 
 #: post_processors/widgets/overscan_group.py
 msgid "This machine adds overscan automatically; the setting has no effect."
@@ -174,6 +226,30 @@ msgstr "更改导入距离"
 msgid "Change Lead-Out Distance"
 msgstr "更改导出距离"
 
+#: post_processors/widgets/perforation_group.py
+msgid "Cut Length"
+msgstr "切割长度"
+
+#: post_processors/widgets/perforation_group.py
+msgid "Distance the laser fires before each gap"
+msgstr "激光在每个间隙前保持出光的距离"
+
+#: post_processors/widgets/perforation_group.py
+msgid "Skip Length"
+msgstr "跳过长度"
+
+#: post_processors/widgets/perforation_group.py
+msgid "Distance travelled with the laser off between cuts"
+msgstr "两次切割之间激光关闭时的行进距离"
+
+#: post_processors/widgets/perforation_group.py
+msgid "Change perforation cut length"
+msgstr "更改穿孔切割长度"
+
+#: post_processors/widgets/perforation_group.py
+msgid "Change perforation skip length"
+msgstr "更改穿孔跳过长度"
+
 #: post_processors/widgets/merge_lines_group.py
 msgid "Tolerance"
 msgstr "容差"
@@ -226,6 +302,15 @@ msgstr "合并线条"
 #: post_processors/transformers/merge_lines_transformer.py
 msgid "Merges overlapping lines to avoid double passing."
 msgstr "合并重叠线条以避免重复通过。"
+
+#: post_processors/transformers/perforation_transformer.py
+msgid "Perforation"
+msgstr "穿孔"
+
+#: post_processors/transformers/perforation_transformer.py
+msgid ""
+"Cuts in dashes: the laser fires for the cut length and skips the skip length"
+msgstr "以虚线方式切割：激光在切割长度内出光，在跳过长度内关闭"
 
 #: post_processors/transformers/overscan_transformer.py
 msgid "Overscan"

@@ -171,15 +171,55 @@ class DragContext:
         dragged_point_ids: set[EntityID] | None = None,
         dragged_entity_ids: set[EntityID] | None = None,
         initial_positions: dict[EntityID, GeoPoint] | None = None,
+        suppress_coincident_points: bool = True,
     ):
         self.dragged_point_ids: set[EntityID] = dragged_point_ids or set()
         self.dragged_entity_ids: set[EntityID] = dragged_entity_ids or set()
         self.initial_positions: dict[EntityID, GeoPoint] = (
             initial_positions or {}
         )
+        # Creation tools list their synthetic preview points here to
+        # keep them from snapping to themselves. The coincidence
+        # suppression is for real drags (array template points resting
+        # on guide geometry) and must not hide real snap targets
+        # behind a preview point that the snap itself just placed on
+        # them — e.g. closing a path onto its own start point.
+        self.suppress_coincident_points = suppress_coincident_points
 
     def is_point_dragged(self, point_id: EntityID) -> bool:
         return point_id in self.dragged_point_ids
 
     def is_entity_dragged(self, entity_id: EntityID) -> bool:
         return entity_id in self.dragged_entity_ids
+
+    def coincides_with_dragged(
+        self,
+        x: float,
+        y: float,
+        registry: Any,
+        epsilon: float = 1e-6,
+    ) -> bool:
+        """
+        True if (x, y) lies within ``epsilon`` of any dragged point's
+        current position.
+
+        A non-dragged point that coincides with a dragged one must not
+        act as a snap target: arrays place a template point exactly
+        onto guide geometry (distinct points separated by float noise
+        only), and its axis snap lines would otherwise glue the drag
+        to its own start position. Suppressed entirely for creation
+        queries, where the "dragged" points are only the synthetic
+        preview ends.
+        """
+        if not self.suppress_coincident_points:
+            return False
+        for pid in self.dragged_point_ids:
+            try:
+                point = registry.get_point(pid)
+            except (IndexError, KeyError):
+                continue
+            if point is None:
+                continue
+            if abs(point.x - x) <= epsilon and abs(point.y - y) <= epsilon:
+                return True
+        return False

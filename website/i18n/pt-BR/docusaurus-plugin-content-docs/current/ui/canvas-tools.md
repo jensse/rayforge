@@ -1,6 +1,7 @@
 # Ferramentas de Tela
 
-A tela fornece um conjunto abrangente de ferramentas para manipular designs, medir e preparar seus trabalhos a laser.
+A tela fornece um conjunto abrangente de ferramentas para manipular designs, medir e preparar seus
+trabalhos a laser.
 
 ## Ferramenta de Seleção
 
@@ -17,16 +18,20 @@ Selecione, mova e transforme objetos na tela.
 
 Segurar teclas modificadoras enquanto arrasta muda o comportamento:
 
-- <kbd>ctrl</kbd> enquanto **move**: Ajusta o objeto à grade de 5mm, facilitando o alinhamento preciso
-- <kbd>ctrl</kbd> enquanto **rotaciona**: Ajusta a rotação em incrementos de 5 graus para ângulos consistentes
+- <kbd>ctrl</kbd> enquanto **move**: Ajusta o objeto à grade de 5mm, facilitando o alinhamento
+  preciso
+- <kbd>ctrl</kbd> enquanto **rotaciona**: Ajusta a rotação em incrementos de 5 graus para ângulos
+  consistentes
 - <kbd>shift</kbd> enquanto **escala**: Restringe as proporções (escala uniforme)
 - <kbd>ctrl</kbd> enquanto **escala**: Escala a partir do centro em vez da borda oposta
 
 **Alças de Transformação:**
 
-- **Alças de canto**: Escala proporcionalmente (segure <kbd>shift</kbd> para escalar não proporcionalmente)
+- **Alças de canto**: Escala proporcionalmente (segure <kbd>shift</kbd> para escalar não
+  proporcionalmente)
 - **Alças de borda**: Escala em uma direção
-- **Alça de rotação**: Clique uma vez em um objeto selecionado para alternar o modo de rotação, depois arraste para rotacionar ao redor do ponto central
+- **Alça de rotação**: Clique uma vez em um objeto selecionado para alternar o modo de rotação,
+  depois arraste para rotacionar ao redor do ponto central
 
 **Atalhos de Teclado:**
 
@@ -155,12 +160,30 @@ Combine ou subtraia formas:
 
 ## Edição de Vetores
 
-Clique duas vezes em uma peça de trabalho na tela para entrar no modo de
-edição de vetores. Neste modo, você pode selecionar e excluir segmentos de
-vetor individuais da peça de trabalho.
+Clique duas vezes em uma peça de trabalho importada na tela para entrar no modo de edição de
+vetores. Neste modo, você pode selecionar e excluir segmentos de vetor individuais da peça de
+trabalho, e editar seus nós.
 
-Para sair do modo de edição de vetores, clique fora da peça de trabalho ou
-pressione <kbd>Escape</kbd>.
+Clique em um segmento para selecioná-lo, ou arraste um quadro ao redor de vários. Os nós do contorno
+selecionado aparecem como pequenos quadrados, e as alças das curvas selecionadas como pontos
+redondos:
+
+- **Arraste um nó** para movê-lo; as alças de curva vizinhas acompanham. Em um caminho fechado, o nó
+  inicial e o final são um só nó.
+- **Arraste uma alça** para mudar a forma de uma curva.
+- Clique em um nó e pressione <kbd>Delete</kbd> para removê-lo; os segmentos dos dois lados se unem
+  em um. Sem nenhum nó selecionado, <kbd>Delete</kbd> remove os segmentos selecionados.
+- Aponte para um segmento e pressione <kbd>I</kbd> para inserir um nó ali.
+- Pressione <kbd>C</kbd> para transformar os segmentos selecionados em curvas, ou de volta em linhas
+  retas quando todos já forem curvas.
+
+Toda alteração pode ser desfeita. Esboços são editados no esboçador.
+
+Para sair do modo de edição de vetores, clique fora da peça de trabalho ou pressione
+<kbd>Escape</kbd>.
+
+Para fechar lacunas, unir partes abertas, excluir caminhos duplicados ou separar uma peça de
+trabalho, use as ferramentas de [Limpeza de caminhos](../features/path-cleanup.md).
 
 ---
 

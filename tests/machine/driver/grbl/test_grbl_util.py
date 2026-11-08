@@ -1,5 +1,6 @@
 import pytest
 
+from rayforge.core.varset import Var, VarSet
 from rayforge.machine.driver.driver import DeviceState, DeviceStatus
 from rayforge.machine.driver.grbl.grbl_util import (
     _parse_buffer_state,
@@ -9,13 +10,18 @@ from rayforge.machine.driver.grbl.grbl_util import (
     _parse_status_part,
     _recalculate_positions,
     _split_status_line,
+    apply_setting_to_varset,
     error_code_to_device_error,
+    extract_device_name_from_output,
     gcode_to_p_number,
+    get_grbl_setting_varsets,
+    is_grbl_output,
     is_report_in_inches,
     parse_grbl_parser_state,
     parse_opt_info,
     parse_state,
     parse_version,
+    split_realtime_commands,
     strip_gcode_comments,
     version_supports_single_axis_homing,
 )
@@ -756,3 +762,166 @@ class TestParseStateInches:
             "<Idle|FS:1000,0>", default, report_in_inches=True
         )
         assert result.machine_pos == (None, None, None)
+
+
+class TestSplitRealtimeCommands:
+    """Tests for split_realtime_commands."""
+
+    def test_separates_realtime_from_gcode(self):
+        gcode, realtime = split_realtime_commands(
+            ["G0 X10", "~", "M3 S100", "!", "?"]
+        )
+        assert gcode == ["G0 X10", "M3 S100"]
+        assert realtime == ["~", "!", "?"]
+
+    def test_similar_gcode_is_not_realtime(self):
+        gcode, realtime = split_realtime_commands(["G0 X~10", "$$", "$X"])
+        assert gcode == ["G0 X~10", "$$", "$X"]
+        assert realtime == []
+
+    def test_empty_input(self):
+        assert split_realtime_commands([]) == ([], [])
+
+
+class TestIsGrblOutput:
+    """The driver-owned matcher used for serial device discovery."""
+
+    def test_matches_banner(self):
+        assert is_grbl_output(b"Grbl 1.1f ['$' for help]\r\n")
+
+    def test_matches_grblhal(self):
+        assert is_grbl_output(b"GrblHAL 2.0a\r\n")
+
+    def test_matches_status_report(self):
+        assert is_grbl_output(b"<Idle|MPos:0.000,0.000,0.000|FS:0,0>")
+
+    def test_matches_accumulated_noise(self):
+        assert is_grbl_output(b"\r\n\x00garbage\r\nok\r\nGrbl 1.1f\r\n")
+
+    def test_rejects_other_firmware(self):
+        assert not is_grbl_output(b"start\r\necho:Marlin 2.1.2\r\n")
+        assert not is_grbl_output(b"Smoothie ok\r\n")
+        assert not is_grbl_output(b"hello world\r\n")
+        assert not is_grbl_output(b"")
+
+
+# Real-world capture from a Sculpfun iCube: a Grbl fork whose boot
+# output never mentions Grbl — only $I-style build-info lines.
+SCULPFUN_ICUBE_BANNER = (
+    b"[VER:1.0.15,20240923:]\r\n"
+    b"[OPT:VMP,31,511]\r\n"
+    b"[MSG:mechine:Sculpfun iCube]\r\n"
+    b"[MSG:Mode=BT]\r\n"
+    b"[BT_VER:8.1.2,FSC-BT836B]\r\n"
+    b"Connection status: CONNECTED \r\n"
+)
+
+
+class TestIsGrblOutputBuildInfo:
+    def test_matches_build_info_only_banner(self):
+        assert is_grbl_output(SCULPFUN_ICUBE_BANNER)
+
+    def test_matches_single_msg_line(self):
+        assert is_grbl_output(b"[MSG:Caution: Unlocked]\r\n")
+
+    def test_matches_ver_line(self):
+        assert is_grbl_output(b"[VER:1.1h.ORTUR:]\r\n")
+
+    def test_rejects_square_brackets_from_other_firmware(self):
+        # Marlin and friends echo with 'echo:', not '[...]'.
+        assert not is_grbl_output(b"echo:busy: processing\r\nok\r\n")
+
+
+class TestExtractDeviceNameFromOutput:
+    def test_extracts_machine_name_from_msg(self):
+        assert (
+            extract_device_name_from_output(SCULPFUN_ICUBE_BANNER)
+            == "Sculpfun iCube"
+        )
+
+    def test_falls_back_to_ver_build_name(self):
+        data = b"[VER:1.1h.ORTUR:]\r\n[OPT:V,15,128]\r\n"
+        assert extract_device_name_from_output(data) == "ORTUR"
+
+    def test_returns_none_for_stock_grbl(self):
+        # A stock Grbl has no machine name, so the version banner is
+        # the best available identity hint.
+        assert (
+            extract_device_name_from_output(b"Grbl 1.1f ['$' for help]\r\n")
+            == "Grbl 1.1f ['$' for help]"
+        )
+
+    def test_falls_back_to_banner_skipping_acks(self):
+        # A bare "ok" (a nudge ack) is skipped in favour of the real
+        # banner behind it, even when a stray byte precedes the "ok".
+        assert (
+            extract_device_name_from_output(
+                b"\xffok\r\nGrbl 1.1f ['$' for help]\r\n"
+            )
+            == "Grbl 1.1f ['$' for help]"
+        )
+        assert extract_device_name_from_output(b"ok\r\nerror:1\r\n") is None
+
+
+class TestGrblHALMaskSettings:
+    """Regression tests for grblHAL bitmask settings (#401).
+
+    GrblHAL redefines $4 (step enable invert) and $5 (limit pins
+    invert) as per-axis masks, so values like 15 are legitimate.
+    Classic Grbl only reports 0/1, which coerce cleanly to int too.
+    """
+
+    def test_stepper_enable_var_is_int_mask(self):
+        varsets = get_grbl_setting_varsets()
+        var = next(v for vs in varsets for v in vs if v.key == "4")
+        assert var.var_type is int
+
+    def test_limit_pins_var_is_int_mask(self):
+        varsets = get_grbl_setting_varsets()
+        var = next(v for vs in varsets for v in vs if v.key == "5")
+        assert var.var_type is int
+
+    def test_mask_value_from_device_is_accepted(self):
+        varsets = get_grbl_setting_varsets()
+        stepper_varset = next(
+            vs
+            for vs in varsets
+            if "4" in vs.keys()  # noqa: SIM118
+        )
+        apply_setting_to_varset(stepper_varset, "4", "15")
+        assert stepper_varset["4"].value == 15
+        assert stepper_varset["4"].var_type is int
+
+    def test_boolean_value_still_coerces(self):
+        varsets = get_grbl_setting_varsets()
+        stepper_varset = next(
+            vs
+            for vs in varsets
+            if "4" in vs.keys()  # noqa: SIM118
+        )
+        apply_setting_to_varset(stepper_varset, "4", "1")
+        assert stepper_varset["4"].value == 1
+
+
+class TestApplySettingToVarset:
+    """Tests for the apply_setting_to_varset fallback behavior."""
+
+    def _make_varset(self, var_type) -> VarSet:
+        return VarSet(vars=[Var(key="42", label="$42", var_type=var_type)])
+
+    def test_assigns_coercible_value(self):
+        varset = self._make_varset(int)
+        apply_setting_to_varset(varset, "42", "7")
+        assert varset["42"].value == 7
+        assert varset["42"].var_type is int
+
+    def test_widens_to_str_on_incompatible_value(self):
+        varset = self._make_varset(bool)
+        apply_setting_to_varset(varset, "42", "15")
+        assert varset["42"].value == "15"
+        assert varset["42"].var_type is str
+
+    def test_raises_for_unknown_key(self):
+        varset = self._make_varset(int)
+        with pytest.raises(KeyError):
+            apply_setting_to_varset(varset, "99", "1")

@@ -4,31 +4,11 @@ import pytest
 from raygeo.geo import Matrix
 from raygeo.ops.state import CoolantMode
 
-from rayforge.core.capability import StepCapability
 from rayforge.core.doc import Doc
 from rayforge.core.step import Step
-from rayforge.core.varset import VarSet
+from rayforge.core.workpiece import WorkPiece
 from rayforge.machine.models.laser import LaserHead
 from rayforge.machine.models.spindle import SpindleHead
-
-
-class _StubCapability(StepCapability):
-    """A minimal capability for testing the step capabilities property."""
-
-    @property
-    def name(self) -> str:
-        return "CUT"
-
-    @property
-    def label(self) -> str:
-        return "Cut"
-
-    @property
-    def varset(self) -> VarSet:
-        return VarSet(vars=[])
-
-
-CUT = _StubCapability()
 
 
 @pytest.fixture
@@ -55,7 +35,7 @@ def test_step_initialization(step):
     assert step.name == "Test Step"
     assert step.visible is True
     assert step.selected_head_uid is None
-    assert step.generated_workpiece_uid is None
+    assert step.workpiece_uids == []
     assert step.applied_recipe_uid is None
     assert step.per_workpiece_transformers_dicts == []
     assert step.per_step_transformers_dicts == []
@@ -98,6 +78,42 @@ def test_set_visible_fires_signals(step):
     assert step.visible is False
     updated_handler.assert_called_once_with(step)
     visibility_handler.assert_called_once_with(step)
+
+
+def test_set_name_fires_renamed(step):
+    """Tests that set_name fires the 'renamed' signal (issue #343)."""
+    renamed_handler = MagicMock()
+    updated_handler = MagicMock()
+    step.renamed.connect(renamed_handler)
+    step.updated.connect(updated_handler)
+
+    step.set_name("Renamed Step")
+    assert step.name == "Renamed Step"
+    renamed_handler.assert_called_with(step)
+    updated_handler.assert_not_called()
+
+
+def test_set_name_no_signal_when_unchanged(step):
+    """set_name must not fire when the name is identical."""
+    renamed_handler = MagicMock()
+    updated_handler = MagicMock()
+    step.renamed.connect(renamed_handler)
+    step.updated.connect(updated_handler)
+
+    step.set_name(step.name)
+    renamed_handler.assert_not_called()
+    updated_handler.assert_not_called()
+
+
+def test_set_name_propagates_to_workflow(step_in_doc):
+    """Renaming a step bubbles 'descendant_renamed' to the workflow."""
+    _doc, _layer, workflow, step = step_in_doc
+    handler = MagicMock()
+    workflow.descendant_renamed.connect(handler)
+
+    step.set_name("New Workflow Name")
+    assert step.name == "New Workflow Name"
+    handler.assert_called()
 
 
 def test_hierarchy_properties(step_in_doc):
@@ -150,7 +166,7 @@ def test_serialization_to_dict_all_properties(step):
     step.matrix = Matrix.translation(1, 2)
     step.visible = False
     step.selected_head_uid = "laser-abc"
-    step.generated_workpiece_uid = "wp-xyz"
+    step.workpiece_uids = ["wp-xyz"]
     step.applied_recipe_uid = "recipe-123"
     step.per_step_transformers_dicts = [{"type": "CoolingPause"}]
     step.pixels_per_mm = (100, 100)
@@ -166,7 +182,7 @@ def test_serialization_to_dict_all_properties(step):
     assert data["typelabel"] == "TestType"
     assert data["visible"] is False
     assert data["selected_head_uid"] == "laser-abc"
-    assert data["generated_workpiece_uid"] == "wp-xyz"
+    assert data["workpiece_uids"] == ["wp-xyz"]
     assert data["applied_recipe_uid"] == "recipe-123"
     assert data["per_step_transformers_dicts"] == [{"type": "CoolingPause"}]
     assert data["pixels_per_mm"] == (100, 100)
@@ -184,7 +200,7 @@ def test_deserialization_from_dict(step):
         "typelabel": "RestoredType",
         "visible": False,
         "selected_head_uid": "laser-def",
-        "generated_workpiece_uid": "wp-123",
+        "workpiece_uids": ["wp-123"],
         "applied_recipe_uid": "recipe-456",
         "per_workpiece_transformers_dicts": [],
         "per_step_transformers_dicts": [],
@@ -204,7 +220,7 @@ def test_deserialization_from_dict(step):
     assert restored.typelabel == "RestoredType"
     assert restored.visible is False
     assert restored.selected_head_uid == "laser-def"
-    assert restored.generated_workpiece_uid == "wp-123"
+    assert restored.workpiece_uids == ["wp-123"]
     assert restored.applied_recipe_uid == "recipe-456"
     assert restored.pixels_per_mm == (20, 20)
     assert restored.cut_speed == 2500
@@ -279,7 +295,7 @@ def test_step_forward_compatibility_with_extra_fields():
         "typelabel": "FutureType",
         "visible": True,
         "selected_head_uid": None,
-        "generated_workpiece_uid": None,
+        "workpiece_uids": [],
         "applied_recipe_uid": None,
         "per_workpiece_transformers_dicts": [],
         "per_step_transformers_dicts": [],
@@ -326,7 +342,7 @@ def test_step_backward_compatibility_with_missing_optional_fields():
     step = Step.from_dict(minimal_dict)
 
     assert step.selected_head_uid is None
-    assert step.generated_workpiece_uid is None
+    assert step.workpiece_uids == []
     assert step.applied_recipe_uid is None
     assert step.pixels_per_mm == (100, 100)
     assert step.cut_speed == 500
@@ -359,6 +375,89 @@ def test_legacy_selected_laser_uid_key_migrates():
     data = step.to_dict()
     assert data["selected_head_uid"] == "old-laser-uid"
     assert "selected_laser_uid" not in data
+
+
+def test_legacy_generated_workpiece_uid_key_migrates():
+    """
+    Old project files keyed the workpiece filter as a single
+    "generated_workpiece_uid". It must load into workpiece_uids and not
+    pollute extra.
+    """
+    step_dict = {
+        "uid": "step-legacy-wp",
+        "type": "step",
+        "typelabel": "LegacyType",
+        "visible": True,
+        "matrix": Matrix.identity().to_list(),
+        "per_workpiece_transformers_dicts": [],
+        "per_step_transformers_dicts": [],
+        "generated_workpiece_uid": "old-wp-uid",
+    }
+
+    step = Step.from_dict(step_dict)
+
+    assert step.workpiece_uids == ["old-wp-uid"]
+    assert "generated_workpiece_uid" not in step.extra
+
+    data = step.to_dict()
+    assert data["workpiece_uids"] == ["old-wp-uid"]
+    assert data["generated_workpiece_uid"] == "old-wp-uid"
+
+
+def test_workpiece_uids_key_wins_over_legacy_key():
+    """A present-day workpiece_uids key beats a stale legacy key."""
+    step_dict = {
+        "uid": "step-both-wp",
+        "type": "step",
+        "typelabel": "BothType",
+        "visible": True,
+        "matrix": Matrix.identity().to_list(),
+        "per_workpiece_transformers_dicts": [],
+        "per_step_transformers_dicts": [],
+        "workpiece_uids": ["new-wp-uid"],
+        "generated_workpiece_uid": "old-wp-uid",
+    }
+
+    step = Step.from_dict(step_dict)
+
+    assert step.workpiece_uids == ["new-wp-uid"]
+
+
+def test_selected_workpieces_empty_filter_matches_all():
+    """An empty filter matches every given workpiece, in order."""
+    step = Step(typelabel="Test")
+    wp_a = WorkPiece(name="a")
+    wp_b = WorkPiece(name="b")
+
+    assert step.selected_workpieces([wp_a, wp_b]) == [wp_a, wp_b]
+
+
+def test_selected_workpieces_filter_matches_listed_uids():
+    """A set filter matches only the listed uids, in input order."""
+    step = Step(typelabel="Test")
+    wp_a = WorkPiece(name="a")
+    wp_b = WorkPiece(name="b")
+    wp_c = WorkPiece(name="c")
+    wp_a.uid = "wp-a"
+    wp_b.uid = "wp-b"
+    wp_c.uid = "wp-c"
+    step.workpiece_uids = ["wp-c", "wp-a"]
+
+    assert step.selected_workpieces([wp_a, wp_b, wp_c]) == [wp_a, wp_c]
+
+
+def test_set_workpiece_uids_normalizes_and_signals(step):
+    """set_workpiece_uids dedupes and fires updated only on change."""
+    handler = MagicMock()
+    step.updated.connect(handler)
+
+    step.set_workpiece_uids(["wp-a", "wp-b", "wp-a"])
+    assert step.workpiece_uids == ["wp-a", "wp-b"]
+    handler.assert_called_once_with(step)
+    handler.reset_mock()
+
+    step.set_workpiece_uids(["wp-a", "wp-b"])
+    handler.assert_not_called()
 
 
 def test_capability_defaults_applied_in_constructor():
@@ -407,14 +506,141 @@ def test_deserialization_with_missing_step_class():
     assert data["step_type"] == "NonExistentStepClass"
 
 
-def test_capabilities_property_returns_class_caps():
-    """capabilities exposes the class-level CAPABILITIES."""
+def test_common_recipe_varset_groups_intersects_keys():
+    """common_recipe_varset_groups keeps only keys shared by all types."""
+    from rayforge.core.varset import BoolVar, SpeedVar, VarSet
 
-    class CutStep(Step):
-        CAPABILITIES = (CUT,)
+    class StepA(Step):
+        @classmethod
+        def recipe_varset(cls):
+            return VarSet(
+                vars=[
+                    SpeedVar(
+                        key="cut_speed",
+                        label="Cut",
+                        default=1,
+                        min_val=1,
+                        role="cut",
+                    ),
+                    SpeedVar(
+                        key="travel_speed",
+                        label="Travel",
+                        default=1,
+                        min_val=1,
+                        role="travel",
+                    ),
+                    BoolVar(key="only_a", label="A", default=False),
+                ]
+            )
 
-    cs = CutStep(typelabel="Test")
-    assert cs.capabilities == (CUT,)
+    class StepB(Step):
+        @classmethod
+        def recipe_varset(cls):
+            return VarSet(
+                vars=[
+                    SpeedVar(
+                        key="cut_speed",
+                        label="Cut",
+                        default=1,
+                        min_val=1,
+                        role="cut",
+                    ),
+                    SpeedVar(
+                        key="travel_speed",
+                        label="Travel",
+                        default=1,
+                        min_val=1,
+                        role="travel",
+                    ),
+                    BoolVar(key="only_b", label="B", default=False),
+                ]
+            )
+
+    common = Step.common_recipe_varset_groups([StepA, StepB])
+    keys = {var.key for _, varset in common for var in varset}
+    assert keys == {"cut_speed", "travel_speed"}
+
+    # A single class returns its own groups unchanged.
+    single = Step.common_recipe_varset_groups([StepA])
+    single_keys = {var.key for _, varset in single for var in varset}
+    assert "only_a" in single_keys
+
+    # No classes -> base Step groups.
+    empty = Step.common_recipe_varset_groups([])
+    base = Step.recipe_varset_groups()
+    assert [title for title, _ in empty] == [title for title, _ in base]
+    assert {var.key for _, varset in empty for var in varset} == {
+        var.key for _, varset in base for var in varset
+    }
+
+
+def test_common_transformer_dicts_intersects_names():
+    """common_transformer_dicts keeps only transformers shared by all types."""
+
+    class StepA(Step):
+        @classmethod
+        def get_default_transformers_dicts(cls):
+            return (
+                [
+                    {
+                        "name": "Optimize",
+                        "enabled": True,
+                        "amount": 5,
+                    },
+                    {"name": "OnlyA", "enabled": True, "param": 1},
+                ],
+                [{"name": "PerStepOnly", "enabled": True}],
+            )
+
+    class StepB(Step):
+        @classmethod
+        def get_default_transformers_dicts(cls):
+            return (
+                [
+                    {"name": "Optimize", "enabled": True, "amount": 9},
+                    {"name": "OnlyB", "enabled": True},
+                ],
+                [{"name": "PerStepOnly", "enabled": True}],
+            )
+
+    common = Step.common_transformer_dicts([StepA, StepB])
+    names = [d["name"] for d in common]
+    assert names == ["Optimize", "PerStepOnly"]
+
+    # Structural reference is the first type's dicts (copied).
+    optimize = next(d for d in common if d["name"] == "Optimize")
+    assert optimize["amount"] == 5
+
+    # Copies are independent of the source dicts.
+    optimize["amount"] = 42
+    step_a_defaults, _ = StepA.get_default_transformers_dicts()
+    assert step_a_defaults[0]["amount"] == 5
+
+    # A single class returns its own transformer dicts.
+    single = Step.common_transformer_dicts([StepA])
+    single_names = {d["name"] for d in single}
+    assert single_names == {"Optimize", "OnlyA", "PerStepOnly"}
+
+    # No classes -> empty list.
+    assert Step.common_transformer_dicts([]) == []
+
+    # No shared transformers -> empty list.
+    class StepC(Step):
+        @classmethod
+        def get_default_transformers_dicts(cls):
+            return ([{"name": "OnlyC", "enabled": True}], [])
+
+    assert Step.common_transformer_dicts([StepC, StepB]) == []
+
+
+def test_dedupe_transformer_dicts_by_name_keeps_first():
+    """_dedupe_transformer_dicts_by_name keeps the first dict per name."""
+    first = {"name": "Optimize", "enabled": True, "amount": 1}
+    second = {"name": "Optimize", "enabled": False, "amount": 2}
+    other = {"name": "Smooth", "enabled": True}
+    result = Step._dedupe_transformer_dicts_by_name([first, second, other])
+    assert result["Optimize"] is first
+    assert result["Smooth"] is other
 
 
 def test_base_step_has_no_operation_color(step):
@@ -434,6 +660,19 @@ def test_set_coolant_method_fires_updated(step):
     step.set_coolant_method(CoolantMode.FLOOD)
     assert step.coolant_method is CoolantMode.FLOOD
     handler.assert_called_once_with(step)
+
+
+def test_set_coolant_method_accepts_name_string(step):
+    """set_coolant_method resolves varset/recipe name strings."""
+    step.set_coolant_method("MIST")
+    assert step.coolant_method is CoolantMode.MIST
+
+    step.set_coolant_method("FLOOD")
+    assert step.coolant_method is CoolantMode.FLOOD
+
+    # Unknown names fall back to OFF.
+    step.set_coolant_method("BOGUS")
+    assert step.coolant_method is CoolantMode.OFF
 
 
 def test_coolant_method_serialization_round_trip(step):
@@ -532,3 +771,29 @@ def test_create_initial_ops_omits_off_coolant(step):
     """OFF coolant produces no coolant op."""
     ops = step.create_initial_ops()
     assert len(ops) == 0
+
+
+def test_check_skips_travel_speed_without_support(sync_machine):
+    """No travel speed warning when the machine's dialect cannot emit it."""
+    sync_machine.max_cut_speed = 1000
+    sync_machine.max_travel_speed = 5000
+    step = Step(typelabel="Test")
+    step.cut_speed = 500
+    step.travel_speed = 99999
+
+    assert not sync_machine.supports_travel_speed()
+    assert step.check(sync_machine) == []
+
+
+def test_check_warns_on_travel_speed_with_support(sync_machine):
+    """Travel speed above the machine's max warns when supported."""
+    sync_machine.set_dialect_uid("smoothieware")
+    sync_machine.max_cut_speed = 1000
+    sync_machine.max_travel_speed = 5000
+    step = Step(typelabel="Test")
+    step.cut_speed = 500
+    step.travel_speed = 99999
+
+    assert sync_machine.supports_travel_speed()
+    warnings = step.check(sync_machine)
+    assert any("Travel speed" in w for w in warnings)

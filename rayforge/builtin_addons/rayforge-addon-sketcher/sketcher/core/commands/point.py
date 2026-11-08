@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from gettext import gettext as _
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from raygeo.geo.types import Point as GeoPoint
 
@@ -28,9 +28,7 @@ class MovePointCommand(SketchChangeCommand):
         point_id: EntityID,
         start_pos: GeoPoint,
         end_pos: GeoPoint,
-        # snapshot is: (points_dict, entities_dict)
-        snapshot: tuple[dict[EntityID, GeoPoint], dict[EntityID, Any]]
-        | None = None,
+        snapshot: dict | None = None,
         snap_constraints: list[Constraint] | None = None,
     ):
         super().__init__(sketch, _("Move Point"))
@@ -41,7 +39,7 @@ class MovePointCommand(SketchChangeCommand):
         self._snap_constraints: list[Constraint] = snap_constraints or []
         self._created_constraints: list[Constraint] = []
 
-        # If we are provided a snapshot (from the tool), use it.
+        # If we are provided with a snapshot (from the tool), use it.
         # This is critical because the drag operation changes coordinates
         # *before* the command is executed.
         if snapshot:
@@ -110,6 +108,7 @@ class MoveControlPointCommand(SketchChangeCommand):
         cp_index: int,
         start_offset: GeoPoint | None,
         end_offset: GeoPoint | None,
+        snapshot: dict | None = None,
     ):
         label = _("Move Control Point")
         super().__init__(sketch, label)
@@ -117,6 +116,11 @@ class MoveControlPointCommand(SketchChangeCommand):
         self.cp_index = cp_index
         self.start_offset = start_offset
         self.end_offset = end_offset
+        # If we are provided with a snapshot (from the tool), use it.
+        # This is critical because the drag operation changes coordinates
+        # *before* the command is executed.
+        if snapshot:
+            self._snapshot = snapshot
 
     def _get_bezier(self) -> Bezier | None:
         entity = self.sketch.registry.get_entity(self.bezier_id)
@@ -227,6 +231,53 @@ class UnstickJunctionCommand(SketchChangeCommand):
         # Remove the added point
         if self.new_point:
             registry = self.sketch.registry
-            registry.points = [
-                p for p in registry.points if p.id != self.new_point.id
-            ]
+            registry.remove_points([self.new_point.id])
+
+
+class MoveEntitiesCommand(SketchChangeCommand):
+    """An undoable command for moving one or more entities as a group."""
+
+    def __init__(
+        self,
+        sketch: Sketch,
+        entity_ids: list[int],
+        start_positions: dict[EntityID, GeoPoint],
+        end_positions: dict[EntityID, GeoPoint],
+        snapshot: dict | None = None,
+    ):
+        super().__init__(sketch, _("Move Entities"))
+        self.entity_ids = list(entity_ids)
+        self.start_positions = dict(start_positions)
+        self.end_positions = dict(end_positions)
+        if snapshot:
+            self._snapshot = snapshot
+
+    def _apply_positions(self, positions: dict[EntityID, GeoPoint]):
+        registry = self.sketch.registry
+        for pid, (x, y) in positions.items():
+            try:
+                p = registry.get_point(pid)
+                p.x = x
+                p.y = y
+            except IndexError:
+                pass
+
+    def _do_execute(self) -> None:
+        self._apply_positions(self.end_positions)
+
+    def _do_undo(self) -> None:
+        self._apply_positions(self.start_positions)
+
+    def can_coalesce_with(self, next_command: Command) -> bool:
+        return (
+            isinstance(next_command, MoveEntitiesCommand)
+            and self.entity_ids == next_command.entity_ids
+        )
+
+    def coalesce_with(self, next_command: Command) -> bool:
+        if not self.can_coalesce_with(next_command):
+            return False
+        assert isinstance(next_command, MoveEntitiesCommand)
+        self.end_positions = next_command.end_positions
+        self.timestamp = next_command.timestamp
+        return True

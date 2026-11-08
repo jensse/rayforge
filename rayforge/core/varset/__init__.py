@@ -1,26 +1,31 @@
+from .anglevar import AngleVar
 from .appkeyvar import AppKeyVar
 from .baudratevar import BaudrateVar
 from .boolvar import BoolVar
 from .choicevar import ChoiceVar
+from .codevar import CodeVar
 from .floatvar import FloatVar, SliderFloatVar
 from .hostnamevar import HostnameVar
-from .intvar import IntVar
+from .intvar import IntVar, SliderIntVar
 from .labeledchoicevar import LabeledChoiceVar
 from .lengthvar import LengthVar
 from .oauthvar import OAuthFlowVar
 from .portvar import PortVar
-from .serialportvar import SerialPortVar
+from .serialportvar import SerialPortVar, format_vidpid, parse_vidpid
 from .speedvar import SpeedVar
 from .textareavar import TextAreaVar
+from .tuplevar import TupleVar
 from .urlvar import UrlVar, WebsocketUrlVar
 from .var import ValidationError, Var, get_editable_var_types
 from .varset import VarSet, merge_varsets
 
 __all__ = [
+    "AngleVar",
     "AppKeyVar",
     "BaudrateVar",
     "BoolVar",
     "ChoiceVar",
+    "CodeVar",
     "FloatVar",
     "HostnameVar",
     "IntVar",
@@ -30,13 +35,17 @@ __all__ = [
     "PortVar",
     "SerialPortVar",
     "SliderFloatVar",
+    "SliderIntVar",
     "SpeedVar",
     "TextAreaVar",
+    "TupleVar",
     "UrlVar",
     "ValidationError",
     "Var",
     "VarSet",
     "WebsocketUrlVar",
+    "format_vidpid",
     "get_editable_var_types",
     "merge_varsets",
+    "parse_vidpid",
 ]

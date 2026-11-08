@@ -1,5 +1,7 @@
 ---
-description: "Canvas tools in Rayforge — select, move, resize, and transform workpieces. Master the design canvas for laser cutting and engraving projects."
+description:
+  "Canvas tools in Rayforge — select, move, resize, and transform workpieces. Master the design
+  canvas for laser cutting and engraving projects."
 ---
 
 # Canvas Tools
@@ -21,7 +23,8 @@ Select, move, and transform objects on the canvas.
 
 Holding modifier keys while dragging changes the behavior:
 
-- <kbd>ctrl</kbd> while **moving**: Snaps the object to the 5mm grid, making it easy to align objects precisely
+- <kbd>ctrl</kbd> while **moving**: Snaps the object to the 5mm grid, making it easy to align
+  objects precisely
 - <kbd>ctrl</kbd> while **rotating**: Snaps rotation to 5-degree increments for consistent angles
 - <kbd>shift</kbd> while **scaling**: Constrains proportions (scales uniformly)
 - <kbd>ctrl</kbd> while **scaling**: Scales from the center instead of the opposite edge
@@ -30,7 +33,8 @@ Holding modifier keys while dragging changes the behavior:
 
 - **Corner handles**: Scale proportionally (hold <kbd>shift</kbd> to scale non-proportionally)
 - **Edge handles**: Scale in one direction
-- **Rotation handle**: Click once on a selected object to toggle rotation mode, then drag to rotate around the center point
+- **Rotation handle**: Click once on a selected object to toggle rotation mode, then drag to rotate
+  around the center point
 
 **Keyboard Shortcuts:**
 
@@ -98,11 +102,27 @@ Transform objects numerically for precision.
 
 ## Vector Editing
 
-Double-click a workpiece on the canvas to enter vector editing mode. In this
-mode, you can select and delete individual vector segments of the workpiece.
+Double-click an imported workpiece on the canvas to enter vector editing mode. In this mode, you can
+select and delete individual vector segments of the workpiece, and edit its nodes.
 
-To exit vector editing mode, click outside the workpiece or press
-<kbd>Escape</kbd>.
+Click a segment to select it, or drag a frame around several. The nodes of the selected contour
+appear as small squares, and the handles of selected curves as round dots:
+
+- **Drag a node** to move it; the curve handles next to it move along. In a closed path the start
+  and end node are one node.
+- **Drag a handle** to change the shape of a curve.
+- Click a node and press <kbd>Delete</kbd> to remove it; the segments on both sides join into one.
+  With no node selected, <kbd>Delete</kbd> removes the selected segments.
+- Point at a segment and press <kbd>I</kbd> to insert a node there.
+- Press <kbd>C</kbd> to turn the selected segments into curves, or back into straight lines when
+  they are all curves already.
+
+Every change can be undone. Sketches are edited in the Sketcher instead.
+
+To exit vector editing mode, click outside the workpiece or press <kbd>Escape</kbd>.
+
+To close gaps, join open pieces, delete duplicate paths or break a workpiece apart, use the
+[Path Clean-Up](../features/path-cleanup.md) tools.
 
 ---
 

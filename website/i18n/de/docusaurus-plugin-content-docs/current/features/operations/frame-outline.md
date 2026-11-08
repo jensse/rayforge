@@ -1,6 +1,8 @@
 # Rahmen-Umriss
 
-Rahmen-Umriss erzeugt einen einfachen rechteckigen Schneidepfad um dein gesamtes Design. Es ist der schnellste Weg, einen sauberen Rahmen hinzuzufügen oder deine Arbeit frei vom Materialblatt zu schneiden.
+Rahmen-Umriss erzeugt einen einfachen rechteckigen Schneidepfad um dein gesamtes Design. Es ist der
+schnellste Weg, einen sauberen Rahmen hinzuzufügen oder deine Arbeit frei vom Materialblatt zu
+schneiden.
 
 ## Übersicht
 
@@ -49,11 +51,13 @@ Konfiguriere die Rahmen-Parameter:
 
 ## Haupt-Einstellungen
 
-Der Schritt-Einstellungen-Dialog hat drei Registerkarten: **Schritt-Einstellungen**, **Laser** und **Nachbearbeitung**. Die Einstellungen werden unten in Registerkarten-Reihenfolge beschrieben.
+Der Schritt-Einstellungen-Dialog hat vier Registerkarten: **Schritt-Einstellungen**, **Laser**,
+**Nachbearbeitung** und **Werkstücke**. Die Einstellungen werden unten in Registerkarten-Reihenfolge
+beschrieben.
 
 ### Geometrie
 
-![Rahmen-Umriss Schritt-Einstellungen](/screenshots/step-settings-frame-outline-general.png)
+![Rahmen-Umriss Schritt-Einstellungen](/screenshots/step-settings-frame-outline-general.webp)
 
 Die Gruppe **Geometrie** auf der Registerkarte _Schritt-Einstellungen_ steuert die Form des Rahmens.
 
@@ -80,11 +84,25 @@ Steuert, wo der Laser relativ zum Rahmenpfad schneidet:
 - **2-5mm:** Kleiner Rand für ein sauberes Aussehen
 - **10mm+:** Großer Rand für Montage oder Handhabung
 
+#### Abgerundete Ecken
+
+Aktiviere **Abgerundete Ecken**, um die scharfen 90°-Ecken des Rahmens durch abgerundete Bögen zu
+ersetzen, und lege den **Eckenradius** in mm fest. Der Radius wird automatisch verringert, wenn er
+zu groß ist, um in den Rahmen zu passen.
+
+- **0mm:** Scharfe Ecken (Standard)
+- **3-10mm:** Weichere Ecken, die leichter zu handhaben sind
+- **Größer:** Stark abgerundeter Rahmen, begrenzt auf die Hälfte der kürzeren Rahmenseite
+
+Abgerundete Ecken sind nützlich für Materialien, die bei scharfen Winkeln splittern oder ausbrechen,
+und ersparen das Nachbearbeiten des Rahmens oder das manuelle Zeichnen eines abgerundeten Umrisses.
+
 ### Laser-Einstellungen
 
-![Laser-Einstellungen](/screenshots/step-settings-frame-outline-laser.png)
+![Laser-Einstellungen](/screenshots/step-settings-frame-outline-laser.webp)
 
-Leistung, Geschwindigkeit und Laserkopf-Auswahl befinden sich auf der Seite **Laser** des Schritt-Einstellungen-Dialogs.
+Leistung, Geschwindigkeit und Laserkopf-Auswahl befinden sich auf der Seite **Laser** des
+Schritt-Einstellungen-Dialogs.
 
 #### Leistung & Geschwindigkeit
 
@@ -98,7 +116,20 @@ Leistung, Geschwindigkeit und Laserkopf-Auswahl befinden sich auf der Seite **La
 - Wie schnell sich der Laser bewegt
 - Langsamer für dickere Materialien
 
-Um den Rahmen mehr als einmal zu schneiden, füge einen [Mehrfach-Durchgang](../multi-pass.md)-Nachbearbeitungsprozessor hinzu.
+#### Leistungsmodus
+
+Die Einstellung Leistungsmodus steuert, wie die Laserleistung während der Bewegungen ausgegeben
+wird:
+
+- **Dynamisch (M4)** skaliert die Leistung mit der Bewegungsgeschwindigkeit (Standard)
+- **Konstant (M3)** hält die Leistung unabhängig von der Geschwindigkeit fest
+
+Der dynamische Modus reduziert die Leistung, wenn der Kopf in eine Ecke abbremst, was auf manchen
+Maschinen dazu führt, dass Ecken zu schwach gebrannt werden. Wechsle zu **Konstant (M3)**, wenn die
+Ecken des Rahmens zu schwach brennen.
+
+Um den Rahmen mehr als einmal zu schneiden, füge einen
+[Mehrfach-Durchgang](../multi-pass.md)-Nachbearbeitungsprozessor hinzu.
 
 #### Schnittbreiten-Kompensation
 
@@ -110,15 +141,17 @@ Rahmen-Umriss unterstützt Schnittbreiten-Kompensation:
 
 ## Nachbearbeitung
 
-![Rahmen-Umriss Nachbearbeitungseinstellungen](/screenshots/step-settings-frame-outline-post.png)
+![Rahmen-Umriss Nachbearbeitungseinstellungen](/screenshots/step-settings-frame-outline-post.webp)
 
 Rahmen-Umriss-Operationen unterstützen mehrere Nachbearbeitungsoptionen:
 
 - **[Halte-Laschen](../holding-tabs.md)** - Das eingerahmte Teil am Rohmaterial befestigt halten
-- **[Auf Rohmaterial zuschneiden](../crop-to-stock.md)** - Schnitte auf die Materialgrenze beschränken
+- **[Auf Rohmaterial zuschneiden](../crop-to-stock.md)** - Schnitte auf die Materialgrenze
+  beschränken
 - **[Pfad-Optimierung](../path-optimization.md)** - Verfahrdistanz reduzieren
 - **[Mehrfach-Durchgang](../multi-pass.md)** - Schnitte für dicke Materialien wiederholen
-- **[Ein-/Auslauf](../lead-in-out.md)** - Nullleistungs-An- und Abfahrtsbewegungen für sauberere Schnittenden hinzufügen
+- **[Ein-/Auslauf](../lead-in-out.md)** - Nullleistungs-An- und Abfahrtsbewegungen für sauberere
+  Schnittenden hinzufügen
 
 ## Anwendungsfälle
 

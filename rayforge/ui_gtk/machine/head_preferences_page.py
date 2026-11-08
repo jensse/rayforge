@@ -398,6 +398,13 @@ class LaserHeadDetailWidget(DebounceMixin):
             title=_("Laser Properties"),
             description=_("Configure the selected laser head."),
         )
+        self.optics_group = Adw.PreferencesGroup(
+            title=_("Laser Optics"),
+            description=_(
+                "Optical power, beam, and focal parameters that "
+                "drive the physical burn model."
+            ),
+        )
         self.pwm_group = Adw.PreferencesGroup(
             title=_("PWM"),
             description=_(
@@ -412,11 +419,20 @@ class LaserHeadDetailWidget(DebounceMixin):
                 "traces the job boundary."
             ),
         )
+        self.pointer_group = Adw.PreferencesGroup(
+            title=_("Pointer Offset"),
+            description=_(
+                "Compensation for a pointer laser mounted at a fixed "
+                "offset from the cutting beam."
+            ),
+        )
         self.model_group = HeadModelGroup()
         self.groups: list[Adw.PreferencesGroup] = [
             self.properties_group,
+            self.optics_group,
             self.pwm_group,
             self.frame_group,
+            self.pointer_group,
             self.model_group,
         ]
         self._build_ui()
@@ -456,6 +472,43 @@ class LaserHeadDetailWidget(DebounceMixin):
         )
         self.properties_group.add(self.laser_type_row)
 
+        self.wavelength_row = SpinRow(
+            _("Wavelength (nm)"),
+            _(
+                "Emission wavelength. Set to 0 to follow the "
+                "laser type default."
+            ),
+            lower=0,
+            upper=20000,
+            step_increment=1,
+            value=0,
+        )
+        self._handler_ids["wavelength"] = (
+            self.wavelength_row.value_changed.connect(
+                self._on_wavelength_changed
+            )
+        )
+        self.optics_group.add(self.wavelength_row)
+
+        self.optical_power_row = SpinRow(
+            _("Max Optical Power (W)"),
+            _(
+                "Real optical output power at full S-value. "
+                "Set to 0 to use the 40 W default."
+            ),
+            lower=0,
+            upper=1000,
+            step_increment=1,
+            digits=1,
+            value=0,
+        )
+        self._handler_ids["optical_power"] = (
+            self.optical_power_row.value_changed.connect(
+                self._on_optical_power_changed
+            )
+        )
+        self.optics_group.add(self.optical_power_row)
+
         self.max_power_row = SpinRow(
             _("Max Power"),
             _("Maximum power value in GCode"),
@@ -463,7 +516,7 @@ class LaserHeadDetailWidget(DebounceMixin):
             value=0,
         )
         self.max_power_row.value_changed.connect(self._on_max_power_changed)
-        self.properties_group.add(self.max_power_row)
+        self.optics_group.add(self.max_power_row)
 
         self.focus_power_row = SpinRow(
             _("Focus Power"),
@@ -476,7 +529,7 @@ class LaserHeadDetailWidget(DebounceMixin):
         self.focus_power_row.value_changed.connect(
             self._on_focus_power_changed
         )
-        self.properties_group.add(self.focus_power_row)
+        self.optics_group.add(self.focus_power_row)
 
         self.spot_size_x_row = LengthSpinRow(
             _("Spot Size X"),
@@ -488,7 +541,7 @@ class LaserHeadDetailWidget(DebounceMixin):
             value_in_base=0.1,
         )
         self.spot_size_x_row.value_changed.connect(self._on_spot_size_changed)
-        self.properties_group.add(self.spot_size_x_row)
+        self.optics_group.add(self.spot_size_x_row)
 
         self.spot_size_y_row = LengthSpinRow(
             _("Spot Size Y"),
@@ -500,33 +553,20 @@ class LaserHeadDetailWidget(DebounceMixin):
             value_in_base=0.1,
         )
         self.spot_size_y_row.value_changed.connect(self._on_spot_size_changed)
-        self.properties_group.add(self.spot_size_y_row)
+        self.optics_group.add(self.spot_size_y_row)
 
-        self.cut_color_button = Gtk.ColorButton()
+        self.cut_color_button = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog())
         self.cut_color_button.set_size_request(32, 32)
         self.cut_color_row = Adw.ActionRow(
-            title=_("Cut Color"),
-            subtitle=_("Color for cutting operations"),
+            title=_("Color"),
+            subtitle=_("Color used for operations of this laser"),
             activatable_widget=self.cut_color_button,
         )
         self.cut_color_row.add_suffix(self.cut_color_button)
         self._handler_ids["cut_color"] = self.cut_color_button.connect(
-            "color-set", self._on_cut_color_changed
+            "notify::rgba", self._on_cut_color_changed
         )
         self.properties_group.add(self.cut_color_row)
-
-        self.raster_color_button = Gtk.ColorButton()
-        self.raster_color_button.set_size_request(32, 32)
-        self.raster_color_row = Adw.ActionRow(
-            title=_("Raster Color"),
-            subtitle=_("Color for engraving/raster operations"),
-            activatable_widget=self.raster_color_button,
-        )
-        self.raster_color_row.add_suffix(self.raster_color_button)
-        self._handler_ids["raster_color"] = self.raster_color_button.connect(
-            "color-set", self._on_raster_color_changed
-        )
-        self.properties_group.add(self.raster_color_row)
 
         self.focal_distance_row = LengthSpinRow(
             _("Focal Distance"),
@@ -537,7 +577,7 @@ class LaserHeadDetailWidget(DebounceMixin):
         self.focal_distance_row.value_changed.connect(
             self._on_focal_distance_changed
         )
-        self.properties_group.add(self.focal_distance_row)
+        self.optics_group.add(self.focal_distance_row)
 
         self.pwm_frequency_row = SpinRow(
             _("PWM Frequency"),
@@ -598,7 +638,10 @@ class LaserHeadDetailWidget(DebounceMixin):
 
         self.frame_power_row = SpinRow(
             _("Frame Power"),
-            _("Power value in percent to use when framing. 0 to disable"),
+            _(
+                "Power value in percent to use when framing. "
+                "0 traces the outline with the beam off"
+            ),
             upper=100,
             step_increment=0.1,
             digits=2,
@@ -652,6 +695,54 @@ class LaserHeadDetailWidget(DebounceMixin):
         )
         self.frame_group.add(self.frame_corner_pause_row)
 
+        self.pointer_enabled_row = Adw.SwitchRow()
+        self.pointer_enabled_row.set_title(_("Use Pointer Offset"))
+        self.pointer_enabled_row.set_subtitle(
+            _(
+                "Compensate when setting the work zero at the current "
+                "position, so the origin lands where the pointer dot "
+                "marks the stock"
+            )
+        )
+        self._handler_ids["pointer_enabled"] = (
+            self.pointer_enabled_row.connect(
+                "notify::active", self._on_pointer_enabled_changed
+            )
+        )
+        self.pointer_group.add(self.pointer_enabled_row)
+
+        self.pointer_offset_x_row = LengthSpinRow(
+            _("Pointer Offset X"),
+            _(
+                "Distance from the beam spot to the pointer dot along "
+                "the machine X axis"
+            ),
+            lower=-10000.0,
+            upper=10000.0,
+            step_increment=0.1,
+            value_in_base=0.0,
+        )
+        self.pointer_offset_x_row.value_changed.connect(
+            self._on_pointer_offset_changed
+        )
+        self.pointer_group.add(self.pointer_offset_x_row)
+
+        self.pointer_offset_y_row = LengthSpinRow(
+            _("Pointer Offset Y"),
+            _(
+                "Distance from the beam spot to the pointer dot along "
+                "the machine Y axis"
+            ),
+            lower=-10000.0,
+            upper=10000.0,
+            step_increment=0.1,
+            value_in_base=0.0,
+        )
+        self.pointer_offset_y_row.value_changed.connect(
+            self._on_pointer_offset_changed
+        )
+        self.pointer_group.add(self.pointer_offset_y_row)
+
     def set_head(self, head: LaserHead | None):
         """Syncs the laser rows with the given head."""
         self._head = head
@@ -663,13 +754,13 @@ class LaserHeadDetailWidget(DebounceMixin):
         for group in self.groups:
             group.set_visible(True)
 
-        # Block handlers to prevent feedback loop
+        # Block handlers to prevent feedback loop. Only the GObject
+        # signal rows (name, laser_type, color buttons) need blocking;
+        # SpinRow.value_changed is a blinker signal that set_value
+        # already suppresses via _is_updating.
         self.name_row.handler_block(self._handler_ids["name"])
         self.laser_type_row.handler_block(self._handler_ids["laser_type"])
         self.cut_color_button.handler_block(self._handler_ids["cut_color"])
-        self.raster_color_button.handler_block(
-            self._handler_ids["raster_color"]
-        )
 
         self.name_row.set_text(head.name)
         self.tool_number_row.set_value(head.tool_number)
@@ -679,12 +770,26 @@ class LaserHeadDetailWidget(DebounceMixin):
         self.spot_size_x_row.set_value_in_base_units(spot_x)
         self.spot_size_y_row.set_value_in_base_units(spot_y)
         self._set_color_button(self.cut_color_button, head.cut_color)
-        self._set_color_button(self.raster_color_button, head.raster_color)
         self.focal_distance_row.set_value_in_base_units(head.focal_distance)
         self.frame_power_row.set_value(head.frame_power_percent * 100)
         self.frame_speed_row.set_value_in_base_units(head.frame_speed)
         self.frame_repeat_row.set_value(head.frame_repeat_count)
         self.frame_corner_pause_row.set_value(head.frame_corner_pause)
+
+        self.pointer_enabled_row.handler_block(
+            self._handler_ids["pointer_enabled"]
+        )
+        self.pointer_enabled_row.set_active(head.pointer_offset_enabled)
+        self.pointer_enabled_row.handler_unblock(
+            self._handler_ids["pointer_enabled"]
+        )
+        self.pointer_offset_x_row.set_value_in_base_units(
+            head.pointer_offset_x
+        )
+        self.pointer_offset_y_row.set_value_in_base_units(
+            head.pointer_offset_y
+        )
+        self._update_pointer_rows_sensitivity()
 
         try:
             type_idx = self._laser_type_values.index(head.laser_type)
@@ -692,6 +797,8 @@ class LaserHeadDetailWidget(DebounceMixin):
             type_idx = 0
         self.laser_type_row.set_selected(type_idx)
 
+        self.wavelength_row.set_value(head.effective_wavelength_nm())
+        self.optical_power_row.set_value(head.effective_max_power_watts())
         self.pwm_frequency_row.set_value(head.pwm_frequency)
         self.max_pwm_frequency_row.set_value(head.max_pwm_frequency)
         self.pulse_width_row.set_value(head.pulse_width)
@@ -703,9 +810,6 @@ class LaserHeadDetailWidget(DebounceMixin):
         self.name_row.handler_unblock(self._handler_ids["name"])
         self.laser_type_row.handler_unblock(self._handler_ids["laser_type"])
         self.cut_color_button.handler_unblock(self._handler_ids["cut_color"])
-        self.raster_color_button.handler_unblock(
-            self._handler_ids["raster_color"]
-        )
 
     def _on_name_changed(self, entry_row):
         """Update the name of the selected laser."""
@@ -740,14 +844,14 @@ class LaserHeadDetailWidget(DebounceMixin):
         y = self.spot_size_y_row.get_value_in_base_units()
         self._head.set_spot_size(x, y)
 
-    def _set_color_button(self, button: Gtk.ColorButton, hex_color: str):
+    def _set_color_button(self, button: Gtk.ColorDialogButton, hex_color: str):
         """Set the color button from a hex color string."""
         rgba = Gdk.RGBA()
         if not rgba.parse(hex_color):
             rgba.parse("#ff00ff")
         button.set_rgba(rgba)
 
-    def _get_hex_color(self, button: Gtk.ColorButton) -> str:
+    def _get_hex_color(self, button: Gtk.ColorDialogButton) -> str:
         """Get the hex color string from a color button."""
         rgba = button.get_rgba()
         r = int(rgba.red * 255)
@@ -755,15 +859,10 @@ class LaserHeadDetailWidget(DebounceMixin):
         b = int(rgba.blue * 255)
         return f"#{r:02x}{g:02x}{b:02x}"
 
-    def _on_cut_color_changed(self, button: Gtk.ColorButton):
-        """Update the cut color of the selected laser."""
+    def _on_cut_color_changed(self, button: Gtk.ColorDialogButton):
+        """Update the color of the selected laser."""
         if self._head:
             self._head.set_cut_color(self._get_hex_color(button))
-
-    def _on_raster_color_changed(self, button: Gtk.ColorButton):
-        """Update the raster color of the selected laser."""
-        if self._head:
-            self._head.set_raster_color(self._get_hex_color(button))
 
     def _on_frame_speed_changed(self, spinrow):
         """Update the frame speed of the selected laser."""
@@ -782,6 +881,27 @@ class LaserHeadDetailWidget(DebounceMixin):
         if self._head:
             self._head.set_frame_corner_pause(spinrow.get_value())
 
+    def _on_pointer_enabled_changed(self, row, _param):
+        """Update the pointer offset toggle of the selected laser."""
+        if self._head:
+            self._head.set_pointer_offset_enabled(row.get_active())
+        self._update_pointer_rows_sensitivity()
+
+    def _on_pointer_offset_changed(self, spinrow):
+        """Update the pointer offset of the selected laser."""
+        if not self._head:
+            return
+        self._head.set_pointer_offset(
+            self.pointer_offset_x_row.get_value_in_base_units(),
+            self.pointer_offset_y_row.get_value_in_base_units(),
+        )
+
+    def _update_pointer_rows_sensitivity(self):
+        """Grays out the offset fields while the pointer offset is off."""
+        enabled = self.pointer_enabled_row.get_active()
+        self.pointer_offset_x_row.set_sensitive(enabled)
+        self.pointer_offset_y_row.set_sensitive(enabled)
+
     def _on_focal_distance_changed(self, spinrow):
         if self._head:
             self._head.set_focal_distance(
@@ -795,6 +915,27 @@ class LaserHeadDetailWidget(DebounceMixin):
         if selected < len(self._laser_type_values):
             self._head.set_laser_type(self._laser_type_values[selected])
             self._update_pwm_visibility()
+            # When the stored wavelength is 0 (sentinel for "follow
+            # laser type default"), refresh the row to show the new
+            # type's default without writing it back — the sentinel
+            # is preserved so future type changes keep following.
+            # SpinRow.set_value suppresses value_changed via its
+            # internal _is_updating guard, so no handler blocking is
+            # needed.
+            if self._head.wavelength_nm == 0:
+                self.wavelength_row.set_value(
+                    self._head.effective_wavelength_nm()
+                )
+
+    def _on_wavelength_changed(self, spinrow):
+        if self._head:
+            self._head.wavelength_nm = spinrow.get_value()
+            self._head.changed.send(self._head)
+
+    def _on_optical_power_changed(self, spinrow):
+        if self._head:
+            self._head.max_power_watts = spinrow.get_value()
+            self._head.changed.send(self._head)
 
     def _update_pwm_visibility(self):
         if self._head is not None:

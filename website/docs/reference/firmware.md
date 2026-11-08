@@ -1,5 +1,7 @@
 ---
-description: "Supported firmware in Rayforge — GRBL, Marlin, Smoothieware, and compatible controllers. Choose the right firmware for your laser cutter."
+description:
+  "Supported firmware in Rayforge — GRBL, Marlin, Smoothieware, and compatible controllers. Choose
+  the right firmware for your laser cutter."
 ---
 
 # Firmware Compatibility
@@ -8,7 +10,8 @@ This page documents firmware compatibility for laser controllers used with Rayfo
 
 ## Overview
 
-Rayforge is designed primarily for **GRBL-based controllers** but also supports Marlin, Smoothieware, and other firmware types.
+Rayforge is designed primarily for **GRBL-based controllers** but also supports Marlin,
+Smoothieware, and other firmware types.
 
 ### Compatibility Matrix
 
@@ -27,15 +30,14 @@ Rayforge is designed primarily for **GRBL-based controllers** but also supports 
 
 ## GRBL Firmware
 
-**Status:** Fully Supported
-**Versions:** 1.1+
-**Drivers:** GRBL Serial, GRBL Serial Simple
+**Status:** Fully Supported **Versions:** 1.1+ **Drivers:** GRBL Serial, GRBL Serial Simple
 
 ### GRBL 1.1 (Recommended)
 
 **What is GRBL 1.1?**
 
-GRBL 1.1 is the most common firmware for hobby CNC and laser machines. Released in 2017, it's stable, well-documented, and widely supported.
+GRBL 1.1 is the most common firmware for hobby CNC and laser machines. Released in 2017, it's
+stable, well-documented, and widely supported.
 
 **Features supported by Rayforge:**
 
@@ -99,8 +101,8 @@ GRBL 0.9 is an older version with some compatibility issues:
 
 ### GRBL Serial Simple Driver
 
-Rayforge includes a second GRBL serial driver for devices where the
-standard buffer-counting driver causes false alarms or communication errors.
+Rayforge includes a second GRBL serial driver for devices where the standard buffer-counting driver
+causes false alarms or communication errors.
 
 **How it works:**
 
@@ -118,16 +120,14 @@ standard buffer-counting driver causes false alarms or communication errors.
 **When not to use:**
 
 - The standard GRBL Serial driver works reliably for most devices
-- The simple driver lacks deadlock recovery, so jobs may stop on a lost
-  "ok" response without automatic recovery
+- The simple driver lacks deadlock recovery, so jobs may stop on a lost "ok" response without
+  automatic recovery
 
 ---
 
 ## grblHAL
 
-**Status:** Compatible
-**Versions:** 2023+
-**Driver:** GRBL Serial
+**Status:** Compatible **Versions:** 2023+ **Driver:** GRBL Serial
 
 ### What is grblHAL?
 
@@ -158,15 +158,13 @@ grblHAL is a modern fork of GRBL with enhanced features:
 
 ## GRBL Telnet Driver
 
-**Status:** Supported
-**Firmware:** grblHAL, ESP3D, and other networked GRBL controllers
-**Driver:** GRBL Telnet
+**Status:** Supported **Firmware:** grblHAL, ESP3D, and other networked GRBL controllers **Driver:**
+GRBL Telnet
 
 ### About the GRBL Telnet Driver
 
-The GRBL Telnet driver connects to GRBL-based controllers over the network
-via a Telnet interface. This is ideal for boards with built-in WiFi or
-Ethernet — no USB cable required.
+The GRBL Telnet driver connects to GRBL-based controllers over the network via a Telnet interface.
+This is ideal for boards with built-in WiFi or Ethernet — no USB cable required.
 
 **Features:**
 
@@ -191,12 +189,12 @@ Ethernet — no USB cable required.
 
 ## Smoothieware
 
-**Versions:** All
-**Driver:** SmoothieDriver (Telnet-based)
+**Versions:** All **Driver:** SmoothieDriver (Telnet-based)
 
 ### About SmoothieDriver
 
-Rayforge includes a dedicated SmoothieDriver that connects to Smoothieware controllers via Telnet over network. This provides native support rather than relying on GRBL compatibility mode.
+Rayforge includes a dedicated SmoothieDriver that connects to Smoothieware controllers via Telnet
+over network. This provides native support rather than relying on GRBL compatibility mode.
 
 **Features:**
 
@@ -226,13 +224,12 @@ Rayforge includes a dedicated SmoothieDriver that connects to Smoothieware contr
 
 ## Marlin
 
-**Versions:** 2.0+ with laser support
-**Driver:** Marlin Serial
+**Versions:** 2.0+ with laser support **Driver:** Marlin Serial
 
 ### Marlin Serial Driver
 
-Rayforge includes a dedicated MarlinSerialDriver that connects to Marlin firmware
-via serial (USB). Marlin 2.0+ can control lasers when properly configured.
+Rayforge includes a dedicated MarlinSerialDriver that connects to Marlin firmware via serial (USB).
+Marlin 2.0+ can control lasers when properly configured.
 
 **Features:**
 
@@ -475,36 +472,47 @@ $22=1       ; Homing enabled
 
 ---
 
-## Future Firmware Support
+## Ruida Controllers
 
-### Ruida Controllers
-
-Rayforge includes experimental support for Ruida-based controllers (e.g.
-RDC6442, RDC6445, Ruida R5). The Ruida driver connects over the network and
-supports jogging, position reporting, air assist control, layer selection,
-auto-connect, and status polling.
+Rayforge connects to Ruida-based controllers (e.g. RDC6442, RDC6445, Ruida R5) through the **Ruida
+RPA** driver, which talks the controller's native protocol over USB or UDP, or via TUI RPC through
+the Ruida Protocol Analyzer. The Generic Ruida RPA and Monport MP-570 60W CO2 device profiles
+provide starting points for new machines.
 
 **Features:**
 
-- Network connectivity (Ethernet/WiFi)
-- Position reporting
-- Jogging controls
-- Air assist and layer selection
-- Reference point support
+- USB and UDP connectivity; when both are configured, Rayforge swaps automatically between them as
+  cables are connected and disconnected
+- Job sending with position reporting, jogging, homing, and Move to Position
+- Framing traces the job outline with beam-off absolute moves, so it works without firing the laser
+- Honors each step's Power Mode setting: Dynamic (M4) enables the controller's power scaling and
+  Constant (M3) disables it
+- Serial ports can be bound from a USB device dropdown with VID:PID matching, so auto-reconnect
+  follows the machine after the OS re-enumerates USB devices
+
+**Power tuning settings:**
+
+- **Power scaling** — raises the emitted minimum power as the layer's cut speed decreases
+- **VECTOR power floor** — minimum power for vector cut compensation during acceleration and
+  deceleration, reducing over-burn at the ends of lines
+- **IMAGE power bias** — power added to raster scan lines, since CO2 tubes do not fire at very low
+  power settings
 
 **Limitations:**
 
-- Experimental — not yet fully stable
+- Experimental — so far tested on a RDC6442S controller (Monport MP570 CO2)
 - No G-code generation; Ruida uses its own proprietary protocol
-- Job sending is not yet supported
+- Rotary mode is not yet supported
 
 ---
 
+## Experimental Drivers
+
 ### OctoPrint
 
-Rayforge includes an experimental OctoPrint driver that submits G-code directly
-to an OctoPrint server over the network. This is useful if your laser is
-connected to a Raspberry Pi or other machine running OctoPrint.
+Rayforge includes an experimental OctoPrint driver that submits G-code directly to an OctoPrint
+server over the network. This is useful if your laser is connected to a Raspberry Pi or other
+machine running OctoPrint.
 
 **Features:**
 
@@ -520,8 +528,7 @@ connected to a Raspberry Pi or other machine running OctoPrint.
 1. Select "OctoPrint" driver in machine settings
 2. Enter the hostname or IP address of your OctoPrint server
 3. Set the port (default: 80)
-4. Click "Request Access" to obtain an API key through OctoPrint's
-   application key flow
+4. Click "Request Access" to obtain an API key through OctoPrint's application key flow
 5. Connect -- Rayforge will establish a WebSocket connection
 
 **Limitations:**

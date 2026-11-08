@@ -1,7 +1,9 @@
 import cairo
 import numpy as np
 from blinker import Signal
-from gi.repository import Gtk
+from gi.repository import Gdk, Gtk
+
+from .text import draw_centered_text
 
 
 class HistogramPreview(Gtk.DrawingArea):
@@ -19,6 +21,7 @@ class HistogramPreview(Gtk.DrawingArea):
         self._auto_mode: bool = True
         self._dragging: str | None = None
         self._hovering: str | None = None
+        self._drag_changed: bool = False
 
         self.black_point_changed = Signal()
         self.white_point_changed = Signal()
@@ -119,10 +122,34 @@ class HistogramPreview(Gtk.DrawingArea):
         handle = self._get_handle_at(x, y, width, self.get_height())
         if handle:
             self._dragging = handle
+            self._drag_changed = False
+            self._update_cursor()
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
 
     def _on_released(self, gesture, n_press, x, y):
+        handle = self._dragging
         self._dragging = None
+        if handle and self._drag_changed:
+            # Commit only once, on release, so the settings row and
+            # the pipeline react after the drag finishes instead of
+            # on every motion event in between.
+            if handle == "black":
+                self.black_point_changed.send(
+                    self, black_point=self._black_point
+                )
+            else:
+                self.white_point_changed.send(
+                    self, white_point=self._white_point
+                )
+        self._drag_changed = False
+        self._update_cursor()
+
+    def _update_cursor(self):
+        """Show a horizontal-drag cursor over a draggable marker."""
+        if self._dragging or self._hovering:
+            self.set_cursor(Gdk.Cursor.new_from_name("ew-resize"))
+        else:
+            self.set_cursor(None)
 
     def _on_motion(self, controller, x, y):
         if self._auto_mode:
@@ -139,27 +166,25 @@ class HistogramPreview(Gtk.DrawingArea):
                 new_black = min(value, self._white_point - 1)
                 if new_black != self._black_point:
                     self._black_point = new_black
+                    self._drag_changed = True
                     self.queue_draw()
-                    self.black_point_changed.send(
-                        self, black_point=self._black_point
-                    )
             else:
                 new_white = max(value, self._black_point + 1)
                 if new_white != self._white_point:
                     self._white_point = new_white
+                    self._drag_changed = True
                     self.queue_draw()
-                    self.white_point_changed.send(
-                        self, white_point=self._white_point
-                    )
         else:
             handle = self._get_handle_at(x, y, width, height)
             if handle != self._hovering:
                 self._hovering = handle
+                self._update_cursor()
                 self.queue_draw()
 
     def _on_leave(self, controller):
         if self._hovering:
             self._hovering = None
+            self._update_cursor()
             self.queue_draw()
 
     def _draw_func(self, area, ctx: cairo.Context, width: int, height: int):
@@ -168,28 +193,33 @@ class HistogramPreview(Gtk.DrawingArea):
         ctx.paint()
         ctx.set_operator(cairo.OPERATOR_OVER)
 
-        if self.histogram is None:
-            ctx.set_source_rgba(0.5, 0.5, 0.5, 1.0)
-            ctx.set_font_size(12)
-            ctx.move_to(width // 2 - 40, height // 2)
-            ctx.show_text("No image")
-            return
-
         draw_width = width - 2 * self.MARGIN
         draw_height = height - 2 * self.MARGIN
-        max_count = np.max(self.histogram) if np.max(self.histogram) > 0 else 1
 
-        bar_width = draw_width / len(self.histogram)
-
-        color = self.get_color()
-        ctx.set_source_rgba(color.red, color.green, color.blue, color.alpha)
-        for i, count in enumerate(self.histogram):
-            x = self.MARGIN + i * bar_width
-            bar_height = (count / max_count) * draw_height
-            ctx.rectangle(
-                x, height - self.MARGIN - bar_height, bar_width, bar_height
+        if self.histogram is not None:
+            max_count = (
+                np.max(self.histogram) if np.max(self.histogram) > 0 else 1
             )
-        ctx.fill()
+
+            bar_width = draw_width / len(self.histogram)
+
+            color = self.get_color()
+            ctx.set_source_rgba(
+                color.red, color.green, color.blue, color.alpha
+            )
+            for i, count in enumerate(self.histogram):
+                x = self.MARGIN + i * bar_width
+                bar_height = (count / max_count) * draw_height
+                ctx.rectangle(
+                    x,
+                    height - self.MARGIN - bar_height,
+                    bar_width,
+                    bar_height,
+                )
+            ctx.fill()
+        else:
+            ctx.set_source_rgba(0.5, 0.5, 0.5, 1.0)
+            draw_centered_text(ctx, "No image", width, height)
 
         if self._auto_mode:
             black_x = self._value_to_x(self._auto_black_point, width)

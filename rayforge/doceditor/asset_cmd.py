@@ -30,6 +30,7 @@ class UpdateAssetCommand(Command):
         doc: Doc,
         asset_uid: str,
         new_data: dict[str, Any],
+        old_data: dict[str, Any] | None = None,
         name: str = _("Update Asset"),
     ):
         super().__init__(name)
@@ -37,10 +38,16 @@ class UpdateAssetCommand(Command):
         self.asset_uid = asset_uid
 
         # --- Store old state for undo ---
+        # Callers that mutate an IAsset instance in place (e.g. the
+        # sketch editor) must supply the state captured BEFORE the
+        # mutation started; capturing here would already see the new
+        # state and undo would become a no-op.
         old_asset = doc.get_asset_by_uid(asset_uid)
         if not old_asset:
             raise ValueError(f"Asset with UID {asset_uid} not found.")
-        self.old_data = old_asset.to_dict()
+        self.old_data = (
+            old_data if old_data is not None else old_asset.to_dict()
+        )
         self.new_data = new_data
         self.asset_type_name = old_asset.asset_type_name
 
@@ -82,20 +89,13 @@ class UpdateAssetCommand(Command):
             geometry, _ = provider.get_geometry(params=params)
 
             if geometry.is_empty():
-                new_width = 0.0
-                new_height = 0.0
+                workpiece.natural_width_mm = 0.0
+                workpiece.natural_height_mm = 0.0
+                workpiece.set_size(0.0, 0.0)
             else:
-                min_x, min_y, max_x, max_y = geometry.rect()
-                new_width = max(max_x - min_x, 1e-9)
-                new_height = max(max_y - min_y, 1e-9)
-
-            # Update the workpiece's own dimension attributes
-            workpiece.natural_width_mm = new_width
-            workpiece.natural_height_mm = new_height
-
-            # This resizes the workpiece's matrix while preserving its
-            # center
-            workpiece.set_size(new_width, new_height)
+                # Adopts the new size while keeping the workpiece's
+                # anchor point (see WorkPiece.anchor_mode) in place
+                workpiece.apply_provider_geometry(provider, geometry)
 
             # This clears _boundaries_cache and _render_cache
             workpiece.clear_render_cache()

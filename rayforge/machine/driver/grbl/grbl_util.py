@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 from collections.abc import Callable
 from copy import copy, deepcopy
@@ -10,8 +11,52 @@ from ....core.varset import Var, VarSet
 from ....shared.units.system import UnitSystem, inches_to_mm
 from ..driver import DeviceError, DeviceState, DeviceStatus, Pos
 
+logger = logging.getLogger(__name__)
+
 # GRBL $13 setting key: "Report in inches" (boolean).
 GRBL_REPORT_INCHES_KEY = "13"
+
+# GRBL realtime command characters. The firmware executes these
+# immediately upon reception: they bypass the RX buffer, must never
+# be queued behind buffered gcode, and never produce an 'ok' ack.
+GRBL_REALTIME_COMMANDS = frozenset({"?", "~", "!"})
+
+# Matches Grbl / grblHAL welcome banners ("Grbl 1.1f ['$' for help]")
+# and realtime status reports ("<Idle|MPos:...>"). Also matches
+# build-info / feedback messages ("[VER:...]", "[OPT:...]",
+# "[MSG:...]"): some forks never mention Grbl in their boot output
+# and instead greet with $I-style lines (e.g. the Sculpfun iCube).
+# Used to claim a serial port during device discovery.
+grbl_discovery_re = re.compile(
+    rb"\bgrbl(?:hal)?\b|<(?:Idle|Run|Hold|Alarm|Home)[,|>]"
+    rb"|\[(?:VER|OPT|MSG|GC):",
+    re.IGNORECASE,
+)
+
+
+def is_grbl_output(data: bytes) -> bool:
+    """True when raw serial output identifies a Grbl device."""
+    return bool(grbl_discovery_re.search(data))
+
+
+def split_realtime_commands(
+    lines: list[str],
+) -> tuple[list[str], list[str]]:
+    """
+    Split command lines into realtime commands and regular gcode.
+
+    Returns ``(gcode_lines, realtime_lines)``, preserving the order
+    within each group.
+    """
+    gcode = []
+    realtime = []
+    for line in lines:
+        if line in GRBL_REALTIME_COMMANDS:
+            realtime.append(line)
+        else:
+            gcode.append(line)
+    return gcode, realtime
+
 
 _gcode_comment_re = re.compile(r"\([^)]*\)")
 
@@ -64,6 +109,8 @@ command_url = "/command?commandText={command}&PAGEID="
 upload_url = "/upload"
 execute_url = "/command?commandText=%5BESP220%5D/{filename}"
 status_url = command_url.format(command="?")
+fluidnc_command_url = "/?commandText={command}"
+fluidnc_status_url = fluidnc_command_url.format(command="%3F")
 
 
 # GRBL Regex Parsers
@@ -620,13 +667,21 @@ def parse_msg(line: str) -> tuple[str, str] | None:
     return (key.strip(), value.strip())
 
 
+def parse_board(line: str) -> str | None:
+    """Parse grblHAL's ``[BOARD:...]`` build-info line."""
+    if not line.startswith("[BOARD:"):
+        return None
+    board = line[7:].rstrip("]").strip()
+    return board or None
+
+
 def extract_device_name(build_info: list[str]) -> str:
     """
     Extract a human-readable device name from build info lines.
 
     Checks ``[MSG:machine:...]`` / ``[MSG:mechine:...]`` lines first,
-    then falls back to the VER line's build-info field (e.g.
-    ``[VER:1.1h.ORTUR:]`` → ``"ORTUR"``).
+    then grblHAL's ``[BOARD:...]`` line, and finally the VER line's
+    build-info field (e.g. ``[VER:1.1h.ORTUR:]`` → ``"ORTUR"``).
     """
     for line in build_info:
         msg = parse_msg(line)
@@ -635,12 +690,63 @@ def extract_device_name(build_info: list[str]) -> str:
             if key.lower() in ("machine", "mechine"):
                 return value
     for line in build_info:
+        board = parse_board(line)
+        if board is not None:
+            return board
+    for line in build_info:
         ver = parse_ver(line)
         if ver is not None:
             _, build_name = ver
             if build_name:
                 return build_name
     return "Unknown Grbl Device"
+
+
+def extract_device_name_from_output(data: bytes) -> str | None:
+    """
+    Extract a human-readable device name from raw serial output, as
+    captured during device discovery.
+
+    Returns the machine name when the output carries one (e.g. Grbl's
+    ``[MSG:machine:...]`` or grblHAL's ``[BOARD:...]`` line, or a
+    ``[VER:...]`` build name). When no name is present (e.g. a stock
+    Grbl whose banner only states its version), falls back to the first
+    informative banner line — a
+    ``Grbl``/``GrblHAL`` version line, a build-info ``[VER:...]`` /
+    ``[OPT:...]`` / ``[MSG:...]`` line, or a status report — skipping
+    bare ``ok``/``error:`` acks that are merely responses to the
+    scanner's nudge characters. Returns None only when the output has
+    no usable line at all.
+    """
+    lines = data.decode("ascii", errors="replace").splitlines()
+    name = extract_device_name(lines)
+    if name and name != "Unknown Grbl Device":
+        return name
+    return _extract_grbl_banner(lines)
+
+
+def _extract_grbl_banner(lines: list[str]) -> str | None:
+    """The first GRBL output line worth showing as a banner, skipping
+    bare protocol acknowledgements, status reports, and stray bytes
+    from a DTR-reset glitch."""
+    for raw in lines:
+        line = raw.strip()
+        if not line:
+            continue
+        if _is_grbl_ack(line):
+            continue
+        if line.startswith("<") and line.endswith(">"):
+            continue
+        return line[:80]
+    return None
+
+
+def _is_grbl_ack(line: str) -> bool:
+    """True when *line* is a bare ``ok``/``error:`` acknowledgement,
+    possibly preceded by stray non-printable bytes (e.g. a NULL byte
+    or a replacement character from a DTR-reset glitch)."""
+    stripped = line.lstrip("\ufffd").lstrip("\x00")
+    return stripped == "ok" or stripped.startswith("error:")
 
 
 def version_supports_single_axis_homing(
@@ -928,6 +1034,37 @@ def _recalculate_positions(
     return machine_pos, work_pos, wco
 
 
+def sync_state_wco(
+    state: DeviceState,
+    offsets: dict[str, Pos],
+    active_wcs: str | None,
+) -> None:
+    """
+    Refresh *state*'s work coordinate offset from authoritative
+    ``$#`` data.
+
+    GRBL includes WCO in status reports only when it changes, so
+    right after a WCS write the cached WCO can be stale and
+    ``machine_pos``, when derived from WPos + WCO, is wrong until
+    the next report carries the new WCO. Zeroing again in that
+    window would read a wrong machine position and write the old
+    offset back. The ``$#`` read-back reports every slot, so the
+    active slot's offset is authoritative and positions are
+    recomputed from it immediately.
+    """
+    if not active_wcs or active_wcs not in offsets:
+        return
+    state.wco = offsets[active_wcs]
+    state.machine_pos, state.work_pos, _ = _recalculate_positions(
+        state.machine_pos,
+        state.work_pos,
+        state.wco,
+        state.machine_pos[0] is not None,
+        state.work_pos[0] is not None,
+        True,
+    )
+
+
 def parse_state(
     state_str: str,
     default: DeviceState,
@@ -1049,14 +1186,14 @@ _STEPPER_CONFIG_VARS = [
     Var(
         key="4",
         label="$4",
-        var_type=bool,
-        description="Invert step enable pin, boolean",
+        var_type=int,
+        description="Invert step enable pins, mask",
     ),
     Var(
         key="5",
         label="$5",
-        var_type=bool,
-        description="Invert limit pins, boolean",
+        var_type=int,
+        description="Invert limit pins, mask",
     ),
     Var(
         key="6",
@@ -1323,3 +1460,27 @@ def get_grbl_setting_varsets() -> list["VarSet"]:
             ),
         ),
     ]
+
+
+def apply_setting_to_varset(varset: "VarSet", key: str, value_str: str):
+    """
+    Assigns a raw device value to the Var with *key* in *varset*.
+
+    If the value cannot be coerced to the Var's declared type (e.g. a
+    GrblHAL bitmask reported for a setting that classic Grbl defines
+    as a boolean), the Var is widened to a string type so the value
+    is still displayed instead of aborting the whole settings read.
+    """
+    var = varset[key]
+    try:
+        var.value = value_str
+    except (TypeError, ValueError) as e:
+        logger.warning(
+            "Setting $%s cannot be coerced to %s (%s); "
+            "displaying raw value instead.",
+            key,
+            var.var_type.__name__,
+            e,
+        )
+        var.var_type = str
+        var.value = value_str

@@ -1,4 +1,6 @@
-from collections.abc import Sequence
+import math
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from raygeo.geo import Geometry
@@ -7,8 +9,42 @@ from raygeo.geo.types import Polygon, Rect
 from ..types import EntityID
 
 if TYPE_CHECKING:
+    from rayforge.core.color import ColorRGBA
+
+    from ..commands.mirror import MirrorAxis
     from ..constraints import Constraint
+    from ..contour import OffsetItem
+    from ..entity_group import PlacementTransform
     from ..registry import EntityRegistry
+    from ..sketch import Sketch
+    from .point import Point
+
+
+def quantize(value: float) -> float:
+    return round(value, 6)
+
+
+_MIN_OFFSET_RADIUS = 1e-6
+
+
+@dataclass
+class OffsetPlan:
+    """
+    Pure description of the changes one offset operation makes.
+
+    ``point_moves`` repositions existing defining points (in-place
+    update, e.g. a circle's radius point). ``points`` and ``entities``
+    are new geometry to add; ``removed_entity_ids`` are source
+    entities to remove (replacement). The offset command turns a plan
+    into snapshot-backed point mutations plus add/remove commands.
+    """
+
+    point_moves: dict[EntityID, tuple[float, float]] = field(
+        default_factory=dict
+    )
+    points: list["Point"] = field(default_factory=list)
+    entities: list["Entity"] = field(default_factory=list)
+    removed_entity_ids: list[EntityID] = field(default_factory=list)
 
 
 class Entity:
@@ -18,6 +54,9 @@ class Entity:
         self.id: EntityID = id
         self.construction = construction
         self.invisible = False
+        # True if this entity was created as a copy of an array
+        # instance. Rendered with a distinct dashed style.
+        self.array_copy = False
         self.type = "entity"
         # Constrained state is calculated by solver
         self.constrained = False
@@ -50,6 +89,26 @@ class Entity:
     def get_point_ids(self) -> list[EntityID]:
         """Returns IDs of all control points used by this entity."""
         return []
+
+    def geometry_signature(self, registry: "EntityRegistry") -> tuple:
+        """
+        Returns a hashable signature capturing all geometry that
+        affects this entity's shape: quantized defining-point
+        positions, extended by subclasses with entity-internal state
+        such as bezier control-point offsets or arc chirality.
+
+        Coordinates are quantized (6 decimals): the solver leaves
+        residual noise of roughly its own convergence tolerance
+        (~1e-9 and coarser) on unheld points after every solve, and a
+        finer comparison would misread that noise as an edit,
+        triggering a re-apply on every solve. Used by array sync
+        change detection.
+        """
+        return tuple(
+            (quantize(p.x), quantize(p.y))
+            for p in (registry.get_point(pid) for pid in self.get_point_ids())
+            if p is not None
+        )
 
     def get_endpoint_ids(self) -> list[EntityID]:
         """
@@ -86,6 +145,22 @@ class Entity:
         """
         return []
 
+    def get_helper_ids(self) -> list[EntityID]:
+        """
+        Returns auxiliary/child IDs belonging to this compound entity
+        (e.g. ellipse helper lines, text box construction lines).
+        """
+        return []
+
+    def clear_helper_references(self) -> None:
+        """
+        Drops this entity's references to its helper entities. Called
+        when a copy of the entity is baked as an array instance: the
+        helpers are not cloned with it, so stale IDs would resolve to
+        — and cascade-delete with — another member's helper geometry.
+        The default is a no-op for entities without helper references.
+        """
+
     def get_rigidly_connected_points(
         self, point_id: EntityID
     ) -> list[EntityID]:
@@ -94,6 +169,85 @@ class Entity:
         as a rigid body during dragging. Used for entities where certain
         points should maintain their relative positions (e.g., ellipse center
         should drag all points together).
+        """
+        return []
+
+    def get_drag_anchor_points(self, point_id: EntityID) -> list[EntityID]:
+        """
+        Returns point IDs that should be pinned at their current position
+        while the given point is dragged (e.g., an ellipse center should
+        stay put when one of its radius points is dragged).
+        """
+        return []
+
+    def mirror(self, axis: "MirrorAxis") -> None:
+        """
+        Updates entity-specific non-point state for a mirror transform.
+
+        Point positions are mirrored centrally by the command (since points
+        are shared resources in the registry). This method handles only
+        entity-internal state such as bezier control-point deltas or arc
+        chirality. The default is a no-op: entities whose geometry is fully
+        defined by their control points need no special handling.
+        """
+
+    def transform_offsets(self, placement: "PlacementTransform") -> None:
+        """
+        Updates entity-internal state for a placement transform, in
+        the same spirit as ``mirror``: defining points are moved by
+        the caller (see ``EntityGroup.apply_placement``); this method
+        transforms only state relative to those points, such as
+        bezier control-point offsets. The default is a no-op for
+        entities fully defined by their defining points.
+        """
+
+    def rewrite_offsets_from(
+        self, template: "Entity", placement: "PlacementTransform"
+    ) -> None:
+        """
+        Re-derives this (copy) entity's internal state from a
+        template entity of the same kind: the template's state
+        transformed by the placement. Mirrors
+        ``EntityGroup.rewrite_copy_from``, which owns the defining
+        points; the template is the source of truth, so the copy's own
+        state is never read. The default is a no-op.
+        """
+
+    def as_offset_item(self, sketch: "Sketch") -> "OffsetItem | None":
+        """
+        Returns the offsettable item this entity forms when it is
+        offset on its own, or None when it cannot stand alone
+        (chain members fall back to outline sampling; non-offsettable
+        types are skipped). Only called for entities that make up
+        their own connected component.
+        """
+        return None
+
+    def plan_offset(
+        self,
+        registry: "EntityRegistry",
+        offset: float,
+        allocate_id: Callable[[], EntityID],
+    ) -> OffsetPlan | None:
+        """
+        Returns a pure description of the changes offsetting this
+        entity by the given amount would make, or None when the entity
+        has no exact analytic offset or the offset collapses.
+
+        A positive offset grows the enclosed area; a negative one
+        shrinks it. Nothing is applied to the sketch; the caller
+        applies the plan and relies on the command snapshot for undo.
+        """
+        return None
+
+    def preview_polylines(
+        self,
+        registry: "EntityRegistry",
+        offset: float,
+    ) -> list[list[tuple[float, float]]]:
+        """
+        Returns coarse polylines of this entity's offset for live
+        preview, without touching the sketch. Default: no preview.
         """
         return []
 
@@ -154,14 +308,32 @@ class Entity:
         """
         return []
 
-    def create_text_fill_geometry(
-        self, registry: "EntityRegistry"
-    ) -> Geometry | None:
+    def to_polyline(
+        self,
+        registry: "EntityRegistry",
+        tolerance: float = 0.1,
+    ) -> list[tuple[float, float]]:
         """
-        Creates a fill geometry for text entities.
-        Returns None if the entity does not support text fill geometry.
+        Samples this entity into a polyline in model coordinates,
+        e.g. for preview rendering. The entity's geometry is flattened
+        by raygeo with the given deviation tolerance. Entities without
+        a stroked shape yield an empty polyline.
         """
-        return None
+        polygons = self.to_geometry(registry).to_polygons(tolerance)
+        return polygons[0] if polygons else []
+
+    def to_polylines(
+        self,
+        registry: "EntityRegistry",
+        tolerance: float = 0.1,
+    ) -> list[list[tuple[float, float]]]:
+        """
+        Samples this entity into one or more polylines in model
+        coordinates. Multi-contour entities (e.g. text glyphs)
+        return one polyline per contour; the default is the single
+        ``to_polyline`` polyline.
+        """
+        return [self.to_polyline(registry, tolerance)]
 
     def to_dict(self) -> dict[str, Any]:
         """Base serialization method for entities."""
@@ -172,16 +344,114 @@ class Entity:
         }
         if self.invisible:
             data["invisible"] = True
+        if self.array_copy:
+            data["array_copy"] = True
         return data
 
-    @classmethod
-    def _from_dict_base(cls, data: dict[str, Any]) -> dict[str, Any]:
-        """Extract base entity attributes from a dictionary."""
-        return {
-            "id": data["id"],
-            "construction": data.get("construction", False),
-            "invisible": data.get("invisible", False),
-        }
+    def restore_base_flags(self, data: dict[str, Any]) -> None:
+        """Restores base flags serialized by to_dict() but not accepted
+        as constructor arguments."""
+        self.invisible = data.get("invisible", False)
+        self.array_copy = data.get("array_copy", False)
+
+    def characteristic_length_pairs(
+        self,
+    ) -> list[tuple[EntityID, EntityID]]:
+        """Return point-index pairs defining the entity's characteristic
+        length(s).
+
+        Used by equal-length constraints. Subclasses should override to
+        return the relevant point pairs (e.g. Line returns its endpoints,
+        Circle returns center+radius).
+        """
+        return []
+
+    def characteristic_length(self, registry: "EntityRegistry") -> float:
+        """Return the length/radius value used by equal-length constraints.
+
+        The default computes the length from the first pair returned by
+        ``characteristic_length_pairs``. Subclasses with custom metrics
+        (e.g. Ellipse averages its two radii) should override.
+        """
+        pairs = self.characteristic_length_pairs()
+        if not pairs:
+            return 0.0
+        pa = registry.get_point(pairs[0][0])
+        pb = registry.get_point(pairs[0][1])
+        if pa and pb:
+            return math.hypot(pb.x - pa.x, pb.y - pa.y)
+        return 0.0
+
+    def signed_distance_to(
+        self, point: "Point", registry: "EntityRegistry"
+    ) -> float:
+        """Return the signed distance from ``point`` to this entity.
+
+        Positive means the point is outside the entity's locus.
+        Raises ``NotImplementedError`` for entities that cannot compute
+        signed distance.
+        """
+        raise NotImplementedError
+
+    def tangent_at(
+        self, registry: "EntityRegistry", point_id: EntityID
+    ) -> tuple[float, float]:
+        """Return the tangent vector at a specific point on this entity.
+
+        The vector points away from ``point_id`` along the entity's curve.
+        Raises ``NotImplementedError`` for entities with no directional
+        tangent (e.g. Circle).
+        """
+        raise NotImplementedError
+
+    def supports_fill(self) -> bool:
+        """Return whether this entity can receive a fill color."""
+        return False
+
+    def supports_point_on_curve(self) -> bool:
+        """Return whether a point can be constrained onto this
+        entity's curve (e.g. Bezier)."""
+        return False
+
+    def set_fill_color(self, color: "ColorRGBA | None") -> None:
+        """Set the entity's fill color.
+
+        Only valid for entities where ``supports_fill()`` is True;
+        raises ``NotImplementedError`` otherwise.
+        """
+        raise NotImplementedError
+
+    def is_edge_entity(self) -> bool:
+        """Return whether this entity participates in edge/chaining
+        adjacency for loop detection (Line, Arc, Bezier)."""
+        return False
+
+    def is_radius_entity(self) -> bool:
+        """Return whether this entity has a radius (Arc, Circle)."""
+        return False
+
+    def is_closed_loop(self) -> bool:
+        """Return whether this entity alone forms a closed loop
+        (e.g. Circle, Ellipse)."""
+        return False
+
+    def enclosed_signed_area(self, registry: "EntityRegistry") -> float:
+        """Return the signed area enclosed by this single-entity loop.
+
+        Only valid for entities where ``is_closed_loop()`` is True;
+        raises ``NotImplementedError`` otherwise.
+        """
+        raise NotImplementedError
+
+    def contains_point(
+        self, registry: "EntityRegistry", x: float, y: float
+    ) -> bool:
+        """Return whether the point (x, y) lies inside this closed loop.
+
+        Only valid for entities where ``is_closed_loop()`` is True;
+        raises ``NotImplementedError`` otherwise.
+        """
+        raise NotImplementedError
 
     def __repr__(self) -> str:
         return f"Entity(id={self.id}, type={self.type})"

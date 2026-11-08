@@ -17,9 +17,14 @@ from ....core.varset import (
     SerialPortVar,
     VarSet,
 )
-from ....pipeline.encoder.base import EncodedOutput, OpsEncoder
+from ....pipeline.encoder.base import (
+    EncodedOutput,
+    MachineCodeOpMap,
+    OpsEncoder,
+)
 from ....pipeline.encoder.gcode import GcodeEncoder
 from ....shared.units.system import UnitSystem
+from ...discovery.spec import DiscoverySpec, SerialRecognizer
 from ...transport import SerialTransport, TransportStatus
 from ...transport.serial import SerialPortPermissionError
 from ..driver import (
@@ -36,9 +41,11 @@ from ..driver import (
 from .marlin_probe import probe_marlin_device
 from .marlin_util import (
     detect_unit_system_from_m149,
+    extract_marlin_banner_from_output,
     gcode_to_p_number,
     is_boot_message,
     is_error_response,
+    is_marlin_output,
     is_ok_response,
     m114_pos_re,
 )
@@ -62,6 +69,14 @@ class MarlinSerialDriver(Driver):
     maturity = DriverMaturity.EXPERIMENTAL
     supports_probing = True
     supports_unit_detection = True
+    DISCOVERY = DiscoverySpec(
+        serial=SerialRecognizer(
+            label=lambda: _("Marlin device"),
+            firmware="marlin",
+            matches=is_marlin_output,
+            name=extract_marlin_banner_from_output,
+        )
+    )
 
     def __init__(self, context: RayforgeContext, machine: "Machine"):
         super().__init__(context, machine)
@@ -115,7 +130,9 @@ class MarlinSerialDriver(Driver):
                 SerialPortVar(
                     key="port",
                     label=_("Port"),
-                    description=_("Serial port for the device"),
+                    description=(
+                        _("Serial port or USB VID:PID (e.g. 0403:6001)")
+                    ),
                 ),
                 BaudrateVar(
                     "baudrate",
@@ -367,7 +384,7 @@ class MarlinSerialDriver(Driver):
     async def _stream_gcode(
         self,
         gcode_lines: list[str],
-        machine_code_to_op_map: dict[int, int] | None = None,
+        op_map: MachineCodeOpMap | None = None,
     ):
         logger.debug(
             f"Starting Marlin streaming job with {len(gcode_lines)} lines."
@@ -382,11 +399,7 @@ class MarlinSerialDriver(Driver):
                 if not line:
                     continue
 
-                op_index = (
-                    machine_code_to_op_map.get(line_idx)
-                    if machine_code_to_op_map
-                    else None
-                )
+                op_index = op_map.op_for_line(line_idx) if op_map else None
 
                 await self._send_and_wait(line)
 
@@ -414,7 +427,7 @@ class MarlinSerialDriver(Driver):
             logger.warning(f"Job interrupted: {e!r}")
             if not self._is_cancelled:
                 logger.info(f"Calling cancel() due to interruption: {e!r}")
-                await self.cancel()
+                await self.cancel(emergency=True)
             if isinstance(e, asyncio.CancelledError):
                 raise
         finally:
@@ -432,7 +445,7 @@ class MarlinSerialDriver(Driver):
     ) -> None:
         self._start_job(on_command_done)
 
-        mapping = encoded.op_map.machine_code_to_op if encoded.op_map else None
+        mapping = encoded.op_map
         gcode_lines = encoded.text.splitlines()
 
         try:
@@ -458,7 +471,7 @@ class MarlinSerialDriver(Driver):
                 "Connection remains active."
             )
 
-    async def cancel(self) -> None:
+    async def cancel(self, emergency: bool = False) -> None:
         logger.debug("Cancel command initiated.")
         job_was_running = self._job_running
         self._is_cancelled = True
@@ -480,12 +493,34 @@ class MarlinSerialDriver(Driver):
                 await self._transport.send(payload)
             except ConnectionError as e:
                 logger.warning(f"Failed to send M410: {e}")
+            await self._send_safety_shutdown(emergency)
 
         if not self._transport:
             raise ConnectionError("Serial transport not initialized")
 
         if job_was_running:
             self.job_finished.send(self)
+
+    async def _send_safety_shutdown(self, emergency: bool = False) -> None:
+        """
+        Best-effort transmission of the dialect's tool-off commands so
+        a cancelled or aborted job cannot leave persistent PWM outputs
+        energized. Responses are ignored: the commands are sent
+        fire-and-forget.
+        """
+        dialect = self.dialect
+        commands = dialect.get_safety_off_commands()
+        if emergency and dialect.emergency_stop:
+            commands.append(dialect.emergency_stop)
+        transport = self._transport
+        if not commands or not transport or not transport.is_connected:
+            return
+        for command in commands:
+            try:
+                logger.info(command, extra=self._log_extra("USER_COMMAND"))
+                await transport.send((command + "\n").encode("utf-8"))
+            except ConnectionError as e:
+                logger.warning(f"Safety command '{command}' failed: {e}")
 
     async def set_hold(self, hold: bool = True) -> None:
         logger.warning(
@@ -504,13 +539,8 @@ class MarlinSerialDriver(Driver):
         self.state.error = None
         self.state_changed.send(self, state=self.state)
 
-    async def move_to(self, pos_x, pos_y) -> None:
-        dialect = self.dialect
-        cmd = dialect.move_to.format(
-            speed=self._to_machine_speed(1500),
-            x=self._to_machine_length(float(pos_x)),
-            y=self._to_machine_length(float(pos_y)),
-        )
+    async def move_to(self, pos_x, pos_y, pos_z=None, speed=None) -> None:
+        cmd = self._format_move_to(float(pos_x), float(pos_y), pos_z, speed)
         await self._send_and_wait(cmd)
 
     async def jog(self, speed: int, **deltas: float) -> None:
@@ -587,17 +617,16 @@ class MarlinSerialDriver(Driver):
         )
 
     async def set_wcs_offset(
-        self, wcs_slot: str, x: float, y: float, z: float
+        self, wcs_slot: str, x: float, y: float, z: float | None
     ) -> None:
         p_num = gcode_to_p_number(wcs_slot)
         if p_num is None:
             raise ValueError(f"Invalid WCS slot: {wcs_slot}")
-        dialect = self.dialect
-        cmd = dialect.set_wcs_offset.format(
-            p_num=p_num,
-            x=self._to_machine_length(x),
-            y=self._to_machine_length(y),
-            z=self._to_machine_length(z),
+        cmd = self.dialect.format_wcs_offset(
+            p_num,
+            self._to_machine_length(x),
+            self._to_machine_length(y),
+            self._to_machine_length(z) if z is not None else None,
         )
         await self._send_and_wait(cmd)
 

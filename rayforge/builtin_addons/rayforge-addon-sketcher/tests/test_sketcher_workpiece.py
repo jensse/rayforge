@@ -1,13 +1,17 @@
 from pathlib import Path
+from typing import cast
 
 import pytest
 from raygeo.geo import Geometry, Matrix
+from raygeo.geo.shape.text import FontConfig
 from sketcher.core import Sketch
+from sketcher.core.entities import TextBoxEntity
 
 from rayforge.core.doc import Doc
 from rayforge.core.source_asset_segment import SourceAssetSegment
 from rayforge.core.vectorization_spec import PassthroughSpec
-from rayforge.core.workpiece import WorkPiece
+from rayforge.core.workpiece import AnchorMode, WorkPiece
+from rayforge.doceditor.asset_cmd import UpdateAssetCommand
 
 
 @pytest.fixture
@@ -378,3 +382,204 @@ class TestWorkPieceWithSketch:
         _ = wp.boundaries
         new_val = next(iter(wp._resolved_text_cache.values()))
         assert new_val != first_val
+
+
+def test_undo_reverts_rendered_text_not_just_size(doc):
+    """Undoing a sketcher session must also revert rendered text.
+
+    The workpiece persists a resolved-text cache keyed by entity id;
+    UpdateAssetCommand.undo only clears the geometry caches, so an
+    unvalidated cache hit would keep rendering the newer (longer)
+    text squeezed into the reverted workpiece frame."""
+    sketch = Sketch(name="s")
+    origin = sketch.add_point(0, 0)
+    w_pt = sketch.add_point(30, 0)
+    h_pt = sketch.add_point(0, 10)
+    box_id = sketch.registry.add_text_box(
+        origin, w_pt, h_pt, "ab", FontConfig()
+    )
+    sketch.solve()
+    doc.add_asset(sketch)
+
+    wp = WorkPiece.from_geometry_provider(sketch)
+    doc.active_layer.add_child(wp)
+    _ = wp.boundaries
+
+    # Enter the sketcher: snapshot the pre-edit state.
+    entry_data = sketch.to_dict()
+
+    # Session: the live asset is mutated, then a render caches the
+    # resolved NEW text into the workpiece.
+    box = cast(TextBoxEntity, sketch.registry.get_entity(box_id))
+    box.content = "abcdef"
+    sketch.solve()
+    # The provider-update handler invalidates geometry caches in the
+    # real app (sketchelement mark_dirty -> regenerate on render).
+    wp.clear_render_cache()
+    _ = wp.boundaries
+    assert wp._resolved_text_cache[box_id][0] == "abcdef"
+
+    # Finish: exactly like sketch_mode_cmd.on_sketch_finished.
+    cmd = UpdateAssetCommand(
+        doc=doc,
+        asset_uid=sketch.uid,
+        new_data=sketch.to_dict(),
+        old_data=entry_data,
+    )
+    doc.history_manager.execute(cmd)
+
+    # Undo in the main view.
+    doc.history_manager.undo()
+
+    # Regeneration must use the REVERTED text: the stale cache entry
+    # (whose source is "abcdef") must not be trusted.
+    _ = wp.boundaries
+    source, resolved = wp._resolved_text_cache[box_id]
+    assert source == "ab"
+    assert resolved == "ab"
+
+    ref_wp = WorkPiece.from_geometry_provider(Sketch.from_dict(entry_data))
+    ref_geo = ref_wp.boundaries
+    geo = wp.boundaries
+    assert geo is not None and ref_geo is not None
+    assert len(geo.data) == len(ref_geo.data)
+
+
+def make_parametric_sketch(width_expr, height=40.0):
+    """A rectangle with its lower-left corner on the sketch origin and a
+    parametric width, so parameter changes grow the bbox to one side."""
+    sketch = Sketch(name="Parametric rectangle")
+    p0 = sketch.origin_id
+    p1 = sketch.add_point(100.0, 0.0)
+    p2 = sketch.add_point(100.0, height)
+    p3 = sketch.add_point(0.0, height)
+
+    sketch.add_line(p0, p1)
+    sketch.add_line(p1, p2)
+    sketch.add_line(p2, p3)
+    sketch.add_line(p3, p0)
+
+    sketch.constrain_horizontal(p0, p1)
+    sketch.constrain_vertical(p1, p2)
+    sketch.constrain_horizontal(p3, p2)
+    sketch.constrain_vertical(p0, p3)
+    sketch.constrain_distance(p0, p1, width_expr)
+    sketch.constrain_distance(p1, p2, height)
+    sketch.set_param("width", 100.0)
+    sketch.solve()
+    return sketch
+
+
+class TestSketchReferencePoint:
+    """Tests for the sketch origin as the provider reference point."""
+
+    def test_get_reference_point_returns_origin(self, doc):
+        sketch = make_sketch_with_geometry(100, 50)
+        doc.add_asset(sketch)
+
+        assert sketch.get_reference_point() == (0.0, 0.0)
+
+    def test_reference_anchor_of_corner_anchored_rectangle(self, doc):
+        sketch = make_sketch_with_geometry(100, 50)
+        doc.add_asset(sketch)
+
+        wp = WorkPiece.from_geometry_provider(sketch)
+        doc.active_layer.add_child(wp)
+
+        assert wp._reference_anchor == (0.0, 0.0)
+        assert wp.has_reference_point()
+
+    def test_reference_mode_keeps_origin_fixed_on_param_change(self, doc):
+        sketch = make_parametric_sketch("width")
+        doc.add_asset(sketch)
+
+        wp = WorkPiece.from_geometry_provider(sketch)
+        doc.active_layer.add_child(wp)
+        wp.anchor_mode = AnchorMode.REFERENCE
+        wp.pos = (11.0, 13.0)
+
+        origin_before = wp.get_anchor_world()
+
+        wp.geometry_provider_params = {"width": 160.0}
+
+        assert wp.size == pytest.approx((160.0, 40.0))
+        assert wp.get_anchor_world() == pytest.approx(origin_before)
+        world_bbox = wp.get_geometry_world_bbox()
+        assert world_bbox is not None
+        assert world_bbox[0] == pytest.approx(11.0)
+
+    def test_corner_mode_keeps_corner_fixed_on_param_change(self, doc):
+        sketch = make_parametric_sketch("width")
+        doc.add_asset(sketch)
+
+        wp = WorkPiece.from_geometry_provider(sketch)
+        doc.active_layer.add_child(wp)
+        wp.pos = (11.0, 13.0)
+
+        corner_before = wp.get_anchor_world()
+
+        wp.geometry_provider_params = {"width": 160.0}
+
+        assert wp.get_anchor_world() == pytest.approx(corner_before)
+
+    def test_center_mode_keeps_center_fixed_on_param_change(self, doc):
+        sketch = make_parametric_sketch("width")
+        doc.add_asset(sketch)
+
+        wp = WorkPiece.from_geometry_provider(sketch)
+        doc.active_layer.add_child(wp)
+        wp.anchor_mode = AnchorMode.CENTER
+        wp.pos = (11.0, 13.0)
+
+        world = wp.get_world_transform()
+        center_before = world.transform_point((0.5, 0.5))
+
+        wp.geometry_provider_params = {"width": 160.0}
+
+        world = wp.get_world_transform()
+        center_after = world.transform_point((0.5, 0.5))
+        assert center_after == pytest.approx(center_before)
+
+    def test_update_asset_command_keeps_anchor_fixed(self, doc):
+        """Editing and finishing a sketch goes through
+        UpdateAssetCommand; the anchor mode must govern how dependent
+        workpieces are resized."""
+        sketch = make_parametric_sketch("width")
+        doc.add_asset(sketch)
+
+        wp = WorkPiece.from_geometry_provider(sketch)
+        doc.active_layer.add_child(wp)
+        wp.anchor_mode = AnchorMode.REFERENCE
+        wp.pos = (11.0, 13.0)
+
+        origin_before = wp.get_anchor_world()
+
+        old_data = sketch.to_dict()
+        sketch.set_param("width", 200.0)
+        sketch.solve()
+        UpdateAssetCommand(
+            doc=doc,
+            asset_uid=sketch.uid,
+            new_data=sketch.to_dict(),
+            old_data=old_data,
+        ).execute()
+
+        assert wp.size == pytest.approx((200.0, 40.0))
+        assert wp.get_anchor_world() == pytest.approx(origin_before)
+
+        wp.anchor_mode = AnchorMode.CENTER
+        center_before = wp.get_world_transform().transform_point((0.5, 0.5))
+
+        old_data = sketch.to_dict()
+        sketch.set_param("width", 120.0)
+        sketch.solve()
+        UpdateAssetCommand(
+            doc=doc,
+            asset_uid=sketch.uid,
+            new_data=sketch.to_dict(),
+            old_data=old_data,
+        ).execute()
+
+        assert wp.size == pytest.approx((120.0, 40.0))
+        center_after = wp.get_world_transform().transform_point((0.5, 0.5))
+        assert center_after == pytest.approx(center_before)

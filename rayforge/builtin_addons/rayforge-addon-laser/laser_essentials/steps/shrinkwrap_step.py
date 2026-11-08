@@ -5,18 +5,19 @@ from typing import TYPE_CHECKING, Protocol, cast
 
 import numpy as np
 from raygeo.cnc.execution.specs import ComputePayload
+from raygeo.geo import Matrix
 from raygeo.ops.assembly import Assembler
 from raygeo.ops.assembly.shrinkwrap import ShrinkwrapSpec
 from raygeo.ops.part import Part
 from raygeo.ops.part.image_source import WholeImageSource
 
-from rayforge.core.capability import MachineCapability, StepCapability
+from rayforge.core.capability import MachineCapability
 from rayforge.core.cut_side import CutSide
 from rayforge.core.step import legacy_producer_params
 from rayforge.core.varset import (
-    FloatVar,
     LabeledChoiceVar,
     LengthVar,
+    SliderFloatVar,
     VarSet,
 )
 from rayforge.image.tracing import prepare_surface
@@ -25,7 +26,6 @@ from rayforge.pipeline.stage.assembler_helpers import (
 )
 from rayforge.pipeline.transformer.registry import transformer_registry
 
-from ..capabilities import CUT, SCORE
 from .laser_step import LaserStep
 
 if TYPE_CHECKING:
@@ -43,7 +43,6 @@ if TYPE_CHECKING:
 class ShrinkWrapStep(LaserStep):
     TYPELABEL = _("Shrink Wrap")
     ICON = "step-shrinkwrap-symbolic"
-    CAPABILITIES: tuple[StepCapability, ...] = (CUT, SCORE)
     REQUIRED_MACHINE_CAPS = frozenset({MachineCapability.LASER})
     ASSEMBLER_NAME = "shrinkwrap"
 
@@ -52,11 +51,23 @@ class ShrinkWrapStep(LaserStep):
         return VarSet(
             vars=[
                 *LaserStep.recipe_varset().vars,
+                SliderFloatVar(
+                    key="gravity",
+                    label=_("Gravity"),
+                    description=_(
+                        "Pulls the hull inward. 0.0 is a standard convex hull"
+                    ),
+                    default=0.0,
+                    min_val=0.0,
+                    max_val=1.0,
+                    digits=2,
+                ),
                 LabeledChoiceVar(
                     key="cut_side",
                     label=_("Cut Side"),
                     choices=[(cs.label(), cs.name) for cs in CutSide],
                     default="CENTERLINE",
+                    allow_none=False,
                 ),
                 LengthVar(
                     key="offset_mm",
@@ -67,11 +78,7 @@ class ShrinkWrapStep(LaserStep):
                         "compensation for the head"
                     ),
                     default=0.0,
-                ),
-                FloatVar(
-                    key="gravity",
-                    label=_("Gravity"),
-                    default=0.0,
+                    sensitive_when=lambda v: v.get("cut_side") != "CENTERLINE",
                 ),
             ]
         )
@@ -252,6 +259,12 @@ def _build_shrinkwrap_part(workpiece: WorkPiece) -> Part:
     computation).  This function always renders the workpiece to a
     surface and prepares the boolean image, then attaches it as a
     :class:`WholeImageSource` alongside any vector geometry.
+
+    The shrinkwrap wraps the *whole* image, so the part is always a
+    single-face part: ``WorkPiece.to_part`` would split the geometry
+    into one face per disconnected pocket, making the pipeline run
+    the assembler once per face (producing one duplicate hull per
+    pocket).
     """
     size = workpiece.size
     if size[0] <= 0 or size[1] <= 0:
@@ -271,5 +284,21 @@ def _build_shrinkwrap_part(workpiece: WorkPiece) -> Part:
     part = build_part_vector(workpiece)
     if part is None or not part.has_geometry():
         part = Part(size_mm=size)
+    else:
+        # The shrinkwrap wraps the whole image, not each pocket, so
+        # the part must be a single-face part: `WorkPiece.to_part`
+        # would split the geometry into one face per disconnected
+        # pocket, making the pipeline run the assembler once per face
+        # (producing one duplicate hull per pocket).
+        boundaries = workpiece.boundaries
+        if boundaries is not None and not boundaries.is_empty():
+            geo = boundaries.copy()
+            w, h = workpiece.size
+            if w > 0 and h > 0:
+                geo.transform(Matrix.scale(w, h))
+            part = Part(geometry=geo, size_mm=(w, h))
+        else:
+            # Raster-traced fallback geometry: already single-face.
+            part = Part(geometry=part.geometry, size_mm=part.size_mm)
     part.image_source = WholeImageSource(boolean)
     return part

@@ -1,18 +1,18 @@
 from gettext import gettext as _
 from typing import TYPE_CHECKING
 
-from gi.repository import Adw
+from gi.repository import Adw, GObject
 
-from rayforge.core.undo import DictItemCommand
-from rayforge.ui_gtk.doceditor.step_settings.groups import (
+from rayforge.ui_gtk.doceditor.post_processor.groups import (
+    ExpanderHost,
     TransformerSettingsGroup,
 )
+from rayforge.ui_gtk.shared.pref_rows import LengthSpinRow
 
 from ..transformers import Optimize
 
 if TYPE_CHECKING:
     from rayforge.core.step import Step
-    from rayforge.doceditor.editor import DocEditor
 
 
 class OptimizeSettingsGroup(TransformerSettingsGroup):
@@ -20,22 +20,14 @@ class OptimizeSettingsGroup(TransformerSettingsGroup):
 
     def __init__(
         self,
-        editor: "DocEditor",
         title: str,
         transformer: Optimize,
-        page: Adw.PreferencesPage,
-        step: "Step",
+        page: ExpanderHost,
+        *,
+        step: "Step | None" = None,
         **kwargs,
     ):
-        super().__init__(
-            editor,
-            title,
-            component=transformer,
-            page=page,
-            step=step,
-            description=transformer.description,
-            **kwargs,
-        )
+        super().__init__(title, transformer, page, step=step, **kwargs)
 
         self.flip_row = Adw.SwitchRow(
             title=_("Allow Flipping"),
@@ -55,30 +47,116 @@ class OptimizeSettingsGroup(TransformerSettingsGroup):
             "notify::active", self._on_preserve_first_toggled
         )
 
-    def _on_flip_toggled(self, row, pspec):
-        new_value = row.get_active()
-        if new_value == self.target_dict.get("allow_flip"):
-            return
+        self.best_start_row = Adw.SwitchRow(
+            title=_("Choose Best Start Point"),
+            subtitle=_(
+                "Start closed paths at the vertex nearest the laser "
+                "head to shorten travel moves."
+            ),
+        )
+        self.best_start_row.set_active(transformer.best_start_point)
+        self.add(self.best_start_row)
+        self.best_start_row.connect(
+            "notify::active", self._on_best_start_toggled
+        )
 
-        command = DictItemCommand(
-            target_dict=self.target_dict,
+        self.prefer_corners_row = Adw.SwitchRow(
+            title=_("Prefer Corners"),
+            subtitle=_(
+                "Start closed paths at a sharp corner where the path "
+                "has one, which makes the seam less visible."
+            ),
+        )
+        self.prefer_corners_row.set_active(transformer.prefer_corners)
+        self.prefer_corners_row.set_sensitive(transformer.best_start_point)
+        self.add(self.prefer_corners_row)
+        self.prefer_corners_row.connect(
+            "notify::active", self._on_prefer_corners_toggled
+        )
+
+        self.merge_row = Adw.SwitchRow(
+            title=_("Merge Scanlines"),
+            subtitle=_(
+                "Merges nearby parallel cut lines into longer scanlines "
+                "when this is faster for the machine's acceleration."
+            ),
+        )
+        self.merge_row.set_active(transformer.merge_scanlines)
+        self.add(self.merge_row)
+        self.merge_row.connect("notify::active", self._on_merge_toggled)
+
+        self.merge_gap_row = LengthSpinRow(
+            _("Max gap"),
+            _(
+                "Maximum gap to bridge at zero power; 0 decides "
+                "automatically from the machine's acceleration"
+            ),
+            lower=0.0,
+            upper=1000.0,
+            value_in_base=transformer.merge_max_gap_mm,
+        )
+        self.merge_gap_row.set_sensitive(transformer.merge_scanlines)
+        self.add(self.merge_gap_row)
+        self.merge_gap_row.value_changed.connect(
+            lambda r: self._on_merge_gap_changed(r)
+        )
+
+    def _on_flip_toggled(
+        self, row: Adw.SwitchRow, _pspec: GObject.ParamSpec
+    ) -> None:
+        self.param_changed.send(
+            self,
             key="allow_flip",
-            new_value=new_value,
+            value=row.get_active(),
             name=_("Toggle Flipping"),
-            on_change_callback=lambda: self.step.updated.send(self.step),
         )
-        self.history_manager.execute(command)
 
-    def _on_preserve_first_toggled(self, row, pspec):
-        new_value = row.get_active()
-        if new_value == self.target_dict.get("preserve_first"):
-            return
-
-        command = DictItemCommand(
-            target_dict=self.target_dict,
+    def _on_preserve_first_toggled(
+        self, row: Adw.SwitchRow, _pspec: GObject.ParamSpec
+    ) -> None:
+        self.param_changed.send(
+            self,
             key="preserve_first",
-            new_value=new_value,
+            value=row.get_active(),
             name=_("Toggle Preserve First Workpiece"),
-            on_change_callback=lambda: self.step.updated.send(self.step),
         )
-        self.history_manager.execute(command)
+
+    def _on_best_start_toggled(
+        self, row: Adw.SwitchRow, _pspec: GObject.ParamSpec
+    ) -> None:
+        self.prefer_corners_row.set_sensitive(row.get_active())
+        self.param_changed.send(
+            self,
+            key="best_start_point",
+            value=row.get_active(),
+            name=_("Toggle Choose Best Start Point"),
+        )
+
+    def _on_prefer_corners_toggled(
+        self, row: Adw.SwitchRow, _pspec: GObject.ParamSpec
+    ) -> None:
+        self.param_changed.send(
+            self,
+            key="prefer_corners",
+            value=row.get_active(),
+            name=_("Toggle Prefer Corners"),
+        )
+
+    def _on_merge_toggled(
+        self, row: Adw.SwitchRow, _pspec: GObject.ParamSpec
+    ) -> None:
+        self.merge_gap_row.set_sensitive(row.get_active())
+        self.param_changed.send(
+            self,
+            key="merge_scanlines",
+            value=row.get_active(),
+            name=_("Merge Scanlines"),
+        )
+
+    def _on_merge_gap_changed(self, row: LengthSpinRow) -> None:
+        self.param_changed.send(
+            self,
+            key="merge_max_gap_mm",
+            value=row.get_value_in_base_units(),
+            name=_("Change maximum bridged gap"),
+        )

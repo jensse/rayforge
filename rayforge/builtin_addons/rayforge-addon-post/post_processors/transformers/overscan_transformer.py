@@ -29,6 +29,8 @@ class OverscanTransformer(OpsTransformer):
     lead-out moves at zero power.
     """
 
+    SPEC_NAME = "overscan"
+
     def __init__(
         self, enabled: bool = True, distance_mm: float = 2.0, auto: bool = True
     ):
@@ -67,8 +69,7 @@ class OverscanTransformer(OpsTransformer):
             2 * max_acceleration * safety_factor
         )
 
-        # Ensure minimum distance for practical purposes
-        return max(0.5, distance_mm)
+        return distance_mm
 
     @property
     def distance_mm(self) -> float:

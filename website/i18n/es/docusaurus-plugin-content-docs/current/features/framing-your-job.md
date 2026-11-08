@@ -1,19 +1,18 @@
 # Enmarcando su trabajo
 
-Aprenda a utilizar la función de enmarcado para previsualizar los límites de
-su trabajo y asegurar una alineación correcta antes de cortar.
+Aprenda a utilizar la función de enmarcado para previsualizar los límites de su trabajo y asegurar
+una alineación correcta antes de cortar.
 
 ## Resumen
 
-El enmarcado le permite previsualizar los límites exactos de su trabajo láser
-trazando un contorno con el láser a baja potencia o con el láser apagado. Esto
-ayuda a verificar la posición y evitar errores costosos.
+El enmarcado le permite previsualizar los límites exactos de su trabajo láser trazando un contorno
+con el láser a baja potencia o con el láser apagado. Esto ayuda a verificar la posición y evitar
+errores costosos.
 
 ## Cuándo usar el enmarcado
 
 - **Configuraciones iniciales**: Verificar la colocación del material
-- **Posicionamiento preciso**: Asegurar que el diseño cabe dentro de los
-  límites del material
+- **Posicionamiento preciso**: Asegurar que el diseño cabe dentro de los límites del material
 - **Múltiples trabajos**: Confirmar la alineación antes de cada pasada
 - **Materiales costosos**: Verificar antes de realizar los cortes
 
@@ -29,6 +28,12 @@ Trazar el límite del trabajo sin encender el láser:
 4. **Observe la cabeza láser** trazar el rectángulo delimitador
 5. **Verifique la posición** y ajuste el material si es necesario
 
+El botón Enmarcar abre un pequeño menú emergente con el interruptor **Incluir el margen de
+overscan**. La trayectoria completa de la máquina incluye el margen de overscan del ráster —los
+movimientos de entrada y salida a potencia cero que dan espacio a la cabeza para acelerar—, por lo
+que el contorno trazado puede extenderse más allá de su diseño, principalmente en X. Desactive el
+interruptor para trazar solo la envolvente que el láser realmente quema.
+
 ### Método 2: Vista previa con baja potencia
 
 Algunas máquinas soportan enmarcado a baja potencia con un haz visible:
@@ -38,27 +43,36 @@ Algunas máquinas soportan enmarcado a baja potencia con un haz visible:
 3. **Ejecute la operación de enmarcado**
 4. **Observe el contorno** trazado en la superficie del material
 
-:::warning Verifique su máquina
-No todos los láseres soportan el enmarcado a baja potencia de forma segura.
-Consulte la documentación de su máquina antes de usar esta función.
+<!-- prettier-ignore-start -->
+:::warning[Verifique su máquina]
+No todos los láseres soportan el enmarcado a baja potencia de forma
+segura. Consulte la documentación de su máquina antes de usar esta función.
 :::
+<!-- prettier-ignore-end -->
 
 ## Configuración de enmarcado
 
-Configure el comportamiento del enmarcado en los ajustes de la cabeza láser de
-su máquina:
+Configure el comportamiento del enmarcado en los ajustes de la cabeza láser de su máquina:
 
-- **Velocidad de enmarcado**: Qué tan rápido se mueve la cabeza láser durante
-  el enmarcado. Se configura por cabeza láser, por lo que si su máquina tiene
-  múltiples láseres puede usar diferentes velocidades para cada uno.
-- **Potencia de enmarcado**: Potencia del láser durante el enmarcado (0 para
-  apagado, % bajo para trazo visible)
-- **Tiempo de pausa en esquinas**: Una breve pausa en cada esquina del
-  contorno. Esto le da un momento para ver exactamente dónde cae cada esquina
-  — especialmente útil a velocidades de enmarcado más altas.
-- **Cantidad de repeticiones**: Número de veces que se traza el contorno.
-  Establecer un valor mayor a uno puede hacer que la ruta sea más fácil de
-  seguir a simple vista.
+- **Velocidad de enmarcado**: Qué tan rápido se mueve la cabeza láser durante el enmarcado. Se
+  configura por cabeza láser, por lo que si su máquina tiene múltiples láseres puede usar diferentes
+  velocidades para cada uno.
+- **Potencia de enmarcado**: Potencia del láser durante el enmarcado (0 para apagado, % bajo para
+  trazo visible)
+- **Tiempo de pausa en esquinas**: Una breve pausa en cada esquina del contorno. Esto le da un
+  momento para ver exactamente dónde cae cada esquina — especialmente útil a velocidades de
+  enmarcado más altas.
+- **Cantidad de repeticiones**: Número de veces que se traza el contorno. Establecer un valor mayor
+  a uno puede hacer que la ruta sea más fácil de seguir a simple vista.
+
+<!-- prettier-ignore-start -->
+:::note[Enmarcado controlado por la máquina]
+Algunas máquinas pueden enmarcar el trabajo incluso al ejecutarse sin conexión (p. ej., desde un
+archivo G-code en una tarjeta de memoria). Rayforge puede incluir las dimensiones necesarias del
+trabajo en el G-code para permitirlo. Consulte [Dialectos de G-code](../reference/gcode-dialects.md)
+para ver los espacios reservados disponibles.
+:::
+<!-- prettier-ignore-end -->
 
 ## Uso de los resultados del enmarcado
 
@@ -70,13 +84,11 @@ Después de enmarcar, puede:
 
 ## Consejos para un enmarcado efectivo
 
-- **Marque las esquinas**: Coloque pequeños trozos de cinta en las esquinas
-  como referencia
+- **Marque las esquinas**: Coloque pequeños trozos de cinta en las esquinas como referencia
 - **Verifique el espacio**: Asegure espacio adecuado alrededor de su diseño
-- **Confirme la orientación**: Verifique que el material esté orientado
-  correctamente
-- **Considere la holgura de corte**: Recuerde que los cortes serán ligeramente
-  más anchos que los contornos
+- **Confirme la orientación**: Verifique que el material esté orientado correctamente
+- **Considere la holgura de corte**: Recuerde que los cortes serán ligeramente más anchos que los
+  contornos
 
 ## Enmarcado con cámara
 
@@ -91,17 +103,16 @@ Consulte [Integración de cámara](../machine/camera.md) para más detalles.
 
 ## Solución de problemas
 
-**El marco no coincide con el diseño**: Verifique el origen del trabajo y la
-configuración del sistema de coordenadas
+**El marco no coincide con el diseño**: Verifique el origen del trabajo y la configuración del
+sistema de coordenadas
 
-**El láser dispara durante el enmarcado**: Desactive la potencia de enmarcado
-o revise la configuración de la máquina
+**El láser dispara durante el enmarcado**: Desactive la potencia de enmarcado o revise la
+configuración de la máquina
 
-**El marco es demasiado rápido para ver**: Reduzca la velocidad de enmarcado
-en la configuración
+**El marco es demasiado rápido para ver**: Reduzca la velocidad de enmarcado en la configuración
 
-**La cabeza no alcanza las esquinas**: Verifique que el diseño está dentro del
-área de trabajo de la máquina
+**La cabeza no alcanza las esquinas**: Verifique que el diseño está dentro del área de trabajo de la
+máquina
 
 ## Notas de seguridad
 
@@ -112,7 +123,6 @@ en la configuración
 
 ## Temas relacionados
 
-- [Posicionamiento de pieza](workpiece-positioning) - Guía completa de
-  posicionamiento
+- [Posicionamiento de pieza](workpiece-positioning) - Guía completa de posicionamiento
 - [Integración de cámara](../machine/camera.md)
 - [Guía de inicio rápido](../getting-started/quick-start.md)

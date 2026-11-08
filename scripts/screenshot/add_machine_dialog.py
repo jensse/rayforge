@@ -8,11 +8,10 @@ import logging
 import time
 
 from utils import (
-    get_target,
+    restore_config,
     run_on_main_thread,
     set_window_size,
     take_screenshot,
-    target_to_filename,
     wait_for_settled,
 )
 
@@ -21,8 +20,8 @@ from rayforge.uiscript import app, win
 logger = logging.getLogger(__name__)
 
 
+@restore_config
 def main():
-    target = get_target("app-settings:machines:add")
     set_window_size(win, 1400, 1000)
 
     logger.info("Waiting for document to settle...")
@@ -42,8 +41,8 @@ def main():
 
     time.sleep(1.0)
 
-    logger.info("Taking screenshot: app-settings-machines-add.png")
-    take_screenshot(target_to_filename(target))
+    logger.info("Taking screenshot: app-settings-machines-add.webp")
+    take_screenshot()
 
     time.sleep(0.25)
 

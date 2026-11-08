@@ -180,6 +180,7 @@ def get_supporters() -> list[tuple[str, str | None]]:
     """
     return [
         ("starlynx.dev", None),
+        ("Dave-SYS", None),
         ("Anonymous Supporter", None),
     ]
 
@@ -287,6 +288,13 @@ class AboutDialog(PatchedDialogWindow):
             lambda _: webbrowser.open(const.ISSUES_URL),
         )
         links_box.append(issues_button)
+
+        discussions_button = Gtk.Button.new_with_label(_("Discussions"))
+        discussions_button.connect(
+            "clicked",
+            lambda _: webbrowser.open(const.DISCUSSIONS_URL),
+        )
+        links_box.append(discussions_button)
 
         donate_button = Gtk.Button.new_with_label(_("Donate"))
         donate_button.connect(

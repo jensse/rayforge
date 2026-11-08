@@ -1,3 +1,4 @@
+import locale
 import logging
 from gettext import gettext as _
 
@@ -35,6 +36,7 @@ class UnitSpinRow(SpinRow):
         lower: float = 0.0,
         upper: float = 1e9,
         step_increment: float = 1.0,
+        step_in_base: float | None = None,
         page_increment: float | None = None,
         digits: int = 2,
         numeric: bool = False,
@@ -55,9 +57,16 @@ class UnitSpinRow(SpinRow):
 
         self.quantity = quantity
         self._unit: Unit | None = None
+        self._step_in_base = step_in_base
         self._min_digits = digits
         self._lower = lower
         self._upper = upper
+        # Exact base-unit value from the last programmatic set. The
+        # spin button rounds to the display digits, so reading back
+        # the text would silently quantize prefilled values (e.g. a
+        # derived array radius); the exact value is returned until the
+        # user edits the entry.
+        self._exact_base_value: float | None = None
 
         self._config_handler_id = get_context().config.changed.connect(
             self._on_config_changed
@@ -69,6 +78,7 @@ class UnitSpinRow(SpinRow):
         try:
             self.update_unit_and_bounds()
             if value_in_base is not None and self._unit:
+                self._exact_base_value = value_in_base
                 self._spin_button.set_value(
                     self._unit.from_base(value_in_base)
                 )
@@ -108,18 +118,30 @@ class UnitSpinRow(SpinRow):
         adj = self._spin_button.get_adjustment()
         adj.set_lower(self._unit.from_base(self._lower))
         adj.set_upper(self._unit.from_base(self._upper))
+        if self._step_in_base is not None:
+            step = self._unit.from_base(self._step_in_base)
+            adj.set_step_increment(step)
+            adj.set_page_increment(step * 10)
         self._spin_button.set_digits(
             max(self._unit.precision, self._min_digits)
         )
 
     def get_value_in_base_units(self) -> float:
-        """Return the current value converted to application base units."""
+        """Return the current value converted to application base units.
+
+        Returns the exact value of the last programmatic set until the
+        user edits the entry; afterwards the (user-entered) text is
+        authoritative.
+        """
+        if self._exact_base_value is not None:
+            return max(self._lower, min(self._exact_base_value, self._upper))
         if not self._unit:
             return self._get_display_value()
         return float(self._unit.to_base(self._get_display_value()))
 
     def set_value_in_base_units(self, base_value: float) -> None:
         """Set the value from an application base-unit value."""
+        self._exact_base_value = base_value
         if self._is_updating:
             return
         self._is_updating = True
@@ -128,7 +150,34 @@ class UnitSpinRow(SpinRow):
             if not self._unit:
                 logger.warning("UnitSpinRow: skipping set, no unit")
                 return
-            self._spin_button.set_value(self._unit.from_base(base_value))
+            display_value = self._unit.from_base(base_value)
+            try:
+                current = float(self._spin_button.get_text())
+            except ValueError:
+                current = float(self._spin_button.get_value())
+            if abs(display_value - current) < 1e-9:
+                self._last_emitted_value = display_value
+                return
+            # A value above the bound (e.g. a step loaded from a faster
+            # machine) is shown via the text without moving the bound, so
+            # the next user edit still clamps to it. GTK clamps the text
+            # back to the range when the entry is edited.
+            adj = self._spin_button.get_adjustment()
+            if display_value > adj.get_upper():
+                text = locale.format_string(
+                    f"%.{self._spin_button.get_digits()}f",
+                    display_value,
+                )
+                self._spin_button.set_text(text)
+            elif self._echoes_clamped_text(display_value):
+                return
+            else:
+                self._spin_button.set_value(display_value)
+            # GTK delivers the entry text update asynchronously; record
+            # the value now so that the deferred change notification is
+            # recognized as an echo of this programmatic set rather
+            # than a user edit.
+            self._last_emitted_value = display_value
         finally:
             self._is_updating = False
 
@@ -148,16 +197,38 @@ class UnitSpinRow(SpinRow):
         if not self._unit:
             self.update_unit_and_bounds()
             return
+        try:
+            text_value = float(self._spin_button.get_text())
+        except ValueError:
+            text_value = float(self._spin_button.get_value())
+        committed = float(self._spin_button.get_value())
+        # A text that differs from the committed adjustment value is an
+        # in-progress user edit; rewriting it would yank the cursor.
+        user_editing = abs(text_value - committed) >= 1e-9
         base_value = self._unit.to_base(self._get_display_value())
         self._is_updating = True
         try:
             self.update_unit_and_bounds()
             if self._unit:
                 display_value = self._unit.from_base(base_value)
-                if abs(display_value - self._get_display_value()) >= 1e-12:
+                # Compare against the raw entry text (not the range-
+                # clamped readback): a unit switch may narrow the
+                # bounds below the stale text, making the clamped
+                # readback equal the converted value while the entry
+                # still shows the old text.
+                if (
+                    not user_editing
+                    and abs(display_value - text_value) >= 1e-12
+                ):
                     self._spin_button.set_value(display_value)
         finally:
             self._is_updating = False
+
+    def _emit_changed(self) -> None:
+        # A user-driven signal means the entry text is authoritative
+        # from now on.
+        self._exact_base_value = None
+        super()._emit_changed()
 
     def _on_destroy(self, _widget) -> None:
         super()._on_destroy(_widget)

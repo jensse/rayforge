@@ -1,9 +1,11 @@
 import logging
 from gettext import gettext as _
+from typing import Any
 
-from gi.repository import Adw, Gtk
+from gi.repository import Adw, Gtk, Pango
 
 from ...machine.driver import drivers, get_driver_cls
+from ...machine.driver.driver import Driver
 from ...machine.models.machine import Machine
 from ...shared.units.system import UnitSystem
 from ..icons import get_icon
@@ -80,6 +82,7 @@ class GeneralPreferencesPage(TrackedPreferencesPage):
             title=_("Select driver"),
             model=self.driver_store,
         )
+        self.combo_row.add_css_class("driver-combo")
         self.combo_row.set_use_subtitle(True)
         self.driver_group.add(self.combo_row)
 
@@ -158,7 +161,7 @@ class GeneralPreferencesPage(TrackedPreferencesPage):
         self.cut_speed_row = SpeedSpinRow(
             _("Max Cut Speed"),
             _("Maximum cutting speed"),
-            upper=60000,  # Increased upper limit for mm/min
+            upper=60000,
             digits=0,
         )
         self.cut_speed_row.set_value_in_base_units(self.machine.max_cut_speed)
@@ -239,7 +242,7 @@ class GeneralPreferencesPage(TrackedPreferencesPage):
         # when just a parameter value is changed.
         if self.machine.driver_name != self._current_driver_name:
             self._current_driver_name = self.machine.driver_name
-            driver_cls = self.machine.driver.__class__
+            driver_cls = get_driver_cls(self.machine.driver_name or "")
             var_set = driver_cls.get_setup_vars()
             var_set.set_values(self.machine.driver_args)
             self.driver_group.populate(var_set)
@@ -298,15 +301,42 @@ class GeneralPreferencesPage(TrackedPreferencesPage):
         self.machine.set_driver_args(values)
 
     def on_factory_setup(self, factory, list_item):
-        row = Adw.ActionRow()
-        list_item.set_child(row)
+        # Adw.ActionRow cannot be used here: libadwaita only allows its
+        # rows inside a Gtk.ListBox, but this factory binds widgets into
+        # a Gtk.ListItem. Replicate the action row's title/subtitle
+        # layout with a plain box instead; inside a list view row,
+        # Adwaita styles a ".subtitle" label like an action row
+        # subtitle (smaller and dimmed).
+        box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=3,
+            valign=Gtk.Align.CENTER,
+        )
+        title = Gtk.Label(
+            xalign=0,
+            wrap=True,
+            wrap_mode=Pango.WrapMode.WORD_CHAR,
+        )
+        subtitle = Gtk.Label(
+            xalign=0,
+            wrap=True,
+            wrap_mode=Pango.WrapMode.WORD_CHAR,
+        )
+        subtitle.add_css_class("subtitle")
+        subtitle.set_visible(False)
+        box.append(title)
+        box.append(subtitle)
+        list_item.set_child(box)
 
     def on_factory_bind(self, factory, list_item):
         index = list_item.get_position()
         driver_cls = drivers[index]
-        row = list_item.get_child()
-        row.set_title(driver_cls.label)
-        row.set_subtitle(driver_cls.subtitle)
+        box = list_item.get_child()
+        title = box.get_first_child()
+        subtitle = title.get_next_sibling()
+        title.set_text(driver_cls.label)
+        subtitle.set_text(driver_cls.subtitle)
+        subtitle.set_visible(bool(driver_cls.subtitle))
 
     def on_combo_row_changed(self, combo_row, _param):
         if self._is_initializing:
@@ -328,7 +358,25 @@ class GeneralPreferencesPage(TrackedPreferencesPage):
         # The `machine.changed` signal will then trigger _on_machine_changed
         # to update the UI, including the driver settings widgets.
         if self.machine.driver_name != driver_cls.__name__:
-            self.machine.set_driver(driver_cls, {})
+            self.machine.set_driver(
+                driver_cls, self._compatible_driver_args(driver_cls)
+            )
+
+    def _compatible_driver_args(
+        self, driver_cls: type["Driver"]
+    ) -> dict[str, Any]:
+        """
+        Returns the current driver arguments that the selected driver
+        also understands. Serial drivers share keys like ``port`` and
+        ``baudrate``, so switching between them keeps the connection
+        settings instead of silently resetting them.
+        """
+        keys = set(driver_cls.get_setup_vars().keys())
+        return {
+            key: value
+            for key, value in self.machine.driver_args.items()
+            if key in keys
+        }
 
     def on_name_changed(self, entry_row, _):
         """Update the machine name when the text changes."""
@@ -360,7 +408,7 @@ class GeneralPreferencesPage(TrackedPreferencesPage):
         if self._is_initializing:
             return
 
-        if self.machine.dialect and self.machine.dialect.can_g0_with_speed:
+        if self.machine.supports_travel_speed():
             self.travel_speed_row.set_sensitive(True)
             self.travel_speed_row.set_subtitle(
                 _("Maximum rapid movement speed")

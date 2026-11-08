@@ -21,8 +21,10 @@ from ....core.varset import (
     VarSet,
 )
 from ....core.varset.hostnamevar import is_valid_hostname_or_ip
+from ....core.varset.var import Var
 from ....pipeline.encoder.base import EncodedOutput, OpsEncoder
 from ....pipeline.encoder.gcode import GcodeEncoder
+from ...discovery.spec import DiscoverySpec, MdnsRecognizer
 from ...transport import TransportStatus
 from ..driver import (
     DeviceConnectionError,
@@ -34,11 +36,13 @@ from ..driver import (
     DriverSetupError,
     Pos,
 )
+from .octoprint_util import build_octoprint_profile
 
 if TYPE_CHECKING:
     from raygeo.ops import Ops
 
     from ....core.doc import Doc
+    from ...device.profile import DeviceProfile
     from ...models.laser import Laser
     from ...models.machine import Machine
 
@@ -64,6 +68,24 @@ _RECONNECT_INTERVAL = 5.0
 _WS_PING_INTERVAL = 30.0
 
 
+def _normalize_path_prefix(path: str) -> str:
+    """Normalizes a URL path prefix for constructing API base URLs.
+
+    ``/`` (the common case) yields an empty prefix so URLs stay
+    clean (``http://host:port/api/…``). A non-root prefix like
+    ``/octoprint`` is kept as-is (no trailing slash); request paths
+    already start with ``/`` and are appended directly.
+    """
+    if not path:
+        return ""
+    prefix = path.strip()
+    while len(prefix) > 1 and prefix.endswith("/"):
+        prefix = prefix[:-1]
+    if prefix == "/":
+        return ""
+    return prefix
+
+
 class OctoPrintDriver(Driver):
     """
     Submits G-code jobs to an OctoPrint server via its REST API and
@@ -76,7 +98,19 @@ class OctoPrintDriver(Driver):
     supports_settings = False
     reports_granular_progress = False
     uses_gcode = True
+    supports_probing = True
     maturity = DriverMaturity.UNTESTED
+    # Advertised by OctoPrint's discovery plugin; used for network
+    # device discovery. The TXT record's ``path`` key (the URL
+    # prefix the server is mounted under, e.g. ``/`` or
+    # ``/octoprint``) is forwarded into the ``path`` setup-var so
+    # connections target the right base path.
+    DISCOVERY = DiscoverySpec(
+        mdns=MdnsRecognizer(
+            services=("_octoprint._tcp.local.",),
+            txt_map={"path": "path"},
+        )
+    )
 
     def __init__(self, context: RayforgeContext, machine: "Machine"):
         super().__init__(context, machine)
@@ -115,6 +149,52 @@ class OctoPrintDriver(Driver):
             )
 
     @classmethod
+    async def probe(
+        cls, context: RayforgeContext, **kwargs: Any
+    ) -> tuple["DeviceProfile", list[str]]:
+        """Query an OctoPrint server for its specs and return an
+        auto-populated ``(DeviceProfile, warnings)`` tuple.
+
+        Works without an API key when the server has access control
+        disabled (the common case for freshly discovered devices).
+        """
+        from ...models.machine import Machine
+
+        machine = Machine(context)
+        driver = cls(context, machine)
+        host = cast(str, kwargs.get("host", ""))
+        port = cast(int, kwargs.get("port", 80))
+        path = cast(str, kwargs.get("path", "/"))
+        api_key = kwargs.get("api_key", "")
+
+        driver._configure_connection(
+            host,
+            port,
+            path,
+            driver._extract_api_key(str(api_key) if api_key else ""),
+        )
+
+        version_info = None
+        printer_info = None
+        try:
+            version_info = await driver._api_request("GET", "/api/version")
+            printer_info = await driver._api_request(
+                "GET", "/api/printer?exclude=temperature,sd"
+            )
+        except DeviceConnectionError:
+            pass
+        finally:
+            await driver.cleanup()
+            context.dialect_mgr.dialects_changed.disconnect(
+                machine._on_dialects_changed
+            )
+
+        profile, warnings = build_octoprint_profile(version_info, printer_info)
+        profile.machine_config.driver = cls.__name__
+        profile.machine_config.driver_args = kwargs
+        return profile, warnings
+
+    @classmethod
     def get_setup_vars(cls) -> "VarSet":
         return VarSet(
             vars=[
@@ -130,6 +210,16 @@ class OctoPrintDriver(Driver):
                     label=_("Port"),
                     description=_("HTTP port of the OctoPrint server"),
                     default=80,
+                ),
+                Var(
+                    key="path",
+                    label=_("Path"),
+                    description=_(
+                        "URL prefix the OctoPrint server is mounted "
+                        'under (discovered automatically; usually "/").'
+                    ),
+                    var_type=str,
+                    default="/",
                 ),
                 AppKeyVar(
                     key="api_key",
@@ -153,6 +243,20 @@ class OctoPrintDriver(Driver):
     def create_encoder(cls, machine: "Machine") -> "OpsEncoder":
         assert machine.dialect is not None
         return GcodeEncoder(machine.dialect)
+
+    def _configure_connection(
+        self, host: str, port: int, path: str, api_key: str | None
+    ) -> None:
+        """
+        Stores the connection parameters shared by setup and probe.
+        The probe tolerates a missing API key (servers with access
+        control disabled); setup rejects one up front.
+        """
+        self.host = host
+        self.port = port
+        self._api_key = api_key
+        self._path_prefix = _normalize_path_prefix(path)
+        self._base_url = f"http://{host}:{port}{self._path_prefix}"
 
     @staticmethod
     def _extract_api_key(data: str | None) -> str | None:
@@ -183,10 +287,12 @@ class OctoPrintDriver(Driver):
                 )
             )
 
-        self.host = host
-        self.port = port
-        self._api_key = api_key
-        self._base_url = f"http://{host}:{port}"
+        self._configure_connection(
+            host,
+            port,
+            cast(str, kwargs.get("path", "/")),
+            api_key,
+        )
 
     async def cleanup(self):
         self.keep_running = False
@@ -335,7 +441,9 @@ class OctoPrintDriver(Driver):
                     return
 
     async def _run_websocket(self) -> None:
-        ws_url = f"ws://{self.host}:{self.port}/sockjs/websocket"
+        ws_url = (
+            f"ws://{self.host}:{self.port}{self._path_prefix}/sockjs/websocket"
+        )
         self._update_connection_status(TransportStatus.CONNECTING)
 
         async with aiohttp.ClientSession() as session:
@@ -552,9 +660,7 @@ class OctoPrintDriver(Driver):
         try:
             if on_command_done is not None:
                 op_map = encoded.op_map
-                num_ops = 0
-                if op_map and op_map.op_to_machine_code:
-                    num_ops = max(op_map.op_to_machine_code.keys()) + 1
+                num_ops = op_map.op_count if op_map else 0
                 for i in range(num_ops):
                     result = on_command_done(i)
                     if inspect.isawaitable(result):
@@ -692,7 +798,7 @@ class OctoPrintDriver(Driver):
                 },
             )
 
-    async def cancel(self) -> None:
+    async def cancel(self, emergency: bool = False) -> None:
         await self._api_request(
             "POST",
             "/api/job",
@@ -717,16 +823,27 @@ class OctoPrintDriver(Driver):
             json={"command": "home", "axes": axis_list},
         )
 
-    async def move_to(self, pos_x: float, pos_y: float) -> None:
+    async def move_to(
+        self,
+        pos_x: float,
+        pos_y: float,
+        pos_z: float | None = None,
+        speed: float | None = None,
+    ) -> None:
+        params: dict[str, Any] = {
+            "command": "jog",
+            "x": self._to_machine_length(pos_x),
+            "y": self._to_machine_length(pos_y),
+            "absolute": True,
+        }
+        if pos_z is not None:
+            params["z"] = self._to_machine_length(pos_z)
+        if speed is not None:
+            params["speed"] = self._to_machine_speed(speed)
         await self._api_request(
             "POST",
             "/api/printer/printhead",
-            json={
-                "command": "jog",
-                "x": self._to_machine_length(pos_x),
-                "y": self._to_machine_length(pos_y),
-                "absolute": True,
-            },
+            json=params,
         )
 
     def can_jog(self, axis: Axis | None = None) -> bool:
@@ -793,7 +910,7 @@ class OctoPrintDriver(Driver):
         await self.set_power(head, percent)
 
     async def set_wcs_offset(
-        self, wcs_slot: str, x: float, y: float, z: float
+        self, wcs_slot: str, x: float, y: float, z: float | None
     ) -> None:
         p_map = {
             "G54": 1,
@@ -809,9 +926,10 @@ class OctoPrintDriver(Driver):
         cmd = (
             f"G10 L2 P{p_num} "
             f"X{self._to_machine_length(x):.3f} "
-            f"Y{self._to_machine_length(y):.3f} "
-            f"Z{self._to_machine_length(z):.3f}"
+            f"Y{self._to_machine_length(y):.3f}"
         )
+        if z is not None:
+            cmd += f" Z{self._to_machine_length(z):.3f}"
         await self._api_request(
             "POST",
             "/api/printer/command",

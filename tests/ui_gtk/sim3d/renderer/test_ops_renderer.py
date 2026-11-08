@@ -8,12 +8,16 @@ import numpy as np
 import pytest
 
 from rayforge.core.color import ColorSet
-from rayforge.ui_gtk.sim3d.gl_utils import ShaderSet
+from rayforge.ui_gtk.sim3d.gl_utils import (
+    LINE_DEPTH_WINDOW_BIAS,
+    ShaderSet,
+)
 from rayforge.ui_gtk.sim3d.render_context import (
     CameraContext,
     KinematicsContext,
     PlaybackContext,
     RenderContext,
+    SceneVisibility,
 )
 from rayforge.ui_gtk.sim3d.renderer.ops_renderer import OpsRenderer
 
@@ -21,6 +25,9 @@ from rayforge.ui_gtk.sim3d.renderer.ops_renderer import OpsRenderer
 class _FakePlayer:
     def __init__(self, current_index):
         self.current_index = current_index
+
+    def playback_progress(self):
+        return (self.current_index + 1, 0.0)
 
 
 @pytest.fixture
@@ -42,12 +49,10 @@ def colors():
 
 def _make_ctx(colors, show_travel_moves=False, op_player=None):
     return RenderContext(
-        camera=CameraContext(
-            color_set=colors,
-            show_travel_moves=show_travel_moves,
-        ),
+        camera=CameraContext(color_set=colors),
         kinematics=KinematicsContext(mvp_ui=np.eye(4, dtype=np.float32)),
         playback=PlaybackContext(op_player=op_player),
+        visibility=SceneVisibility(show_travel_moves=show_travel_moves),
     )
 
 
@@ -208,7 +213,7 @@ def test_render_draws_powered_and_travel(renderer, colors):
         patch("OpenGL.GL.glBlendFunc"),
         patch("OpenGL.GL.glActiveTexture"),
         patch("OpenGL.GL.glBindTexture"),
-        patch("OpenGL.GL.glDepthFunc"),
+        patch("OpenGL.GL.glDepthFunc") as mock_depth_func,
         patch("OpenGL.GL.glDepthMask"),
         patch("OpenGL.GL.glDrawArrays") as mock_draw,
         patch("rayforge.ui_gtk.sim3d.renderer.ops_renderer.set_line_width"),
@@ -218,6 +223,12 @@ def test_render_draws_powered_and_travel(renderer, colors):
     assert mock_draw.call_count == 2
     shader.use.assert_called_once()
     shader.set_mat4.assert_called_once_with("uMVP", mvp)
+    # The toolpath must depth-test against the laser head model instead
+    # of always drawing on top; a small window-space bias keeps it
+    # above the coplanar raster texture.  0x0203 is GL.GL_LEQUAL (no GL
+    # import in tests).
+    assert mock_depth_func.call_args[0][0] == 0x0203
+    shader.set_float.assert_any_call("uFragDepthBias", LINE_DEPTH_WINDOW_BIAS)
 
 
 @pytest.mark.ui

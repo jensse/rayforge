@@ -1,16 +1,18 @@
 # flake8: noqa: E402
 """Tests for the StepSettingsPage base."""
 
+from typing import cast
+
 import gi
 import pytest
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from rayforge.machine.models.machine import Machine
-from rayforge.machine.models.spindle import SpindleHead
+from gi.repository import Gtk
+
 from rayforge.ui_gtk.doceditor.step_settings.pages import StepSettingsPage
-from rayforge.ui_gtk.doceditor.step_settings.rows import CutSpeedRow, SpinRow
+from rayforge.ui_gtk.shared.pref_rows import SpeedSpinRow
 
 
 @pytest.mark.ui
@@ -21,14 +23,12 @@ def test_page_starts_with_identity_section(editor, step):
 
 
 @pytest.mark.ui
-def test_add_section_accepts_row_class_and_instance(editor, step):
+def test_add_section_accepts_plain_widgets(editor, step):
     page = StepSettingsPage(editor, step)
-    page.add_section(
-        "Cutting",
-        CutSpeedRow,
-        SpinRow(editor, step, "count", "Count", None, 1, 10, 1, 0),
-    )
-    assert len(page._sections) == 3
+    label = Gtk.Label(label="hello")
+    page.add_section("Cutting", label)
+    assert len(page._sections) == 2
+    assert page._rows[-1] is label
 
 
 @pytest.mark.ui
@@ -46,22 +46,45 @@ def test_get_selected_head(editor, step, machine):
 
 
 @pytest.mark.ui
-def test_cooling_section_hidden_for_laser_head(editor, step, machine):
+def test_travel_speed_row_hidden_without_support(editor, step, machine):
+    """A machine whose dialect can't emit travel speed hides the row."""
     page = StepSettingsPage(editor, step)
-    assert page.coolant_section.get_visible() is False
+    widget = page.add_varset_section("Motion", step.recipe_varset())
+    page._update_machine_bounds()
+
+    assert not machine.supports_travel_speed()
+    row = widget.row_for("travel_speed")
+    assert row is not None
+    assert row.get_visible() is False
 
 
 @pytest.mark.ui
-def test_cooling_section_visible_for_spindle_head(editor, step, ui_context):
-    machine = Machine(ui_context)
-    machine.set_axis_extents(200, 150)
-    head = SpindleHead()
-    head.name = "Spindle"
-    machine.heads.clear()
-    machine.add_head(head)
-    ui_context.machine_mgr.machines.clear()
-    ui_context.machine_mgr.add_machine(machine)
-    ui_context.config.set_machine(machine)
-
+def test_travel_speed_row_visible_with_support(editor, step, machine):
+    """A machine whose dialect emits travel speed shows the row."""
+    machine.set_dialect_uid("smoothieware")
     page = StepSettingsPage(editor, step)
-    assert page.coolant_section.get_visible() is True
+    widget = page.add_varset_section("Motion", step.recipe_varset())
+    page._update_machine_bounds()
+
+    assert machine.supports_travel_speed()
+    row = widget.row_for("travel_speed")
+    assert row is not None
+    assert row.get_visible() is True
+
+
+@pytest.mark.ui
+def test_travel_speed_warning_suppressed_without_support(
+    editor, step, machine
+):
+    """No warning icon on the hidden travel row for a non-supporting
+    machine, even with a travel speed above the machine's max."""
+    step.travel_speed = 99999
+    step.cut_speed = 100  # below max, so only travel would warn
+    page = StepSettingsPage(editor, step)
+    widget = page.add_varset_section("Motion", step.recipe_varset())
+    page._update_machine_bounds()
+
+    row = widget.row_for("travel_speed")
+    assert row is not None
+    icon = page._speed_warning_icons.get(cast(SpeedSpinRow, row))
+    assert icon is None or icon.get_visible() is False

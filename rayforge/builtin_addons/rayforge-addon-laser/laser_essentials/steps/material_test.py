@@ -8,12 +8,26 @@ from raygeo.ops.assembly import Assembler
 from raygeo.ops.assembly.material_test_grid import MaterialTestGridSpec
 from raygeo.ops.part import Part
 
-from rayforge.core.capability import MachineCapability, StepCapability
+from rayforge.core.capability import MachineCapability
 from rayforge.core.step import legacy_producer_params
+from rayforge.core.varset import (
+    BoolVar,
+    ChoiceVar,
+    LabeledChoiceVar,
+    LengthVar,
+    SliderFloatVar,
+    SpeedVar,
+    TupleVar,
+    VarSet,
+)
 from rayforge.machine.models.laser import LaserHead
 from rayforge.pipeline.transformer.registry import transformer_registry
+from rayforge.shared.units.formatter import (
+    format_value,
+    get_display_unit_settings,
+)
 
-from ..capabilities import MATERIAL_TEST
+from ..material_test_helpers import GridMode
 from .laser_step import LaserStep
 
 if TYPE_CHECKING:
@@ -31,28 +45,250 @@ if TYPE_CHECKING:
 class MaterialTestStep(LaserStep):
     TYPELABEL = _("Material Test Grid")
     ICON = "test-symbolic"
-    CAPABILITIES: tuple[StepCapability, ...] = (MATERIAL_TEST,)
     REQUIRED_MACHINE_CAPS = frozenset({MachineCapability.LASER})
     ASSEMBLER_NAME = "material_test_grid"
     HIDDEN = True
 
+    line_interval_mm: float | None
+
+    @classmethod
+    def recipe_varset(cls) -> VarSet:
+        def grid_mode(v) -> GridMode:
+            return GridMode.coerce(v.get("grid_mode"))
+
+        def uses_power_range(v):
+            return grid_mode(v).uses_power_range
+
+        def uses_speed_range(v):
+            return grid_mode(v).uses_speed_range
+
+        def uses_passes_range(v):
+            return grid_mode(v).uses_passes_range
+
+        def uses_offset_range(v):
+            return grid_mode(v).uses_offset_range
+
+        def uses_fixed_speed(v):
+            return grid_mode(v).uses_fixed_speed
+
+        def uses_fixed_power(v):
+            return grid_mode(v).uses_fixed_power
+
+        def labels_active(v):
+            return bool(v.get("include_labels", False))
+
+        return VarSet(
+            vars=[
+                *LaserStep.recipe_varset().vars,
+                ChoiceVar(
+                    key="test_type",
+                    label=_("Test Type"),
+                    description=_(
+                        "Cut: outlines; Engrave: fills with raster lines"
+                    ),
+                    choices=["Cut", "Engrave"],
+                    default="Cut",
+                    allow_none=False,
+                ),
+                LabeledChoiceVar(
+                    key="grid_mode",
+                    label=_("Grid Mode"),
+                    description=_("Choose which parameters to vary on axes"),
+                    choices=[(mode.label, mode.value) for mode in GridMode],
+                    default=GridMode.POWER_VS_SPEED.value,
+                    allow_none=False,
+                ),
+                TupleVar(
+                    key="grid_dimensions",
+                    label=_("Grid Dimensions"),
+                    item_labels=(_("Columns"), _("Rows")),
+                    item_subtitles=(
+                        _("Number of power variations"),
+                        _("Number of speed variations"),
+                    ),
+                    default=(5, 5),
+                    min_val=2,
+                    max_val=20,
+                ),
+                LengthVar(
+                    key="shape_size",
+                    label=_("Shape Size"),
+                    description=_("Size of each test square"),
+                    default=10.0,
+                    min_val=0.1,
+                ),
+                LengthVar(
+                    key="spacing",
+                    label=_("Spacing"),
+                    description=_("Gap between test squares"),
+                    default=2.0,
+                    min_val=0.0,
+                ),
+                LengthVar(
+                    key="line_interval_mm",
+                    label=_("Line Interval"),
+                    description=_(
+                        "Distance between scan lines in machine units "
+                        "(for Engrave mode). Leave at 0 to use laser "
+                        "spot size"
+                    ),
+                    default=0.0,
+                    min_val=0.0,
+                ),
+                BoolVar(
+                    key="include_labels",
+                    label=_("Include Labels"),
+                    description=_("Add speed/power annotations to the grid"),
+                    default=True,
+                ),
+                SliderFloatVar(
+                    key="label_power_percent",
+                    label=_("Label Engrave Power"),
+                    default=10.0,
+                    min_val=0.0,
+                    max_val=100.0,
+                    show_value=True,
+                    format_suffix="%",
+                    sensitive_when=labels_active,
+                ),
+                SpeedVar(
+                    key="label_speed",
+                    label=_("Label Engrave Speed"),
+                    description=_("Speed for engraving labels"),
+                    default=1000,
+                    min_val=1,
+                    sensitive_when=labels_active,
+                ),
+                SpeedVar(
+                    key="fixed_speed",
+                    label=_("Fixed Speed"),
+                    description=_("Constant speed for all cells"),
+                    default=1000,
+                    min_val=1,
+                    visible_when=uses_fixed_speed,
+                ),
+                SliderFloatVar(
+                    key="fixed_power",
+                    label=_("Fixed Power (%)"),
+                    description=_("Constant power for all cells"),
+                    default=50.0,
+                    min_val=0.0,
+                    max_val=100.0,
+                    show_value=True,
+                    format_suffix="%",
+                    visible_when=uses_fixed_power,
+                ),
+                TupleVar(
+                    key="power_range",
+                    label=_("Power Range"),
+                    item_labels=(
+                        _("Minimum Power (%)"),
+                        _("Maximum Power (%)"),
+                    ),
+                    item_subtitles=(
+                        _("For first column"),
+                        _("For last column"),
+                    ),
+                    default=(10.0, 100.0),
+                    min_val=1.0,
+                    max_val=100.0,
+                    digits=1,
+                    visible_when=uses_power_range,
+                ),
+                TupleVar(
+                    key="speed_range",
+                    label=_("Speed Range"),
+                    item_labels=(_("Minimum Speed"), _("Maximum Speed")),
+                    item_subtitles=(
+                        _("Starting speed"),
+                        _("Ending speed"),
+                    ),
+                    default=(100.0, 500.0),
+                    min_val=1.0,
+                    digits=0,
+                    quantity="speed",
+                    visible_when=uses_speed_range,
+                ),
+                TupleVar(
+                    key="passes_range",
+                    label=_("Passes Range"),
+                    item_labels=(_("Minimum Passes"), _("Maximum Passes")),
+                    item_subtitles=(
+                        _("Starting number of passes"),
+                        _("Ending number of passes"),
+                    ),
+                    default=(1, 5),
+                    min_val=1,
+                    max_val=50,
+                    visible_when=uses_passes_range,
+                ),
+                TupleVar(
+                    key="offset_range",
+                    label=_("Offset Range"),
+                    item_labels=(_("Minimum Offset"), _("Maximum Offset")),
+                    item_subtitles=(
+                        _("Bidir scan X-offset for first row"),
+                        _("Bidir scan X-offset for last row"),
+                    ),
+                    default=(-0.5, 0.5),
+                    min_val=-10.0,
+                    max_val=10.0,
+                    digits=2,
+                    quantity="length",
+                    visible_when=uses_offset_range,
+                ),
+            ]
+        )
+
     def __init__(self, name: str | None = None, typelabel: str | None = None):
         super().__init__(typelabel=typelabel or self.TYPELABEL, name=name)
         self.test_type = "Cut"
-        self.grid_mode = "Power vs Speed"
+        self.grid_mode = GridMode.POWER_VS_SPEED.value
         self.speed_range = (100.0, 500.0)
         self.power_range = (10.0, 100.0)
         self.passes_range = (1, 5)
         self.offset_range = (-0.5, 0.5)
         self.fixed_speed = 1000.0
         self.fixed_power = 50.0
-        self.grid_dimensions = (5, 5)
+        self.grid_dimensions: tuple[int, int] = (5, 5)
         self.shape_size = 10.0
         self.spacing = 2.0
         self.include_labels = True
         self.label_power_percent = 10.0
         self.label_speed = 1000.0
         self.line_interval_mm = None
+
+    def _used_speeds(self) -> list[float]:
+        """The speeds this grid actually engraves with, depending on
+        the active grid mode and label setting."""
+        mode = GridMode.coerce(self.grid_mode)
+        speeds: list[float] = []
+        if mode.uses_speed_range:
+            speeds.extend(self.speed_range)
+        if mode.uses_fixed_speed:
+            speeds.append(self.fixed_speed)
+        if self.include_labels:
+            speeds.append(self.label_speed)
+        return speeds
+
+    def check(self, machine) -> list[str]:
+        """Validate the grid's actual speeds instead of the unused
+        base ``cut_speed``/``travel_speed`` defaults."""
+        warnings: list[str] = []
+        if machine is None:
+            return warnings
+        for speed in dict.fromkeys(self._used_speeds()):
+            if speed > machine.max_cut_speed:
+                warnings.append(
+                    _(
+                        "Cut speed ({value}) exceeds the machine's "
+                        "maximum ({max})."
+                    ).format(
+                        value=format_value(speed, "speed"),
+                        max=format_value(machine.max_cut_speed, "speed"),
+                    )
+                )
+        return warnings
 
     def get_assembler_kwargs(
         self,
@@ -64,8 +300,8 @@ class MaterialTestStep(LaserStep):
         )
         kwargs: dict = {}
         kwargs["size_mm"] = workpiece.size if workpiece else (0, 0)
-        kwargs["cols"] = self.grid_dimensions[0]
-        kwargs["rows"] = self.grid_dimensions[1]
+        kwargs["cols"] = int(self.grid_dimensions[0])
+        kwargs["rows"] = int(self.grid_dimensions[1])
         kwargs["min_speed"] = self.speed_range[0]
         kwargs["max_speed"] = self.speed_range[1]
         kwargs["min_power"] = self.power_range[0]
@@ -75,7 +311,7 @@ class MaterialTestStep(LaserStep):
         kwargs["min_offset"] = self.offset_range[0]
         kwargs["max_offset"] = self.offset_range[1]
         kwargs["mode"] = "cut" if self.test_type == "Cut" else "engrave"
-        kwargs["grid_mode"] = self.grid_mode
+        kwargs["grid_mode"] = GridMode.coerce(self.grid_mode).value
         kwargs["fixed_speed"] = self.fixed_speed
         kwargs["fixed_power"] = self.fixed_power
         kwargs["shape_size"] = self.shape_size
@@ -83,11 +319,12 @@ class MaterialTestStep(LaserStep):
         kwargs["include_labels"] = self.include_labels
         kwargs["label_power_percent"] = self.label_power_percent
         kwargs["label_speed"] = self.label_speed
-        kwargs["line_interval_mm"] = (
-            self.line_interval_mm
-            if self.line_interval_mm is not None
-            else spot_y
-        )
+        kwargs["line_interval_mm"] = self.line_interval_mm or spot_y
+        # Engrave speed labels in the user's preferred speed unit.
+        unit_label, factor, precision = get_display_unit_settings("speed")
+        kwargs["speed_unit_label"] = unit_label
+        kwargs["speed_label_factor"] = factor
+        kwargs["speed_label_precision"] = precision
         return kwargs
 
     def build_compute_payload(
@@ -123,6 +360,9 @@ class MaterialTestStep(LaserStep):
             label_speed=kwargs["label_speed"],
             min_offset=kwargs["min_offset"],
             max_offset=kwargs["max_offset"],
+            speed_unit_label=kwargs["speed_unit_label"],
+            speed_label_factor=kwargs["speed_label_factor"],
+            speed_label_precision=kwargs["speed_label_precision"],
         )
         return part, ComputePayload(assembler=Assembler(spec))
 
@@ -157,9 +397,12 @@ class MaterialTestStep(LaserStep):
         step = cast("MaterialTestStep", super().from_dict(data))
         legacy = legacy_producer_params(data)
         step.test_type = data.get("test_type", legacy.get("test_type", "Cut"))
-        step.grid_mode = data.get(
-            "grid_mode", legacy.get("grid_mode", "Power vs Speed")
-        )
+        step.grid_mode = GridMode.coerce(
+            data.get(
+                "grid_mode",
+                legacy.get("grid_mode", GridMode.POWER_VS_SPEED.value),
+            )
+        ).value
         step.speed_range = tuple(
             data.get("speed_range", legacy.get("speed_range", (100.0, 500.0)))
         )

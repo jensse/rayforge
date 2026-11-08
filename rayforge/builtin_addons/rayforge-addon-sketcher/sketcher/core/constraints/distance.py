@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from gettext import gettext as _
 from typing import (
     TYPE_CHECKING,
     Any,
 )
 
+from gi.repository import PangoCairo
 from raygeo.geo.shape.line import get_line_segment_closest_point
 from raygeo.geo.types import Point
+
+from rayforge.ui_gtk.shared.text import create_text_layout
 
 from ..entities import Line
 from ..types import EntityID
@@ -18,6 +21,7 @@ from .base import Constraint, ConstraintStatus
 if TYPE_CHECKING:
     import cairo
 
+    from ..entities import Entity
     from ..params import ParameterContext
     from ..registry import EntityRegistry
     from ..selection import SketchSelection
@@ -61,16 +65,17 @@ class DistanceConstraint(Constraint):
             return True
         if selection.point_ids:
             return False
-        if sketch is None:
+        entities = selection.resolve_entities(
+            sketch.registry if sketch else None
+        )
+        if entities is None or len(entities) != 1:
             return False
-        from ..entities import Line
+        return cls.applies_to_entities(entities)
 
-        lines = [
-            sketch.registry.get_entity(eid)
-            for eid in selection.entity_ids
-            if isinstance(sketch.registry.get_entity(eid), Line)
-        ]
-        return len(lines) == 1 and len(lines) == len(selection.entity_ids)
+    @classmethod
+    def applies_to_entities(cls, entities: Sequence[Entity]) -> bool:
+        """The operand must be a Line."""
+        return len(entities) == 1 and isinstance(entities[0], Line)
 
     @staticmethod
     def get_type_name() -> str:
@@ -91,6 +96,9 @@ class DistanceConstraint(Constraint):
                 self._format_coord(p2.x, p2.y),
             )
         return ""
+
+    def get_edit_subtitle(self) -> str:
+        return _("Enter length or expression.")
 
     def targets_segment(
         self, p1: EntityID, p2: EntityID, entity_id: EntityID | None
@@ -226,8 +234,6 @@ class DistanceConstraint(Constraint):
         is_hovered: bool = False,
         point_radius: float = 5.0,
     ) -> None:
-        from ..entities import Line
-
         try:
             p1 = registry.get_point(self.p1)
             p2 = registry.get_point(self.p2)
@@ -239,7 +245,8 @@ class DistanceConstraint(Constraint):
         mx, my = (s1[0] + s2[0]) / 2, (s1[1] + s2[1]) / 2
 
         label = self._format_value()
-        ext = ctx.text_extents(label)
+        layout = create_text_layout(ctx, label)
+        ext, _ = layout.get_pixel_extents()
 
         ctx.save()
         # Set background color based on selection, hover, and status
@@ -272,8 +279,11 @@ class DistanceConstraint(Constraint):
         else:
             ctx.set_source_rgb(0, 0, 0.5)  # Dark blue otherwise
 
-        ctx.move_to(mx - ext.width / 2, my + ext.height / 2 - 2)
-        ctx.show_text(label)
+        ctx.move_to(
+            mx - ext.width / 2 - ext.x,
+            my - ext.height / 2 - ext.y,
+        )
+        PangoCairo.show_layout(ctx, layout)
         ctx.new_path()
 
         # Draw Dash Line - only if no solid line entity connects these points

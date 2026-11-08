@@ -1,9 +1,11 @@
-"""Step 3 — Connection parameters.
+"""Step 4 — Connection parameters.
 
 Always required: even after picking a known profile or importing a
 snapshot, the user must supply host-specific values like the USB
 device path, IP address, hostname, or OctoPrint API key. The page
 prefills any defaults the profile supplies and leaves the rest blank.
+(Device discovery happens up front on the wizard's first page; any
+parameters it produced are prefilled here.)
 
 Reuses :class:`~rayforge.ui_gtk.varset.varsetwidget.VarSetWidget` to
 render the driver's ``get_setup_vars()`` definition, mirroring the
@@ -11,24 +13,29 @@ pattern in the legacy ``config_wizard.py``.
 """
 
 from gettext import gettext as _
+from typing import TYPE_CHECKING, Any
 
 from gi.repository import Adw, Gtk
 
+from ....core.varset import VarSet
 from ....machine.device.profile import DeviceProfile
 from ....machine.driver import get_driver_cls
 from ....machine.driver.driver import Driver
 from ...varset.varsetwidget import VarSetWidget
 from . import WizardPage, _makePreferencesGroup
 
+if TYPE_CHECKING:
+    from ..unified_wizard import UnifiedWizard
+
 
 class ConnectionPage(WizardPage):
-    step_number = 3
+    step_number = 4
     title = _("Connection")
     subtitle = _("Enter the connection parameters for your device.")
 
-    def __init__(self, wizard, **kwargs):
+    def __init__(self, wizard: "UnifiedWizard", **kwargs: Any) -> None:
         self._driver_cls: type[Driver] | None = None
-        self._required_keys: set = set()
+        self._var_set: VarSet | None = None
         super().__init__(wizard, **kwargs)
 
     def build_ui(self) -> None:
@@ -64,6 +71,7 @@ class ConnectionPage(WizardPage):
             self.connect_widget.clear_dynamic_rows()
             self.set_ready(True)
             self._driver_cls = None
+            self._var_set = None
             return
 
         driver_cls = get_driver_cls(driver_name)
@@ -72,28 +80,26 @@ class ConnectionPage(WizardPage):
         self.driver_row.set_subtitle(driver_cls.subtitle or "")
 
         var_set = driver_cls.get_setup_vars()
-        # Vars without a usable default are the host-specific values the
-        # user must supply (USB path, hostname, API key, …). The page
-        # stays unready until every one of them is filled.
-        self._required_keys = {
-            var.key for var in var_set if var.default in (None, "")
-        }
+        # Which vars are required is evaluated on every refresh via
+        # Var.is_required(), so a var can become mandatory or optional
+        # depending on other values (e.g. a connection-mode selector).
+        self._var_set = var_set
         # If the working profile carries saved driver_args (e.g. via
         # import), prefill the var set before rendering.
         saved_args = profile.machine_config.driver_args or {}
-        if saved_args:
-            for var in var_set:
-                if saved_args.get(var.key):
-                    var.value = saved_args[var.key]
+        for var in var_set:
+            value = saved_args.get(var.key)
+            if value not in (None, ""):
+                var.value = value
         self.connect_widget.populate(var_set)
         self._refresh_ready()
 
-    def _on_data_changed(self, sender, **kwargs) -> None:
+    def _on_data_changed(self, sender: Any, **kwargs: Any) -> None:
         self._refresh_ready()
 
     def _refresh_ready(self) -> None:
         """Ready when there's no driver or all required vars are set."""
-        if self._driver_cls is None:
+        if self._var_set is None:
             self.set_ready(True)
             return
         try:
@@ -101,8 +107,10 @@ class ConnectionPage(WizardPage):
         except ValueError:
             self.set_ready(False)
             return
-        for key in self._required_keys:
-            if values.get(key) in (None, ""):
+        for var in self._var_set:
+            if not var.is_required(values):
+                continue
+            if values.get(var.key) in (None, ""):
                 self.set_ready(False)
                 return
         self.set_ready(True)
@@ -117,7 +125,7 @@ class ConnectionPage(WizardPage):
             self.wizard.show_error(_("Invalid input"), str(exc))
             return False
         # Drop empty-string / None values so we don't blur defaults.
-        cleaned: dict = {}
+        cleaned: dict[str, Any] = {}
         for key, value in values.items():
             if value in (None, ""):
                 continue

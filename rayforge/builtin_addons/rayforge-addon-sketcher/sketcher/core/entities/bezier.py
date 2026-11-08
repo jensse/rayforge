@@ -1,7 +1,9 @@
+import math
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from raygeo.geo import Geometry
+from raygeo.geo.shape.bezier import get_bezier_closest_point
 from raygeo.geo.shape.line import (
     does_line_segment_intersect_rect,
     get_line_segment_closest_point,
@@ -11,11 +13,14 @@ from raygeo.geo.types import Point as GeoPoint
 from raygeo.geo.types import Polygon, Rect
 
 from ..types import EntityID
-from .entity import Entity
+from .entity import Entity, quantize
 
 if TYPE_CHECKING:
+    from ..commands.mirror import MirrorAxis
     from ..constraints import Constraint
+    from ..entity_group import PlacementTransform
     from ..registry import EntityRegistry
+    from .point import Point
 
 
 class Bezier(Entity):
@@ -34,6 +39,68 @@ class Bezier(Entity):
         self.type = "bezier"
         self.cp1 = cp1
         self.cp2 = cp2
+
+    def get_state(self) -> dict[str, Any] | None:
+        state = super().get_state() or {}
+        state["cp1"] = self.cp1
+        state["cp2"] = self.cp2
+        return state
+
+    def set_state(self, state: dict[str, Any]) -> None:
+        super().set_state(state)
+        if "cp1" in state:
+            self.cp1 = state["cp1"]
+        if "cp2" in state:
+            self.cp2 = state["cp2"]
+
+    def mirror(self, axis: "MirrorAxis") -> None:
+        # Control points are stored as (dx, dy) offsets relative to the
+        # start/end points. Since the endpoints are mirrored by the command,
+        # we must mirror the deltas too so the curve bulges correctly.
+        if self.cp1 is not None:
+            self.cp1 = axis.flip_offset(self.cp1)
+        if self.cp2 is not None:
+            self.cp2 = axis.flip_offset(self.cp2)
+
+    def transform_offsets(self, placement: "PlacementTransform") -> None:
+        # Control points are stored as (dx, dy) offsets relative to
+        # the start/end points; transform them with the placement so
+        # the curve follows translation and rotation placements.
+        if self.cp1 is not None:
+            self.cp1 = placement.transform_offset(*self.cp1)
+        if self.cp2 is not None:
+            self.cp2 = placement.transform_offset(*self.cp2)
+
+    def rewrite_offsets_from(
+        self, template: "Entity", placement: "PlacementTransform"
+    ) -> None:
+        # The copy's own offsets may lag behind (its endpoints moved
+        # independently); take the template's, transformed like its
+        # points.
+        if not isinstance(template, Bezier):
+            return
+        if template.cp1 is not None:
+            self.cp1 = placement.transform_offset(*template.cp1)
+        if template.cp2 is not None:
+            self.cp2 = placement.transform_offset(*template.cp2)
+
+    def geometry_signature(self, registry: "EntityRegistry") -> tuple:
+        """Extends the point signature with the quantized
+        control-point offsets, which shape the curve without moving
+        any defining point."""
+        return (
+            *super().geometry_signature(registry),
+            (
+                (quantize(self.cp1[0]), quantize(self.cp1[1]))
+                if self.cp1 is not None
+                else None
+            ),
+            (
+                (quantize(self.cp2[0]), quantize(self.cp2[1]))
+                if self.cp2 is not None
+                else None
+            ),
+        )
 
     def get_control_points(
         self, registry: "EntityRegistry"
@@ -75,6 +142,82 @@ class Bezier(Entity):
 
     def get_endpoint_ids(self) -> list[EntityID]:
         return [self.start_idx, self.end_idx]
+
+    def is_edge_entity(self) -> bool:
+        return True
+
+    def supports_point_on_curve(self) -> bool:
+        return True
+
+    def characteristic_length_pairs(
+        self,
+    ) -> list[tuple[EntityID, EntityID]]:
+        return [(self.start_idx, self.end_idx)]
+
+    def tangent_at(
+        self, registry: "EntityRegistry", point_id: EntityID
+    ) -> tuple[float, float]:
+        start = registry.get_point(self.start_idx)
+        end = registry.get_point(self.end_idx)
+        if not (start and end):
+            return (1.0, 0.0)
+        cp1_x, cp1_y, cp2_x, cp2_y = self.get_control_points_or_endpoints(
+            registry
+        )
+        if point_id == start.id:
+            return (cp1_x - start.x, cp1_y - start.y)
+        return (end.x - cp2_x, end.y - cp2_y)
+
+    def signed_distance_to(
+        self, point: "Point", registry: "EntityRegistry"
+    ) -> float:
+        start = registry.get_point(self.start_idx)
+        end = registry.get_point(self.end_idx)
+        if not (start and end):
+            return 0.0
+
+        if self.is_line(registry):
+            _, _, dist_sq = get_line_segment_closest_point(
+                (start.x, start.y),
+                (end.x, end.y),
+                point.x,
+                point.y,
+            )
+            return math.sqrt(dist_sq)
+
+        cp1_x, cp1_y, cp2_x, cp2_y = self.get_control_points_or_endpoints(
+            registry
+        )
+        start_x, start_y = start.x, start.y
+        end_x, end_y = end.x, end.y
+        return self._closest_point_dist(
+            start_x, start_y, cp1_x, cp1_y, cp2_x, cp2_y, end_x, end_y, point
+        )
+
+    @staticmethod
+    def _closest_point_dist(
+        start_x: float,
+        start_y: float,
+        cp1_x: float,
+        cp1_y: float,
+        cp2_x: float,
+        cp2_y: float,
+        end_x: float,
+        end_y: float,
+        point: "Point",
+    ) -> float:
+        result = get_bezier_closest_point(
+            (start_x, start_y, 0.0),
+            (cp1_x, cp1_y, 0.0),
+            (cp2_x, cp2_y, 0.0),
+            (end_x, end_y, 0.0),
+            point.x,
+            point.y,
+        )
+        if result is None:
+            return 0.0
+        _t, _pt, dist_sq = result
+        return math.sqrt(dist_sq)
 
     def get_junction_point_ids(self) -> list[EntityID]:
         return [self.start_idx, self.end_idx]
@@ -271,10 +414,9 @@ class Bezier(Entity):
             return []
 
         if self.is_line(registry):
-            if forward:
-                return [(end.x, end.y)]
-            else:
-                return [(start.x, start.y)]
+            start_pid = self.start_idx if forward else self.end_idx
+            p = registry.get_point(start_pid)
+            return [(p.x, p.y)]
 
         cp1_x, cp1_y, cp2_x, cp2_y = self.get_control_points_or_endpoints(
             registry

@@ -4,13 +4,15 @@ import numpy as np
 import pytest
 
 from rayforge.camera.calibration.result import CalibrationResult
-from rayforge.camera.models.camera import Camera
+from rayforge.camera.models.camera import Camera, CameraSourceType
 
 
 def test_camera_initialization():
     camera = Camera("Test Camera", "device123")
+    assert camera.id
     assert camera.name == "Test Camera"
     assert camera.device_id == "device123"
+    assert camera.source_type is CameraSourceType.LOCAL_DEVICE
     assert not camera.enabled
     assert camera.image_to_world is None
     assert camera.resolution is None
@@ -49,6 +51,23 @@ def test_distortion_coefficients():
     assert camera.distortion_k3 == pytest.approx(0.02)
     assert camera.distortion_p1 == pytest.approx(0.001)
     assert camera.distortion_p2 == pytest.approx(-0.002)
+
+
+def test_distortion_setter_ignores_unchanged_value():
+    camera = Camera("Test", "0")
+    received = []
+
+    def on_changed(sender):
+        received.append(sender)
+
+    camera.changed.connect(on_changed)
+
+    camera.distortion_k1 = 0.5
+    first_date = camera.calibration_date
+    camera.distortion_k1 = 0.5
+
+    assert len(received) == 1
+    assert camera.calibration_date == first_date
 
 
 def test_get_distortion_coeffs():
@@ -168,9 +187,13 @@ def test_set_calibration_result_type_error():
 def test_to_from_json():
     camera = Camera("JSON Camera", "json_device")
     camera.enabled = True
+    serialized = camera.to_dict()
+    assert serialized["device_id"] == "json_device"
+    assert serialized["source_config"]["device_id"] == "json_device"
     json_str = camera.to_json()
     reconstructed_camera = Camera.from_json(json_str)
 
+    assert reconstructed_camera.id == camera.id
     assert reconstructed_camera.name == camera.name
     assert reconstructed_camera.device_id == camera.device_id
     assert reconstructed_camera.enabled == camera.enabled
@@ -335,3 +358,218 @@ def test_resolution_settings_changed_signal():
 
     camera.resolution = None
     assert len(signal_received) == 2
+
+
+def test_source_uri_and_type_roundtrip():
+    camera = Camera(
+        "Network Camera",
+        source_type=CameraSourceType.HTTP_STREAM,
+        source_config={"uri": "https://camera.local/mjpeg"},
+    )
+    data = camera.to_dict()
+    assert data["source_type"] == CameraSourceType.HTTP_STREAM.value
+    assert data["source_config"] == {"uri": "https://camera.local/mjpeg"}
+
+    restored = Camera.from_dict(data)
+    assert restored.source_type is CameraSourceType.HTTP_STREAM
+    assert restored.source_uri == "https://camera.local/mjpeg"
+
+
+def test_source_config_preserves_unknown_attributes():
+    camera = Camera(
+        "Network Camera",
+        source_type=CameraSourceType.HTTP_SNAPSHOT,
+        source_config={
+            "uri": "https://camera.local/image.jpg",
+            "timeout_seconds": 7,
+            "future_option": {"enabled": True},
+        },
+    )
+
+    restored = Camera.from_dict(camera.to_dict())
+
+    assert restored.source_config == camera.source_config
+
+
+def test_network_camera_does_not_write_legacy_device_id():
+    camera = Camera(
+        "Network Camera",
+        source_type=CameraSourceType.HTTP_SNAPSHOT,
+        source_config={"uri": "https://camera.local/image.jpg"},
+    )
+
+    assert "device_id" not in camera.to_dict()
+
+
+def test_legacy_device_id_migrates_to_source_config():
+    camera = Camera.from_dict({"name": "Legacy Cam", "device_id": "0"})
+    assert camera.source_type is CameraSourceType.LOCAL_DEVICE
+    assert camera.device_id == "0"
+    assert camera.source_config["device_id"] == "0"
+
+
+def _camera_with_alignment(
+    calibration: datetime | None, alignment: datetime | None
+) -> Camera:
+    camera = Camera("Test", "0")
+    camera._calibration_date = calibration
+    camera._alignment_date = alignment
+    camera._image_to_world = (
+        ((0.0, 0.0), (1.0, 1.0), (2.0, 2.0), (3.0, 3.0)),
+        ((0.0, 0.0), (1.0, 1.0), (2.0, 2.0), (3.0, 3.0)),
+    )
+    return camera
+
+
+def test_alignment_valid_naive_calibration_interpreted_as_utc():
+    """A naive stored calibration date must compare against the aware
+    UTC alignment timestamp without raising."""
+    camera = _camera_with_alignment(
+        calibration=datetime.fromisoformat("2024-01-15T10:30:00"),
+        alignment=datetime(2026, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+    )
+    assert camera.alignment_valid is True
+
+
+def test_alignment_valid_naive_alignment_interpreted_as_utc():
+    camera = _camera_with_alignment(
+        calibration=datetime(2026, 1, 15, 10, 30, 0, tzinfo=timezone.utc),
+        alignment=datetime.fromisoformat("2024-01-15T10:30:00"),
+    )
+    assert camera.alignment_valid is False
+
+
+def test_alignment_valid_missing_calibration_is_valid():
+    camera = _camera_with_alignment(calibration=None, alignment=None)
+    assert camera.alignment_valid is True
+
+
+def test_calibration_result_default_date_is_aware():
+    result = CalibrationResult(
+        camera_matrix=np.eye(3),
+        distortion_coeffs=np.zeros(5),
+        rms_error=0.5,
+        image_size=(640, 480),
+        num_frames_used=10,
+    )
+    assert result.calibration_date.tzinfo is not None
+
+
+def test_calibration_result_round_trip_naive_date():
+    data = {
+        "camera_matrix": np.eye(3).tolist(),
+        "distortion_coeffs": np.zeros(5).tolist(),
+        "rms_error": 0.5,
+        "image_size": [640, 480],
+        "num_frames_used": 10,
+        "reprojection_errors": [],
+        "calibration_date": "2024-01-15T10:30:00",
+    }
+    result = CalibrationResult.from_dict(data)
+    assert result.calibration_date.tzinfo is not None
+
+
+def test_from_dict_naive_dates_become_aware():
+    data = {
+        "name": "Test",
+        "device_id": "0",
+        "enabled": True,
+        "image_to_world": [
+            {"image": "0.0, 0.0", "world": "0.0, 0.0"},
+            {"image": "1.0, 1.0", "world": "1.0, 1.0"},
+            {"image": "2.0, 2.0", "world": "2.0, 2.0"},
+            {"image": "3.0, 3.0", "world": "3.0, 3.0"},
+        ],
+        "calibration_date": "2024-01-15T10:30:00",
+        "alignment_date": "2024-01-15T10:30:00",
+    }
+    camera = Camera.from_dict(data)
+    assert camera._calibration_date is not None
+    assert camera._calibration_date.tzinfo is not None
+    assert camera._alignment_date is not None
+    assert camera._alignment_date.tzinfo is not None
+    assert camera.alignment_valid is True
+
+
+def test_outside_view_defaults():
+    camera = Camera("Test Camera", "0")
+    assert camera.outside_view_enabled is False
+    assert camera.outside_view_margin_mm == 30.0
+    assert camera.outside_view_transparency == 0.65
+
+
+def test_outside_view_old_config_loads_with_defaults():
+    camera = Camera.from_dict({"name": "Old Camera", "device_id": "0"})
+    assert camera.outside_view_enabled is False
+    assert camera.outside_view_margin_mm == 30.0
+    assert camera.outside_view_transparency == 0.65
+    assert "outside_view_enabled" not in camera.extra
+
+
+def test_outside_view_round_trip():
+    camera = Camera("Test Camera", "0")
+    camera.outside_view_enabled = True
+    camera.outside_view_margin_mm = 42.5
+    camera.outside_view_transparency = 0.3
+
+    restored = Camera.from_json(camera.to_json())
+
+    assert restored.outside_view_enabled is True
+    assert restored.outside_view_margin_mm == 42.5
+    assert restored.outside_view_transparency == 0.3
+    assert not any(k.startswith("outside_view") for k in restored.extra)
+
+
+def test_outside_view_values_are_clamped():
+    camera = Camera("Test Camera", "0")
+    camera.outside_view_margin_mm = 150
+    assert camera.outside_view_margin_mm == 100.0
+    camera.outside_view_margin_mm = -5
+    assert camera.outside_view_margin_mm == 0.0
+    camera.outside_view_transparency = 1.5
+    assert camera.outside_view_transparency == 1.0
+    camera.outside_view_transparency = -0.5
+    assert camera.outside_view_transparency == 0.0
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+def test_outside_view_rejects_nonfinite(value):
+    camera = Camera("Test Camera", "0")
+    with pytest.raises(ValueError):
+        camera.outside_view_margin_mm = value
+    with pytest.raises(ValueError):
+        camera.outside_view_transparency = value
+    assert camera.outside_view_margin_mm == 30.0
+    assert camera.outside_view_transparency == 0.65
+
+
+def test_outside_view_rejects_wrong_types():
+    camera = Camera("Test Camera", "0")
+    with pytest.raises(TypeError):
+        camera.outside_view_enabled = 1  # type: ignore[assignment]
+    with pytest.raises(TypeError):
+        camera.outside_view_margin_mm = "10"  # type: ignore[assignment]
+    with pytest.raises(TypeError):
+        camera.outside_view_transparency = None  # type: ignore[assignment]
+
+
+def test_outside_view_setters_emit_signals():
+    camera = Camera("Test Camera", "0")
+    changed = []
+    settings_changed = []
+    camera.changed.connect(changed.append, weak=False)
+    camera.settings_changed.connect(settings_changed.append, weak=False)
+
+    camera.outside_view_enabled = True
+    camera.outside_view_margin_mm = 10
+    camera.outside_view_transparency = 0.5
+    assert len(changed) == 3
+    # The outside view is display-only; it must not invalidate capture
+    # or processing settings.
+    assert len(settings_changed) == 0
+
+    camera.outside_view_enabled = True
+    camera.outside_view_margin_mm = 10.0
+    camera.outside_view_transparency = 0.5
+    assert len(changed) == 3
+    assert len(settings_changed) == 0

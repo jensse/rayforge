@@ -7,49 +7,12 @@ from unittest.mock import Mock
 import pytest
 import yaml
 
-from rayforge.core.capability import StepCapability
-from rayforge.core.capability_registry import step_capability_registry
 from rayforge.core.doc import Doc
 from rayforge.core.recipe import Recipe
 from rayforge.core.recipe_manager import RecipeManager
 from rayforge.core.stock import StockItem
 from rayforge.core.stock_asset import StockAsset
-from rayforge.core.varset import BoolVar, VarSet
 from rayforge.machine.models.machine import Machine
-
-
-class _StubCapability(StepCapability):
-    """A minimal capability for exercising recipe matching logic."""
-
-    def __init__(self, name: str, label: str, keys: list):
-        self._name = name
-        self._label = label
-        self._varset = VarSet(
-            vars=[BoolVar(key=key, label=key) for key in keys]
-        )
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    @property
-    def label(self) -> str:
-        return self._label
-
-    @property
-    def varset(self) -> VarSet:
-        return self._varset
-
-
-CUT = _StubCapability("CUT", "Cut", ["power"])
-ENGRAVE = _StubCapability("ENGRAVE", "Engrave", ["power"])
-
-
-@pytest.fixture(autouse=True)
-def _register_stub_capabilities():
-    """Register the stub capabilities for recipe matching."""
-    step_capability_registry.register(CUT, addon_name="test")
-    step_capability_registry.register(ENGRAVE, addon_name="test")
 
 
 class TestRecipeManager:
@@ -80,9 +43,7 @@ class TestRecipeManager:
 
     @pytest.fixture
     def stock_item_factory(self):
-        """
-        A factory to create real, correctly structured StockItem instances.
-        """
+        """Factory creating real, structured StockItem instances."""
 
         def _create(
             material_uid: str | None, thickness: float | None
@@ -109,7 +70,7 @@ class TestRecipeManager:
         recipe1_data = {
             "uid": "recipe1",
             "name": "Recipe 1",
-            "target_capability_name": "CUT",
+            "target_step_types": ["ContourStep"],
             "settings": {"power": 0.8},
         }
         recipe2_data = {"uid": "recipe2", "name": "Recipe 2"}
@@ -133,6 +94,50 @@ class TestRecipeManager:
         manager = RecipeManager(recipes_dir)
         assert len(manager.recipes) == 0
 
+    def test_load_recovers_recipe_from_backup(self, recipes_dir: Path):
+        """A corrupt recipe file falls back to its .bak copy."""
+        with open(recipes_dir / "recipe1.yaml", "w") as f:
+            f.write("{truncated: [")
+        with open(recipes_dir / "recipe1.yaml.bak", "w") as f:
+            yaml.dump({"uid": "recipe1", "name": "Recipe 1"}, f)
+
+        manager = RecipeManager(recipes_dir)
+        recipe = manager.get_recipe_by_id("recipe1")
+        assert recipe is not None
+        assert recipe.name == "Recipe 1"
+
+    def test_save_recipe_does_not_truncate_on_serialize_error(
+        self, recipes_dir: Path
+    ):
+        """An error mid-save leaves the previously saved file intact."""
+
+        class Unserializable:
+            pass
+
+        recipe = Recipe(uid="recipe1", name="Recipe 1")
+        recipe.extra["payload"] = Unserializable()
+        manager = RecipeManager(recipes_dir)
+        manager.add_recipe(Recipe(uid="recipe1", name="Old"))
+        recipe_file = recipes_dir / "recipe1.yaml"
+
+        manager.save_recipe(recipe)
+
+        assert recipe_file.exists()
+        data = yaml.safe_load(recipe_file.read_text())
+        assert data["name"] == "Old"
+
+    def test_save_recipe_writes_backup_of_previous_version(
+        self, recipes_dir: Path
+    ):
+        manager = RecipeManager(recipes_dir)
+        manager.add_recipe(Recipe(uid="recipe1", name="Old"))
+        recipe = Recipe(uid="recipe1", name="New")
+        manager.add_recipe(recipe)
+
+        backup = recipes_dir / "recipe1.yaml.bak"
+        assert backup.exists()
+        assert yaml.safe_load(backup.read_text())["name"] == "Old"
+
     def test_save_recipe(self, recipes_dir: Path):
         """Test saving a new recipe to a file."""
         manager = RecipeManager(recipes_dir)
@@ -146,6 +151,34 @@ class TestRecipeManager:
         with open(recipe_file, "r") as f:
             data = yaml.safe_load(f)
         assert data["name"] == "New Recipe"
+
+    def test_save_load_transformer_dicts_round_trip(self, recipes_dir: Path):
+        """transformer_dicts survive a save + reload through the manager."""
+        manager = RecipeManager(recipes_dir)
+        recipe = Recipe(
+            uid="with-transformers",
+            name="Transformer Recipe",
+            transformer_dicts=[
+                {
+                    "name": "CropTransformer",
+                    "enabled": True,
+                    "recipe_apply": True,
+                    "offset": 1.25,
+                },
+                {
+                    "name": "Optimize",
+                    "enabled": False,
+                    "recipe_apply": False,
+                },
+            ],
+        )
+
+        manager.add_recipe(recipe)
+
+        reloaded = RecipeManager(recipes_dir)
+        restored = reloaded.get_recipe_by_id("with-transformers")
+        assert restored is not None
+        assert restored.transformer_dicts == recipe.transformer_dicts
 
     def test_add_recipe(self, recipes_dir: Path):
         """Test adding a recipe, which should also save it."""
@@ -179,7 +212,11 @@ class TestRecipeManager:
     def manager_with_recipes(
         self, recipes_dir: Path, machine_a: Mock
     ) -> RecipeManager:
-        """Provides a manager pre-populated with a variety of recipes."""
+        """Provides a manager pre-populated with a variety of recipes.
+
+        All ContourStep-targeted recipes except the last, which targets
+        EngraveStep.
+        """
         manager = RecipeManager(recipes_dir)
 
         # 1. Most specific: Machine, Laser, Material, Thickness
@@ -191,8 +228,15 @@ class TestRecipeManager:
                 material_uid="walnut",
                 min_thickness_mm=2.9,
                 max_thickness_mm=3.1,
-                target_capability_name=CUT.name,
-                settings={"power": 0.8, "selected_head_uid": "laser-1"},
+                target_step_types=["ContourStep"],
+                setting_dicts=[
+                    {"name": "power", "value": 0.8, "recipe_apply": True},
+                    {
+                        "name": "selected_head_uid",
+                        "value": "laser-1",
+                        "recipe_apply": True,
+                    },
+                ],
             )
         )
 
@@ -205,8 +249,10 @@ class TestRecipeManager:
                 material_uid="walnut",
                 min_thickness_mm=2.9,
                 max_thickness_mm=3.1,
-                target_capability_name=CUT.name,
-                settings={"power": 0.8},
+                target_step_types=["ContourStep"],
+                setting_dicts=[
+                    {"name": "power", "value": 0.8, "recipe_apply": True}
+                ],
             )
         )
 
@@ -218,8 +264,10 @@ class TestRecipeManager:
                 material_uid="walnut",
                 min_thickness_mm=2.9,
                 max_thickness_mm=3.1,
-                target_capability_name=CUT.name,
-                settings={"power": 0.9},
+                target_step_types=["ContourStep"],
+                setting_dicts=[
+                    {"name": "power", "value": 0.9, "recipe_apply": True}
+                ],
             )
         )
 
@@ -229,28 +277,34 @@ class TestRecipeManager:
                 uid="walnut-any-thickness",
                 name="Cut Any Walnut",
                 material_uid="walnut",
-                target_capability_name=CUT.name,
-                settings={"power": 0.85},
+                target_step_types=["ContourStep"],
+                setting_dicts=[
+                    {"name": "power", "value": 0.85, "recipe_apply": True}
+                ],
             )
         )
 
-        # 5. Generic Cut
+        # 5. Generic ContourStep
         manager.add_recipe(
             Recipe(
                 uid="generic-cut",
                 name="Generic Cut",
-                target_capability_name=CUT.name,
-                settings={"power": 1.0},
+                target_step_types=["ContourStep"],
+                setting_dicts=[
+                    {"name": "power", "value": 1.0, "recipe_apply": True}
+                ],
             )
         )
 
-        # 6. Generic Engrave
+        # 6. EngraveStep-only (different step type)
         manager.add_recipe(
             Recipe(
                 uid="generic-engrave",
                 name="Generic Engrave",
-                target_capability_name=ENGRAVE.name,
-                settings={"power": 0.2},
+                target_step_types=["EngraveStep"],
+                setting_dicts=[
+                    {"name": "power", "value": 0.2, "recipe_apply": True}
+                ],
             )
         )
         return manager
@@ -261,13 +315,11 @@ class TestRecipeManager:
         machine_a: Mock,
         stock_item_factory,
     ):
-        """
-        Test finding recipes with a perfect stock and machine match,
-        checking sort order.
-        """
+        """Test finding recipes with a perfect stock and machine match,
+        checking sort order."""
         stock = stock_item_factory("walnut", 3.0)
         results = manager_with_recipes.find_recipes(
-            [stock], capabilities=(CUT,), machine=machine_a
+            [stock], machine=machine_a, step_type="ContourStep"
         )
 
         assert len(results) == 5
@@ -287,7 +339,7 @@ class TestRecipeManager:
         """Test that machine-specific recipes are filtered out."""
         stock = stock_item_factory("walnut", 3.0)
         results = manager_with_recipes.find_recipes(
-            [stock], capabilities=(CUT,), machine=machine_b
+            [stock], machine=machine_b, step_type="ContourStep"
         )
 
         assert len(results) == 3
@@ -300,13 +352,11 @@ class TestRecipeManager:
     def test_find_recipes_no_machine_provided(
         self, manager_with_recipes: RecipeManager, stock_item_factory
     ):
-        """
-        Test that machine-specific recipes are filtered out when no machine
-        is provided.
-        """
+        """Test that machine-specific recipes are filtered out when no
+        machine is provided."""
         stock = stock_item_factory("walnut", 3.0)
         results = manager_with_recipes.find_recipes(
-            [stock], capabilities=(CUT,), machine=None
+            [stock], machine=None, step_type="ContourStep"
         )
 
         assert len(results) == 3
@@ -322,7 +372,7 @@ class TestRecipeManager:
         """Test finding recipes when only material matches."""
         stock = stock_item_factory("walnut", 10.0)  # Thickness mismatch
         results = manager_with_recipes.find_recipes(
-            [stock], capabilities=(CUT,), machine=machine_a
+            [stock], machine=machine_a, step_type="ContourStep"
         )
 
         assert len(results) == 2
@@ -337,10 +387,8 @@ class TestRecipeManager:
     ):
         """Test finding recipes when only thickness matches."""
         stock = stock_item_factory("mdf", 3.0)  # Material mismatch
-        # This recipe doesn't match because it also has a machine spec
-        # so only generic-cut should appear.
         results = manager_with_recipes.find_recipes(
-            [stock], capabilities=(CUT,), machine=machine_a
+            [stock], machine=machine_a, step_type="ContourStep"
         )
 
         assert len(results) == 1
@@ -352,12 +400,10 @@ class TestRecipeManager:
         machine_a: Mock,
         stock_item_factory,
     ):
-        """
-        Test finding recipes when nothing matches, only generic should return.
-        """
+        """Test finding recipes when nothing matches, only generic returns."""
         stock = stock_item_factory("mdf", 10.0)
         results = manager_with_recipes.find_recipes(
-            [stock], capabilities=(CUT,), machine=machine_a
+            [stock], machine=machine_a, step_type="ContourStep"
         )
 
         assert len(results) == 1
@@ -366,63 +412,80 @@ class TestRecipeManager:
     def test_find_recipes_no_stock_provided(
         self, manager_with_recipes: RecipeManager, machine_a: Mock
     ):
-        """
-        Test that only generic recipes are returned when no stock is provided.
-        """
+        """Only generic recipes return when no stock is provided."""
         results = manager_with_recipes.find_recipes(
-            [], capabilities=(CUT,), machine=machine_a
+            [], machine=machine_a, step_type="ContourStep"
         )
 
         assert len(results) == 1
         assert results[0].uid == "generic-cut"
 
-    def test_find_recipes_filters_by_capability(
+    def test_find_recipes_filters_by_step_type(
         self,
         manager_with_recipes: RecipeManager,
         machine_a: Mock,
         stock_item_factory,
     ):
-        """Test that find_recipes correctly filters by capability."""
+        """Only recipes targeting the queried step type match."""
         stock = stock_item_factory("walnut", 3.0)
         results = manager_with_recipes.find_recipes(
-            [stock], capabilities=(ENGRAVE,), machine=machine_a
+            [stock], machine=machine_a, step_type="EngraveStep"
         )
 
         assert len(results) == 1
         assert results[0].uid == "generic-engrave"
 
-    def test_find_recipes_multi_capability(
+    def test_find_recipes_multi_step_type_recipe(
         self,
         manager_with_recipes: RecipeManager,
         machine_a: Mock,
         stock_item_factory,
     ):
-        """Test finding recipes that match one of several capabilities."""
+        """A recipe targeting multiple step types matches each of them."""
         stock = stock_item_factory("walnut", 3.0)
-        results = manager_with_recipes.find_recipes(
-            [stock], capabilities=(CUT, ENGRAVE), machine=machine_a
+        manager_with_recipes.add_recipe(
+            Recipe(
+                uid="multi",
+                name="Multi Step Type",
+                target_step_types=["ContourStep", "EngraveStep"],
+                setting_dicts=[
+                    {"name": "power", "value": 0.5, "recipe_apply": True}
+                ],
+            )
         )
 
-        assert len(results) == 6
-        result_uids = [r.uid for r in results]
+        contour = manager_with_recipes.find_recipes(
+            [stock], machine=machine_a, step_type="ContourStep"
+        )
+        engrave = manager_with_recipes.find_recipes(
+            [stock], machine=machine_a, step_type="EngraveStep"
+        )
+        assert "multi" in [r.uid for r in contour]
+        assert "multi" in [r.uid for r in engrave]
 
-        # All the CUT recipes should be present
-        assert "machine-a-laser-1-walnut-3mm" in result_uids
-        assert "machine-a-walnut-3mm" in result_uids
-        assert "walnut-3mm-cut" in result_uids
-        assert "walnut-any-thickness" in result_uids
-        assert "generic-cut" in result_uids
+    def test_find_recipes_single_more_specific_than_multi(
+        self,
+        manager_with_recipes: RecipeManager,
+        machine_a: Mock,
+        stock_item_factory,
+    ):
+        """A single-target recipe outranks a multi-target one for sorting."""
+        stock = stock_item_factory("walnut", 3.0)
+        manager_with_recipes.add_recipe(
+            Recipe(
+                uid="multi",
+                name="Multi Step Type",
+                target_step_types=["ContourStep", "EngraveStep"],
+                setting_dicts=[
+                    {"name": "power", "value": 0.5, "recipe_apply": True}
+                ],
+            )
+        )
 
-        # The ENGRAVE recipe should also be present
-        assert "generic-engrave" in result_uids
-
-        # Check the sorting order (specificity, then name)
-        # The 5 CUT recipes should come first, in their specific order.
-        # Then the ENGRAVE recipe, which has the same low specificity as
-        # generic-cut and will be sorted after it by name.
-        assert results[0].uid == "machine-a-laser-1-walnut-3mm"
-        assert results[1].uid == "machine-a-walnut-3mm"
-        assert results[2].uid == "walnut-3mm-cut"
-        assert results[3].uid == "walnut-any-thickness"
-        assert results[4].uid == "generic-cut"
-        assert results[5].uid == "generic-engrave"
+        results = manager_with_recipes.find_recipes(
+            [stock], machine=machine_a, step_type="ContourStep"
+        )
+        uids = [r.uid for r in results]
+        # generic-cut (single ContourStep) outranks multi (two step types),
+        # both having otherwise-generic machine/material/thickness.
+        assert uids.index("generic-cut") < uids.index("multi")

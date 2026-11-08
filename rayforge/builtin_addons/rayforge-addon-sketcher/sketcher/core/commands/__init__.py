@@ -2,16 +2,20 @@ from .angle_constraint import AngleConstraintCommand, AngleConstraintParams
 from .arc import ArcCommand, ArcPreviewState
 from .base import PreviewState, SketchChangeCommand
 from .bezier import BezierCommand, BezierPreviewState
+from .boolean import BooleanCommand
 from .chamfer import ChamferCommand
 from .circle import CircleCommand, CirclePreviewState
 from .constraint import ModifyConstraintCommand
 from .constraint_create import CreateOrEditConstraintCommand
 from .construction import ToggleConstructionCommand
+from .create_array import CreateArrayCommand
 from .dimension import DimensionData
 from .distance_constraint import (
     DistanceConstraintCommand,
     DistanceConstraintParams,
 )
+from .duplicate import DuplicateCommand
+from .edit_array import EditArrayCommand
 from .ellipse import EllipseCommand, EllipsePreviewState
 from .equal_constraint import (
     EqualConstraintCommand,
@@ -20,13 +24,21 @@ from .equal_constraint import (
 from .fill import AddFillCommand, RemoveFillCommand, SetTextFillCommand
 from .fillet import FilletCommand
 from .grid import GridCommand
-from .items import AddItemsCommand
+from .items import AddItemsCommand, RemoveItemsCommand
 from .line import LineCommand, LinePreviewState
 from .live_text_edit import LiveTextEditCommand
+from .mirror import MirrorAxis, MirrorCommand, MirrorDirection
+from .offset import OffsetCommand
 from .point import (
     MoveControlPointCommand,
+    MoveEntitiesCommand,
     MovePointCommand,
     UnstickJunctionCommand,
+)
+from .polygon import (
+    PolygonCommand,
+    PolygonPreviewState,
+    polygon_vertices,
 )
 from .rectangle import RectangleCommand, RectanglePreviewState
 from .rounded_rect import RoundedRectCommand, RoundedRectPreviewState
@@ -52,13 +64,17 @@ __all__ = [
     "ArcPreviewState",
     "BezierCommand",
     "BezierPreviewState",
+    "BooleanCommand",
     "ChamferCommand",
     "CircleCommand",
     "CirclePreviewState",
+    "CreateArrayCommand",
     "CreateOrEditConstraintCommand",
     "DimensionData",
     "DistanceConstraintCommand",
     "DistanceConstraintParams",
+    "DuplicateCommand",
+    "EditArrayCommand",
     "EllipseCommand",
     "EllipsePreviewState",
     "EqualConstraintCommand",
@@ -68,14 +84,22 @@ __all__ = [
     "LineCommand",
     "LinePreviewState",
     "LiveTextEditCommand",
+    "MirrorAxis",
+    "MirrorCommand",
+    "MirrorDirection",
     "ModifyConstraintCommand",
     "ModifyTextPropertyCommand",
     "MoveControlPointCommand",
+    "MoveEntitiesCommand",
     "MovePointCommand",
+    "OffsetCommand",
+    "PolygonCommand",
+    "PolygonPreviewState",
     "PreviewState",
     "RectangleCommand",
     "RectanglePreviewState",
     "RemoveFillCommand",
+    "RemoveItemsCommand",
     "RoundedRectCommand",
     "RoundedRectPreviewState",
     "SetTextFillCommand",
@@ -89,4 +113,5 @@ __all__ = [
     "TextBoxCommand",
     "ToggleConstructionCommand",
     "UnstickJunctionCommand",
+    "polygon_vertices",
 ]

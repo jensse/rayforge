@@ -26,8 +26,10 @@ On each debounced rebuild:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
+from gettext import gettext as _
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -44,22 +46,37 @@ from raygeo.cnc.execution.intent import (
 from raygeo.pipeline.execute import Pipeline as RaygeoPipeline
 from raygeo.pipeline.request import NodeRequest
 
-from .intent_builder import IntentBuilder, parse_workpiece_key
+from .intent_builder import (
+    IntentBuilder,
+    UnsupportedRotaryPanelOrientationError,
+    parse_stock_key,
+    parse_workpiece_key,
+)
+from .status_messages import status_message_for_key
 
 if TYPE_CHECKING:
     from ..core.doc import Doc
     from ..core.item import DocItem
+    from ..core.layer import Layer
     from ..core.step import Step
+    from ..core.stock import StockItem
     from ..core.workpiece import WorkPiece
     from ..machine.models.machine import Machine
 
 from raygeo.pipeline.completed import ErrorKind
+from raygeo.pipeline.execute import PipelineCancelled
 
 logger = logging.getLogger(__name__)
 
 
 # Debounce window for signal-driven intent rebuilds (milliseconds).
 REBUILD_DEBOUNCE_MS = 200
+
+# Upper bound on node keys kept in the active-progress window.
+MAX_ACTIVE_PROGRESS_KEYS = 8
+
+# How many active statuses are shown before collapsing into (+N more).
+ACTIVE_PROGRESS_DISPLAY_LIMIT = 3
 
 
 @runtime_checkable
@@ -123,15 +140,22 @@ class IntentController:
         self._rebuild_timer: Any | None = None
         self._rebuilding: bool = False
         self._rebuild_pending: bool = False
+        self._rebuild_task: Any | None = None
         self._pause_count: int = 0
         self._auto_rebuild: bool = True
         self._data_stale_flag: bool = False
+        # Node keys currently reported as active by ``on_batch_progress``
+        # mapped to their translated status message, in first-seen order.
+        # Completed nodes are removed via the ``\t{key}`` completion
+        # payload so a few parallel tasks can be shown at once.
+        self._active_progress: dict[str, str] = {}
         # Flat map from node key back to the originating :class:`DocItem`
         # for DOM reattachment.  Rebuilt on every successful
         # ``IntentBuilder.build`` call.
         self._key_to_item: dict[str, DocItem] = {}
         self._workpieces_by_uid: dict[str, WorkPiece] = {}
         self._steps_by_uid: dict[str, Step] = {}
+        self._stock_items_by_uid: dict[str, StockItem] = {}
 
         # Signals for notifying the UI of generation progress.
         self.workpiece_artifact_ready = Signal()
@@ -139,6 +163,7 @@ class IntentController:
         self.job_aggregate_ready = Signal()
         self.job_generation_finished = Signal()
         self.job_time_updated = Signal()
+        self.material_state_ready = Signal()
         self.progress_changed = Signal()
         self.rebuild_started = Signal()
         self.rebuild_finished = Signal()
@@ -278,6 +303,45 @@ class IntentController:
             return
         self._rebuild()
 
+    def has_pending_debounce(self) -> bool:
+        """True if a debounced rebuild is armed but not yet started."""
+        return self._rebuild_timer is not None and not self._rebuilding
+
+    def flush_pending_debounce(self) -> None:
+        """Immediately runs a pending debounced rebuild, if any.
+
+        Waiting for the debounce timer to expire is not enough for
+        callers that need a guaranteed-idle pipeline: the timer lives
+        on the task manager loop and its rebuild may otherwise start
+        after the caller has already observed an idle state.
+        """
+        if self.has_pending_debounce():
+            self.force_rebuild()
+
+    async def wait_until_idle(self, timeout: float = 10.0) -> None:
+        """Waits until no rebuild is pending, armed, or running.
+
+        Main-thread callbacks queued by a finishing rebuild may still
+        arm a new debounce timer, so after the pipeline goes quiet one
+        debounce period is waited out and the check repeated before
+        returning. When this coroutine returns, no rebuild will start
+        on its own.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        debounce = REBUILD_DEBOUNCE_MS / 1000.0
+        while True:
+            self.flush_pending_debounce()
+            while self.is_rebuild_pending:
+                if loop.time() >= deadline:
+                    raise TimeoutError("Pipeline did not become idle in time.")
+                await asyncio.sleep(0.005)
+            if loop.time() >= deadline:
+                raise TimeoutError("Pipeline did not become idle in time.")
+            await asyncio.sleep(debounce)
+            if not self.is_rebuild_pending:
+                return
+
     def _schedule_rebuild(self) -> None:
         if self._rebuild_timer is not None:
             self._rebuild_timer.cancel()
@@ -308,6 +372,7 @@ class IntentController:
         self._rebuild_timer = None
         self._generation_id += 1
         self._rebuilding = True
+        self._active_progress = {}
         gen = self._generation_id
         self.rebuild_started.send(self)
 
@@ -319,25 +384,57 @@ class IntentController:
                 generation_id=gen,
                 loop=getattr(self._task_manager, "loop", None),
             )
-            nodes = builder.build(self._doc)
-            self._refresh_key_to_item_map(nodes)
-            new_intent = create_intent_from_nodes(nodes)
-            if self._intent is None:
-                self._intent = new_intent
-            else:
-                self._intent.update(new_intent, pipeline=self._raygeo_pipeline)
-            if nodes:
-                try:
+            try:
+                nodes = builder.build(self._doc)
+            except UnsupportedRotaryPanelOrientationError as exc:
+                logger.warning("Unsupported panel configuration: %s", exc)
+                self._refresh_key_to_item_map([])
+                empty_intent = create_intent_from_nodes([])
+                if self._intent is None:
+                    self._intent = empty_intent
+                else:
+                    self._intent.update(
+                        empty_intent, pipeline=self._raygeo_pipeline
+                    )
+                self._task_manager.schedule_on_main_thread(
+                    self._emit_configuration_error, str(exc)
+                )
+                return
+            except Exception:
+                # An unexpected build error must still complete anyone
+                # waiting for job generation, or job sending wedges.
+                logger.exception("Intent build failed")
+                self._task_manager.schedule_on_main_thread(
+                    self._emit_job_generation_failed
+                )
+                return
+            try:
+                self._refresh_key_to_item_map(nodes)
+                new_intent = create_intent_from_nodes(nodes)
+                if self._intent is None:
+                    self._intent = new_intent
+                else:
+                    self._intent.update(
+                        new_intent, pipeline=self._raygeo_pipeline
+                    )
+                if nodes:
                     run_intent(
                         self._intent,
                         on_completed=self._on_completed,
                         on_batch_progress=self._on_batch_progress,
                         pipeline=self._raygeo_pipeline,
                     )
-                except RuntimeError as exc:
-                    logger.debug("run_intent failed: %s", exc)
+            except PipelineCancelled:
+                # Cancellation is expected during rapid rebuilds.
+                logger.info("Intent execution cancelled")
+            except Exception:
+                logger.exception("Intent execution failed")
+                self._task_manager.schedule_on_main_thread(
+                    self._emit_job_generation_failed
+                )
 
         def _on_done(_task: Any) -> None:
+            self._rebuild_task = None
             self._rebuilding = False
             if self._rebuild_pending:
                 self._rebuild_pending = False
@@ -347,8 +444,20 @@ class IntentController:
                     self._emit_rebuild_finished
                 )
 
-        self._task_manager.run_thread(
+        self._rebuild_task = self._task_manager.run_thread(
             _worker, when_done=_on_done, key="intent-rebuild"
+        )
+
+    def _emit_job_generation_failed(self) -> None:
+        """
+        Completes job-generation waiters after an unexpected failure.
+
+        Without this, anyone awaiting ``job_generation_finished``
+        (e.g. ``generate_job_artifact_async``) would block forever,
+        wedging all future send attempts behind the stuck job guard.
+        """
+        self.job_generation_finished.send(
+            self, handle=None, task_status="failed"
         )
 
     def _emit_rebuild_finished(self) -> None:
@@ -358,6 +467,11 @@ class IntentController:
     def _emit_pipeline_error(self, error_kind: ErrorKind) -> None:
         """Emit ``pipeline_error`` on the main thread."""
         self.pipeline_error.send(self, error_kind=error_kind)
+
+    def _emit_configuration_error(self, message: str) -> None:
+        """Emit a user-actionable configuration error on the main
+        thread."""
+        self.pipeline_error.send(self, message=message)
 
     def _emit_pipeline_warnings(self, warnings: list) -> None:
         """Emit ``pipeline_warnings`` on the main thread."""
@@ -426,18 +540,71 @@ class IntentController:
         """raygeo ``on_batch_progress`` callback.
 
         Invoked on a rayon worker thread with the GIL held.  Relays
-        the aggregate progress fraction and status message to
-        listeners via :attr:`progress_changed` (marshalled onto the
-        application main thread so signal handlers never run on a
-        worker).
+        the aggregate progress fraction and node key to the main
+        thread, where the key is translated into a user-facing status
+        message.
         """
         self._task_manager.schedule_on_main_thread(
-            self._emit_progress, fraction, message
+            self._update_rebuild_progress, fraction, message
         )
 
-    def _emit_progress(self, fraction: float, message: str) -> None:
-        """Emit :attr:`progress_changed` on the main thread."""
-        self.progress_changed.send(self, fraction=fraction, message=message)
+    def _update_rebuild_progress(self, fraction: float, key: str) -> None:
+        """Update the ``intent-rebuild`` task with progress and status.
+
+        Runs on the application main thread.  The batch progress
+        payload is folded into a small window of currently-active node
+        keys so that a few parallel tasks can be shown at once:
+
+        * ``{key}`` or ``{key}\\t{activity}`` marks a node as active;
+        * ``\\t{key}`` (a completion marker) removes that node;
+        * ``""`` (the final tick) clears the whole window.
+
+        Each key is translated into a translatable status message and
+        pushed into the rebuild :class:`Task` so the UI can display it.
+        The :attr:`progress_changed` signal is still emitted with the
+        bare node key for backward compatibility with existing
+        listeners.
+        """
+        task = self._rebuild_task
+        if not key:
+            self._active_progress.clear()
+            node_key = ""
+        elif key.startswith("\t"):
+            self._active_progress.pop(key[1:], None)
+            node_key = ""
+        else:
+            node_key, _sep, _detail = key.partition("\t")
+            if node_key:
+                self._active_progress[node_key] = status_message_for_key(
+                    key, self._workpieces_by_uid, self._steps_by_uid
+                )
+                if len(self._active_progress) > MAX_ACTIVE_PROGRESS_KEYS:
+                    self._active_progress.pop(
+                        next(iter(self._active_progress))
+                    )
+        if task is not None:
+            task.update(
+                progress=fraction,
+                message=self._format_active_progress(),
+            )
+        self.progress_changed.send(self, fraction=fraction, message=node_key)
+
+    def _format_active_progress(self) -> str:
+        """Join the currently-active node statuses for the progress bar.
+
+        At most three statuses are shown on separate lines; further
+        active nodes are summarised as a ``(+N more)`` suffix so the
+        overlay stays compact while still hinting at parallel work.
+        """
+        items = list(self._active_progress.values())
+        if not items:
+            return ""
+        text = "\n".join(items[:ACTIVE_PROGRESS_DISPLAY_LIMIT])
+        if len(items) > ACTIVE_PROGRESS_DISPLAY_LIMIT:
+            text += "\n" + _("(+{n} more)").format(
+                n=len(items) - ACTIVE_PROGRESS_DISPLAY_LIMIT
+            )
+        return text
 
     def _reattach(self, key: str, item: DocItem, output: Any) -> None:
         """
@@ -489,6 +656,19 @@ class IntentController:
             self.job_generation_finished.send(
                 self, handle=output, task_status="completed"
             )
+        elif key.startswith("stock:"):
+            stock_uid = parse_stock_key(key)
+            if stock_uid is not None:
+                host: DocItem | None = self._find_stock_item(stock_uid)
+                if host is None:
+                    host = self._find_layer(stock_uid)
+                if host is not None:
+                    self.material_state_ready.send(
+                        self,
+                        item=host,
+                        output=output,
+                        generation_id=gen,
+                    )
 
     # ------------------------------------------------------------------
     # Helpers
@@ -519,6 +699,16 @@ class IntentController:
         self._workpieces_by_uid = workpieces
         self._steps_by_uid = steps
 
+        stock_items: dict[str, StockItem] = {}
+        layers_by_uid: dict[str, Layer] = {}
+        if self._doc is not None:
+            for item in self._doc.stock_items:
+                stock_items[item.uid] = item
+            for layer in self._doc.layers:
+                layers_by_uid[layer.uid] = layer
+        self._stock_items_by_uid = stock_items
+        self._layers_by_uid = layers_by_uid
+
         for n in nodes:
             key = n.key
             # ``workpiece:{wp_uid}:{step_uid}``
@@ -532,12 +722,24 @@ class IntentController:
                 wp = workpieces.get(wp_uid)
                 if wp is not None:
                     self._key_to_item[key] = wp
-            # ``step:{step_uid}``
-            elif key.startswith("step:"):
+            # ``step:{step_uid}``, or ``command:{step_uid}`` — the
+            # compute node key of a geometry-less step, which maps to
+            # the step itself.
+            elif key.startswith(("step:", "command:")):
                 _, s_uid = key.split(":")
                 step = steps.get(s_uid)
                 if step is not None:
                     self._key_to_item[key] = step
+            # ``stock:{stock_uid}`` — a flat stock item or, when no
+            # stock item carries the uid, a rotary layer.
+            elif key.startswith("stock:"):
+                stock_uid = parse_stock_key(key)
+                if stock_uid is not None:
+                    item = stock_items.get(stock_uid)
+                    if item is None:
+                        item = layers_by_uid.get(stock_uid)
+                    if item is not None:
+                        self._key_to_item[key] = item
             # ``job`` or ``job:encode``
             elif key == "job" or key == "job:encode":
                 self._key_to_item[key] = self._doc
@@ -547,6 +749,12 @@ class IntentController:
 
     def _find_step(self, uid: str) -> Step | None:
         return self._steps_by_uid.get(uid)
+
+    def _find_stock_item(self, uid: str) -> StockItem | None:
+        return self._stock_items_by_uid.get(uid)
+
+    def _find_layer(self, uid: str) -> Layer | None:
+        return self._layers_by_uid.get(uid)
 
     def shutdown(self) -> None:
         """Cancel any pending rebuild timer and disconnect signals."""

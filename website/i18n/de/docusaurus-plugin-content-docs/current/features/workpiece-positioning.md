@@ -1,15 +1,13 @@
 # Werkstückpositionierung
 
-Dieser Leitfaden behandelt alle Methoden, die in Rayforge für die genaue
-Positionierung deines Werkstücks und die Ausrichtung deiner Designs vor dem
-Schneiden oder Gravieren verfügbar sind.
+Dieser Leitfaden behandelt alle Methoden, die in Rayforge für die genaue Positionierung deines
+Werkstücks und die Ausrichtung deiner Designs vor dem Schneiden oder Gravieren verfügbar sind.
 
 ## Übersicht
 
 Genaue Werkstückpositionierung ist wichtig für:
 
-- **Abfallvermeidung**: Verhindern, dass an der falschen Stelle geschnitten
-  wird
+- **Abfallvermeidung**: Verhindern, dass an der falschen Stelle geschnitten wird
 - **Präzise Ausrichtung**: Designs auf vorgedruckten Materialien positionieren
 - **Wiederholbare Ergebnisse**: Denselben Job mehrmals konsistent ausführen
 - **Mehrteilige Jobs**: Mehrere Teile auf einem einzigen Blatt ausrichten
@@ -22,14 +20,14 @@ Rayforge bietet mehrere sich ergänzende Werkzeuge zur Positionierung:
 | **Einrahmen**      | Job-Grenzen vorschauen      | Überprüfen, ob Design auf Material passt    |
 | **WKS-Nullpunkt**  | Koordinatenursprung setzen  | Wiederholbare Positionierung                |
 | **Kamera-Overlay** | Visuelle Design-Platzierung | Präzise Ausrichtung auf bestehende Merkmale |
+| **Positionsbezug** | Ankerpunkt wählen           | Parametrische Skizzen ausrichten            |
 
 ---
 
 ## Fokusmodus (Laserzeiger)
 
-Der Fokusmodus schaltet den Laser mit niedriger Leistungsstufe ein und fungiert
-als "Laserzeiger", um dir zu helfen, genau zu sehen, wo der Laserkopf
-positioniert ist.
+Der Fokusmodus schaltet den Laser mit niedriger Leistungsstufe ein und fungiert als "Laserzeiger",
+um dir zu helfen, genau zu sehen, wo der Laserkopf positioniert ist.
 
 ### Fokusmodus aktivieren
 
@@ -39,11 +37,13 @@ positioniert ist.
 4. **Laserkopf bewegen** um die Strahlposition auf deinem Material zu sehen
 5. **Fokus-Taste erneut klicken** zum Ausschalten wenn fertig
 
-:::warning Sicherheit
+<!-- prettier-ignore-start -->
+:::warning[Sicherheit]
 Selbst bei niedriger Leistung kann der Laser die Augen beschädigen. Schau
-niemals direkt in den Strahl oder richte ihn auf reflektierende
-Oberflächen. Trage geeigneten Augenschutz.
+niemals direkt in den Strahl oder richte ihn auf reflektierende Oberflächen. Trage geeigneten
+Augenschutz.
 :::
+<!-- prettier-ignore-end -->
 
 ### Fokus-Leistung konfigurieren
 
@@ -51,35 +51,83 @@ Die Fokus-Leistung bestimmt, wie hell der Laserpunkt erscheint:
 
 1. Gehe zu **Einstellungen → Maschine → Laser**
 2. Finde die Einstellung **Fokus-Leistung**
-3. Setze einen Wert, der den Punkt sichtbar macht, ohne dein Material zu
-   markieren
+3. Setze einen Wert, der den Punkt sichtbar macht, ohne dein Material zu markieren
    - Typische Werte: 1-5% für die meisten Materialien
    - Auf 0 setzen, um die Funktion zu deaktivieren
 
-:::tip Die richtige Leistung finden
-Beginne mit 1% und erhöhe schrittweise. Der Punkt sollte sichtbar
-sein, aber keine Marke auf deinem Material hinterlassen. Dunklere Materialien
-benötigen möglicherweise höhere Leistung, um den Punkt deutlich zu sehen.
+<!-- prettier-ignore-start -->
+:::tip[Die richtige Leistung finden]
+Beginne mit 1% und erhöhe schrittweise. Der Punkt sollte
+sichtbar sein, aber keine Marke auf deinem Material hinterlassen. Dunklere Materialien benötigen
+möglicherweise höhere Leistung, um den Punkt deutlich zu sehen.
 :::
+<!-- prettier-ignore-end -->
 
 ### Wann den Fokusmodus verwenden
 
-- **Schnelle Ausrichtungskontrollen**: Sehen, ob der Laser ungefähr dort ist,
-  wo du erwartest
-- **Materialkanten finden**: Zu Ecken bewegen, um Materialplatzierung zu
-  verifizieren
-- **WKS-Ursprung setzen**: Laser an gewünschten Nullpunkt positionieren vor
-  dem WKS-Setzen
-- **Home-Position verifizieren**: Überprüfen, dass das Referenzieren korrekt
-  funktioniert hat
+- **Schnelle Ausrichtungskontrollen**: Sehen, ob der Laser ungefähr dort ist, wo du erwartest
+- **Materialkanten finden**: Zu Ecken bewegen, um Materialplatzierung zu verifizieren
+- **WKS-Ursprung setzen**: Laser an gewünschten Nullpunkt positionieren vor dem WKS-Setzen
+- **Home-Position verifizieren**: Überprüfen, dass das Referenzieren korrekt funktioniert hat
+
+---
+
+## Zeigerlaser-Offset
+
+Manche Maschinen haben einen dedizierten Zeigerlaser (einen kleinen Laser mit rotem Punkt), der in
+festem Abstand zum Schneidstrahl montiert ist. Wenn du das Werkstück anhand des Zeigerpunkts
+ausrichtest, würde der Schneidstrahl eigentlich versetzt zu diesem Punkt landen — es sei denn,
+Rayforge kompensiert es.
+
+Die Laser-Einstellung [Zeiger-Offset](../machine/laser.md) lässt dich diesen Abstand eingeben und
+die Kompensation ein- oder ausschalten. Bei aktiviertem Offset:
+
+- **Arbeitsnullpunkt an aktueller Position setzen** (und Nullen X / Nullen Y) legt den
+  Arbeitsursprung an die Position des Zeigerpunkts.
+- Die Leinwand zeigt einen gelben Zeigerpunkt neben dem roten Strahlpunkt, der markiert, wo sich der
+  Zeigerpunkt auf deinem Material befindet.
+- Ein **Zeigerausrichtung**-Schalter erscheint im Verschieben-Popover (das Kompass-Symbol neben der
+  Positionsanzeige).
+
+### Zeigerausrichtung
+
+Während die **Zeigerausrichtung** aktiv ist, landet bei jeder absoluten Positionierungsoperation —
+Verschieben nach, die Ecken-Kürzel, das Anfahren des WKS-Ursprungs, Klicken zum Verschieben, Kopf
+hierher bewegen und Einrahmen — der _Zeigerpunkt_ auf der anvisierten Position, sodass du das
+Werkstück vollständig am sichtbaren Punkt ausrichten kannst. Die Koordinateneingabe im Popover wird
+mit der Position des Zeigerpunkts vorbefüllt. Auf der Leinwand ist stets genau ein Punkt gefüllt:
+Der Zeigerpunkt ist gefüllt, während die Ausrichtung aktiv ist (der Strahlpunkt ist dann ein
+hollower Ring), und hohl, während sie aus ist (der Strahlpunkt ist gefüllt).
+
+Der Arbeitsablauf kombiniert sich sauber mit dem Nullen per Zeigerpunkt: Der Ursprung liegt dort, wo
+der Zeiger markiert hat, das Anvisieren verschiebt jedes Ziel um den Offset, und der Brennvorgang
+bleibt unverschoben — Ausrichten mit dem Punkt und Schneiden mit dem Strahl passen also zusammen.
+
+Wenn du bei aktiver Ausrichtung auf **Senden** drückst, erscheint bei jedem Senden eine Warnung (es
+gibt kein „nicht mehr fragen“). Du kannst wählen:
+
+- **Probelauf mit Zeiger**: Der Job läuft mit angewendetem Zeiger-Offset, sodass der Zeigerpunkt den
+  Werkzeugpfad nachzeichnet, während der Strahl um den Offset verschoben läuft. Der Laser brennt
+  weiterhin mit Job-Leistung — stelle sicher, dass der verschobene Strahl nichts treffen kann, was
+  er nicht soll.
+- **Ausschalten und Brennen**: Die Ausrichtung wird ausgeschaltet und der Job brennt normal mit dem
+  Strahl an den WKS-Positionen.
+- **Abbrechen**.
+
+Jog-Bewegungen und Jobs werden vom Schalter nie verschoben: Jog ist relativ, und die G-Code-Ausgabe
+ist identisch, ob die Ausrichtung ein- oder ausgeschaltet ist. Der Schalter gilt nur für die Sitzung
+— er wird nicht im Maschinenprofil gespeichert und zurückgesetzt, wenn du die Maschine wechselst.
+
+Der Zeiger-Offset ist besonders nützlich für Werkstücke, die größer als das Laserbett sind
+(Durchlaufbetrieb), bei denen du das Design wiederholt an einer Referenzmarke auf dem sich
+bewegenden Werkstück ausrichtest.
 
 ---
 
 ## Einrahmen
 
-Einrahmen zeichnet das Begrenzungsrechteck deines Jobs bei niedriger (oder
-keiner) Leistung nach und zeigt genau, wo dein Design geschnitten oder graviert
-wird.
+Einrahmen zeichnet das Begrenzungsrechteck deines Jobs bei niedriger (oder keiner) Leistung nach und
+zeigt genau, wo dein Design geschnitten oder graviert wird.
 
 ### Wie man einrahmt
 
@@ -92,19 +140,19 @@ wird.
 
 Rahmen-Verhalten konfigurieren in **Einstellungen → Maschine → Laser**:
 
-- **Rahmen-Geschwindigkeit**: Wie schnell sich der Kopf während des Einrahmens
-  bewegt (langsamer = leichter zu sehen)
+- **Rahmen-Geschwindigkeit**: Wie schnell sich der Kopf während des Einrahmens bewegt (langsamer =
+  leichter zu sehen)
 - **Rahmen-Leistung**: Laserleistung während des Einrahmens
   - Auf 0 für Luft-Einrahmen setzen (Laser aus, nur Bewegung)
   - Auf 1-5% für eine sichtbare Spur auf dem Material setzen
 
-:::tip Luft-Einrahmen vs. Niedrigleistung
-
-- **Luft-Einrahmen (0% Leistung)**: Sicher für jedes Material, aber du siehst
-  nur die Kopfbewegung
-- **Niedrigleistung-Einrahmen**: Hinterlässt eine schwache sichtbare Marke,
-  nützlich für präzise Ausrichtung auf dunklen Materialien
-  :::
+<!-- prettier-ignore-start -->
+:::tip[Luft-Einrahmen vs. Niedrigleistung]
+- **Luft-Einrahmen (0% Leistung)**: Sicher für jedes Material, aber du siehst nur die Kopfbewegung
+- **Niedrigleistung-Einrahmen**: Hinterlässt eine schwache sichtbare Marke, nützlich für präzise
+  Ausrichtung auf dunklen Materialien
+:::
+<!-- prettier-ignore-end -->
 
 ### Wann einrahmen
 
@@ -119,18 +167,15 @@ Siehe [Deinen Job einrahmen](framing-your-job) für weitere Details.
 
 ## WKS-Nullpunkt setzen (Arbeitskoordinatensystem)
 
-Arbeitskoordinatensysteme (WKS) ermöglichen es dir, benutzerdefinierte
-"Nullpunkte" für deine Jobs zu definieren. Dies erleichtert die Ausrichtung von
-Jobs an deine Materialposition.
+Arbeitskoordinatensysteme (WKS) ermöglichen es dir, benutzerdefinierte "Nullpunkte" für deine Jobs
+zu definieren. Dies erleichtert die Ausrichtung von Jobs an deine Materialposition.
 
 ### Schnelle WKS-Einrichtung
 
-1. **Laserkopf bewegen** zur Ecke deines Materials (oder gewünschter
-   Ursprungspunkt)
+1. **Laserkopf bewegen** zur Ecke deines Materials (oder gewünschter Ursprungspunkt)
 2. **Kontrollpanel öffnen** (`Strg+L`)
 3. **Ein WKS auswählen** (G54 ist das Standard-Arbeitskoordinatensystem)
-4. **Auf Null X und Null Y klicken** um aktuelle Position als Ursprung zu
-   setzen
+4. **Auf Null X und Null Y klicken** um aktuelle Position als Ursprung zu setzen
 5. Der (0,0)-Punkt deines Designs wird nun an dieser Position ausgerichtet
 
 ### Koordinatensysteme verstehen
@@ -143,14 +188,16 @@ Rayforge verwendet mehrere Koordinatensysteme:
 | **G54**     | Arbeitskoordinatensystem 1 (Standard)                   |
 | **G55-G59** | Zusätzliche Arbeitskoordinatensysteme                   |
 
-:::tip Mehrere Arbeitsbereiche
-Verwende verschiedene WKS-Slots für verschiedene Vorrichtungspositionen.
-Zum Beispiel:
+<!-- prettier-ignore-start -->
+:::tip[Mehrere Arbeitsbereiche]
+Verwende verschiedene WKS-Slots für verschiedene
+Vorrichtungspositionen. Zum Beispiel:
 
 - G54 für die linke Seite deines Arbeitsbereichs
 - G55 für die rechte Seite
 - G56 für eine Rotationsvorrichtung
-  :::
+:::
+<!-- prettier-ignore-end -->
 
 ### Wann WKS-Nullpunkt setzen
 
@@ -159,41 +206,72 @@ Zum Beispiel:
 - **Wiederholbare Jobs**: Gleicher Job, verschiedene Positionen
 - **Produktionsläufe**: Konsistente Positionierung über mehrere Stücke
 
-Siehe [Arbeitskoordinatensysteme](../general-info/coordinate-systems.md) für
-vollständige Dokumentation.
+Siehe [Arbeitskoordinatensysteme](../general-info/coordinate-systems.md) für vollständige
+Dokumentation.
+
+---
+
+## Positionsbezug
+
+Standardmäßig beziehen sich die Felder **X-Position** und **Y-Position** im Eigenschaften-Panel auf
+die linke untere Ecke der Begrenzungsbox eines Werkstücks. Bei parametrischen Skizzen ist das oft
+nicht der sinnvollste Anker: Ändert ein Parameter die Größe der Skizze, scheint das Design sich
+relativ zu allem anderen zu verschieben.
+
+Die Auswahl **Position relativ zu** im Eigenschaften-Panel legt fest, auf welchen Punkt sich die
+Positionsfelder beziehen:
+
+| Option            | Bezieht sich auf                                                |
+| ----------------- | --------------------------------------------------------------- |
+| **Ecke**          | Die linke untere Ecke der Begrenzungsbox (Standard)             |
+| **Mitte**         | Die Mitte der Begrenzungsbox                                    |
+| **Referenzpunkt** | Der logische Ursprung der Geometrie, z. B. der Skizzen-Ursprung |
+
+![Die Auswahl „Position relativ zu“ im Eigenschaften-Panel](/screenshots/main-item-properties.webp)
+
+Der gewählte Bezugspunkt ist auch der Punkt, der beim Skalieren des Werkstücks und bei der
+Neuerzeugung eines Skizzen-Werkstücks mit geänderten Parametern festgehalten wird. Die Option
+**Referenzpunkt** ist nur für Werkstücke verfügbar, deren Quelle einen solchen definiert — etwa
+Skizzen, wo er dem Skizzen-Ursprung entspricht.
+
+<!-- prettier-ignore-start -->
+:::tip[Parametrische Skizzen ausrichten]
+Um eine Gravur dauerhaft innerhalb einer Schnittkontur zu halten: Setzen Sie beide Skizzen auf
+den Skizzen-Ursprung, stellen Sie beide Werkstücke auf **Referenzpunkt** und geben Sie beiden
+dieselbe X/Y-Position. Die Skizzen bleiben ausgerichtet, egal wie sich die Parameter ändern.
+:::
+<!-- prettier-ignore-end -->
 
 ---
 
 ## Kamerabasierte Positionierung
 
-Das Kamera-Overlay zeigt eine Live-Ansicht deines Materials mit deinem Design
-überlagert und ermöglicht präzise visuelle Ausrichtung.
+Das Kamera-Overlay zeigt eine Live-Ansicht deines Materials mit deinem Design überlagert und
+ermöglicht präzise visuelle Ausrichtung.
 
 ### Kamera einrichten
 
 1. **USB-Kamera anschließen** über deinem Arbeitsbereich
 2. Gehe zu **Einstellungen → Kamera** und füge dein Kameragerät hinzu
 3. **Kamera aktivieren** um das Overlay auf deiner Arbeitsfläche zu sehen
-4. **Kamera ausrichten** mit dem Ausrichtungsverfahren (erforderlich für
-   genaue Positionierung)
+4. **Kamera ausrichten** mit dem Ausrichtungsverfahren (erforderlich für genaue Positionierung)
 
 ### Kamera-Ausrichtung
 
 Die Kamera-Ausrichtung ordnet Kamerapixel den realen Koordinaten zu:
 
 1. Öffne **Kamera → Kamera ausrichten**
-2. Platziere Ausrichtungsmarkierungen an bekannten Positionen (mindestens
-   4 Punkte)
+2. Platziere Ausrichtungsmarkierungen an bekannten Positionen (mindestens 4 Punkte)
 3. Gib die realen X/Y-Koordinaten für jeden Punkt ein
 4. Klicke auf **Anwenden** um die Transformation zu berechnen
 
-:::tip Ausrichtungsgenauigkeit
-
+<!-- prettier-ignore-start -->
+:::tip[Ausrichtungsgenauigkeit]
 - Verwende Punkte, die über deinen gesamten Arbeitsbereich verteilt sind
 - Miss Weltkoordinaten sorgfältig mit einem Lineal
-- Verwende Maschinenpositionen (zu bekannten Koordinaten bewegen) für
-  beste Genauigkeit
-  :::
+- Verwende Maschinenpositionen (zu bekannten Koordinaten bewegen) für beste Genauigkeit
+:::
+<!-- prettier-ignore-end -->
 
 ### Positionierung mit Kamera-Overlay
 
@@ -237,6 +315,34 @@ Für genaue Platzierung auf vorgedruckten oder markierten Materialien:
 4. **Design importieren und positionieren** visuell auf dem Kamerabild
 5. **Kamera deaktivieren** und einrahmen zur Verifizierung
 6. **Job ausführen**
+
+### Durchlauf-Workflow
+
+Bei Werkstücken, die länger als das Laserbett sind (abschnittsweise durch die Maschine geführt),
+nimmt der **Zeiger-Offset** das manuelle Rechnen ab:
+
+1. **Schneide Segment 1** deines Designs normal.
+2. **Schiebe das Werkstück nach vorne** durch den Durchlauf, sodass das nächste Segment auf dem Bett
+   liegt.
+3. **Verfahre die Maschine**, bis der Zeigerpunkt eine Referenzmarke auf dem Werkstück markiert (z.
+   B. eine Ecke eines bereits geschnittenen Elements).
+4. **Setze den WKS-Nullpunkt** (oder Nullen X / Nullen Y) — bei aktiviertem Zeiger-Offset landet der
+   Ursprung genau dort, wo der Zeiger gezeigt hat.
+5. **Positioniere das nächste Segment** des Designs relativ zu diesem Ursprung in der Leinwand.
+6. **Rahme zur Kontrolle**, dann **starte den Job**.
+7. Wiederhole ab Schritt 2 für jedes verbleibende Segment.
+
+### Parametrischer Skizzen-Workflow
+
+Für Jobs, die eine Schnittskizze mit einer parametrischen Gravurskizze kombinieren:
+
+1. **Setzen Sie beide Skizzen** auf den Skizzen-Ursprung (z. B. Geometrie um den Ursprung
+   zentrieren)
+2. **Platzieren Sie beide Werkstücke** auf der Leinwand und stellen Sie **Position relativ zu →
+   Referenzpunkt** ein
+3. **Geben Sie beiden Werkstücken dieselbe X/Y-Position**
+4. **Passen Sie die Parameter** nach Bedarf an — die Skizzen bleiben zueinander registriert
+5. **Rahmen Sie den Job ein**, um die Platzierung zu prüfen
 
 ### Produktions-Workflow
 

@@ -25,7 +25,11 @@ from ....core.varset import (
     Var,
     VarSet,
 )
-from ....pipeline.encoder.base import EncodedOutput, OpsEncoder
+from ....pipeline.encoder.base import (
+    EncodedOutput,
+    MachineCodeOpMap,
+    OpsEncoder,
+)
 from ....pipeline.encoder.gcode import GcodeEncoder
 from ....shared.units.system import UnitSystem, inches_to_mm
 from ...transport import SerialTransport, TransportStatus
@@ -43,6 +47,7 @@ from ..driver import (
 from .grbl_probe import probe_grbl_device
 from .grbl_util import (
     alarm_code_to_device_error,
+    apply_setting_to_varset,
     detect_unit_system_from_settings,
     gcode_to_p_number,
     get_grbl_setting_varsets,
@@ -51,7 +56,9 @@ from .grbl_util import (
     parse_grbl_parser_state,
     parse_state,
     prb_re,
+    split_realtime_commands,
     strip_gcode_comments,
+    sync_state_wco,
     wcs_re,
 )
 
@@ -108,10 +115,19 @@ class GrblSerialSimpleDriver(Driver):
     supports_unit_detection = True
     maturity = DriverMaturity.EXPERIMENTAL
 
+    SAFETY_SHUTDOWN_DELAY: float = 0.2
+
     _ok_re = re.compile(rb"ok\r*\n")
     _error_re = re.compile(rb"error:(\d+)\r*\n")
     _status_re = re.compile(rb"<([^>]+)>")
     _line_re = re.compile(rb"([^\r\n]+)\r*\n")
+
+    # Handshake verification bounds. The '?' realtime poll is repeated
+    # every POLL_INTERVAL until a response arrives, because devices
+    # that are still booting silently drop queries sent before their
+    # serial stream is ready.
+    HANDSHAKE_TIMEOUT: float = 3.0
+    HANDSHAKE_POLL_INTERVAL: float = 0.5
 
     def __init__(self, context: RayforgeContext, machine: "Machine"):
         super().__init__(context, machine)
@@ -122,6 +138,7 @@ class GrblSerialSimpleDriver(Driver):
         self._cmd_lock = asyncio.Lock()
         self._is_cancelled = False
         self._job_running = False
+        self._is_holding = False
         self._raw_grbl_status: DeviceStatus = DeviceStatus.UNKNOWN
         self._handshake_received = asyncio.Event()
         self._on_command_done: (
@@ -160,7 +177,9 @@ class GrblSerialSimpleDriver(Driver):
                 SerialPortVar(
                     key="port",
                     label=_("Port"),
-                    description=_("Serial port for the device"),
+                    description=(
+                        _("Serial port or USB VID:PID (e.g. 0403:6001)")
+                    ),
                 ),
                 BaudrateVar(
                     "baudrate",
@@ -224,6 +243,27 @@ class GrblSerialSimpleDriver(Driver):
         self.keep_running = True
         self._connection_task = asyncio.ensure_future(self._connection_loop())
 
+    async def _await_handshake(self) -> bool:
+        """
+        Polls the device with realtime '?' commands until it responds
+        with a status report (or its welcome message arrives), bounded
+        by HANDSHAKE_TIMEOUT. Returns True once the handshake event is
+        set, False if the device stayed silent.
+        """
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + self.HANDSHAKE_TIMEOUT
+        while True:
+            await self._send_raw(b"?\n")
+            try:
+                await asyncio.wait_for(
+                    self._handshake_received.wait(),
+                    timeout=self.HANDSHAKE_POLL_INTERVAL,
+                )
+                return True
+            except asyncio.TimeoutError:
+                if loop.time() >= deadline:
+                    return False
+
     async def _connection_loop(self) -> None:
         transport = self._transport
         if not transport:
@@ -231,18 +271,13 @@ class GrblSerialSimpleDriver(Driver):
 
         while self.keep_running:
             try:
+                self._handshake_received.clear()
                 await transport.connect()
                 self._update_connection_status(
                     TransportStatus.CONNECTED, "Connected"
                 )
-                self._handshake_received.clear()
 
-                await self._send_raw(b"?\n")
-                try:
-                    await asyncio.wait_for(
-                        self._handshake_received.wait(), timeout=3.0
-                    )
-                except asyncio.TimeoutError:
+                if not await self._await_handshake():
                     logger.warning("Handshake timeout. Retrying connection.")
                     await transport.disconnect()
                     self._update_connection_status(
@@ -388,7 +423,7 @@ class GrblSerialSimpleDriver(Driver):
                 self._pending.set_result(error=line)
             return
 
-        if line.startswith(("Grbl ", "grbl ")):
+        if line.startswith(("Grbl ", "GrblHAL ", "grbl ")):
             self._handshake_received.set()
             return
 
@@ -419,6 +454,12 @@ class GrblSerialSimpleDriver(Driver):
         if self._job_running and state.status == DeviceStatus.IDLE:
             state.status = DeviceStatus.RUN
 
+        # The driver owns the pause state. While we have requested a hold,
+        # force HOLD so a firmware status report cannot mask it (status
+        # polling is disabled while a job runs, so HOLD may never be observed).
+        if self._is_holding and state.status != DeviceStatus.ALARM:
+            state.status = DeviceStatus.HOLD
+
         self.state.status = state.status
         if state.error is not None:
             self.state.error = state.error
@@ -431,6 +472,7 @@ class GrblSerialSimpleDriver(Driver):
     ) -> None:
         self._is_cancelled = False
         self._job_running = True
+        self._is_holding = False
         self._job_exception: Exception | None = None
         self._on_command_done = on_command_done
         self._current_op_index = -1
@@ -440,7 +482,7 @@ class GrblSerialSimpleDriver(Driver):
     async def _stream_gcode_ping_pong(
         self,
         gcode_lines: list[str],
-        op_map: dict[int, int] | None = None,
+        op_map: MachineCodeOpMap | None = None,
     ) -> None:
         """
         Stream G-code using strict ping-pong: send one line,
@@ -463,7 +505,7 @@ class GrblSerialSimpleDriver(Driver):
                 if not stripped:
                     continue
 
-                new_op = op_map.get(line_idx) if op_map else None
+                new_op = op_map.op_for_line(line_idx) if op_map else None
                 if new_op is not None and new_op != self._current_op_index:
                     self._current_op_index = new_op
                     if self._on_command_done:
@@ -482,10 +524,13 @@ class GrblSerialSimpleDriver(Driver):
                 job_completed_successfully = True
         except DeviceConnectionError as e:
             logger.warning(f"Job interrupted: {e}")
+            await self._send_safety_shutdown(emergency=True)
         except Exception:
             logger.exception("Unexpected streaming error")
+            await self._send_safety_shutdown(emergency=True)
         finally:
             self._job_running = False
+            self._is_holding = False
             self._on_command_done = None
             if job_completed_successfully:
                 self.job_finished.send(self)
@@ -507,7 +552,7 @@ class GrblSerialSimpleDriver(Driver):
         on_command_done: Callable[[int], None | Awaitable[None]] | None = None,
     ) -> None:
         self._start_job(on_command_done)
-        mapping = encoded.op_map.machine_code_to_op if encoded.op_map else None
+        mapping = encoded.op_map
         gcode_lines = encoded.text.splitlines()
         try:
             await self._stream_gcode_ping_pong(gcode_lines, mapping)
@@ -515,22 +560,39 @@ class GrblSerialSimpleDriver(Driver):
             logger.warning(f"Job terminated: {e}")
 
     async def run_raw(self, machine_code: str) -> None:
+        """
+        Executes a raw G-code string using the ping-pong streaming
+        protocol.
+
+        GRBL realtime commands (?, ~, !) are sent directly instead:
+        the firmware executes them on receipt and never acknowledges
+        them, so streaming them as gcode would wedge the protocol.
+        """
         lines = [
             line.strip() for line in machine_code.splitlines() if line.strip()
         ]
-        if not lines:
+        gcode_lines, realtime_lines = split_realtime_commands(lines)
+
+        for line in realtime_lines:
+            if not self._transport or not self._transport.is_connected:
+                raise ConnectionError("Serial transport not initialized")
+            logger.info(line, extra=self._log_extra("USER_COMMAND"))
+            await self._transport.send(line.encode("utf-8"))
+
+        if not gcode_lines:
             return
         self._start_job()
         try:
-            await self._stream_gcode_ping_pong(lines)
+            await self._stream_gcode_ping_pong(gcode_lines)
         except DeviceConnectionError as e:
             logger.warning(f"Raw G-code terminated: {e}")
 
-    async def cancel(self) -> None:
+    async def cancel(self, emergency: bool = False) -> None:
         logger.debug("Cancel command initiated.")
         job_was_running = self._job_running
         self._is_cancelled = True
         self._job_running = False
+        self._is_holding = False
         self._on_command_done = None
 
         if self._transport and self._transport.is_connected:
@@ -540,10 +602,36 @@ class GrblSerialSimpleDriver(Driver):
             if self._pending:
                 self._pending.set_result()
                 self._pending = None
+            await self._send_safety_shutdown(emergency)
             if job_was_running:
                 self.job_finished.send(self)
         else:
             raise ConnectionError("Serial transport not initialized")
+
+    async def _send_safety_shutdown(self, emergency: bool = False) -> None:
+        """
+        Best-effort transmission of the dialect's tool-off commands so
+        a cancelled or aborted job cannot leave persistent PWM outputs
+        energized. After a soft reset the firmware needs a moment to
+        become ready again, hence the short delay before sending.
+        Responses are ignored: the commands are sent fire-and-forget.
+        """
+        dialect = self.dialect
+        commands = dialect.get_safety_off_commands()
+        if emergency and dialect.emergency_stop:
+            commands.append(dialect.emergency_stop)
+        transport = self._transport
+        if not commands or not transport or not transport.is_connected:
+            return
+        await asyncio.sleep(self.SAFETY_SHUTDOWN_DELAY)
+        for command in commands:
+            if not transport.is_connected:
+                break
+            try:
+                logger.info(command, extra=self._log_extra("USER_COMMAND"))
+                await transport.send((command + "\n").encode("utf-8"))
+            except ConnectionError as e:
+                logger.warning(f"Safety command '{command}' failed: {e}")
 
     async def _execute_command(self, command: str) -> list[str]:
         """Send a command using ping-pong and return response lines."""
@@ -558,10 +646,21 @@ class GrblSerialSimpleDriver(Driver):
         return await self._execute_command(command)
 
     async def set_hold(self, hold: bool = True) -> None:
+        self._is_holding = hold
         self._is_cancelled = False
         realtime = b"!" if hold else b"~"
         if self._transport and self._transport.is_connected:
             await self._transport.send(realtime)
+        desired = (
+            DeviceStatus.HOLD
+            if hold
+            else DeviceStatus.RUN
+            if self._job_running
+            else DeviceStatus.IDLE
+        )
+        if self.state.status != desired:
+            self.state.status = desired
+            self.state_changed.send(self, state=self.state)
 
     def can_home(self, axis: Axis | None = None) -> bool:
         return True
@@ -580,16 +679,20 @@ class GrblSerialSimpleDriver(Driver):
         await self._execute_command("G4 P0.01")
         await self._execute_command(temp_wcs)
         await self._execute_command(active_wcs)
+
+        park = self._machine.park_position_after_homing
+        if axes is None and park is not None:
+            template = self.dialect.move_to_park
+            if template:
+                await self._execute_command(
+                    template.format(x=park[0], y=park[1])
+                )
+
         self.state.error = None
         self.state_changed.send(self, state=self.state)
 
-    async def move_to(self, pos_x, pos_y) -> None:
-        dialect = self.dialect
-        cmd = dialect.move_to.format(
-            speed=self._to_machine_speed(1500),
-            x=self._to_machine_length(float(pos_x)),
-            y=self._to_machine_length(float(pos_y)),
-        )
+    async def move_to(self, pos_x, pos_y, pos_z=None, speed=None) -> None:
+        cmd = self._format_move_to(float(pos_x), float(pos_y), pos_z, speed)
         await self._execute_command(cmd)
 
     async def select_tool(self, tool_number: int) -> None:
@@ -673,7 +776,7 @@ class GrblSerialSimpleDriver(Driver):
                 key, value_str = match.groups()
                 target_varset = key_to_varset_map.get(key)
                 if target_varset:
-                    target_varset[key] = value_str
+                    apply_setting_to_varset(target_varset, key, value_str)
                 else:
                     unknown_vars.add(
                         Var(
@@ -701,17 +804,16 @@ class GrblSerialSimpleDriver(Driver):
         await self._execute_command(cmd)
 
     async def set_wcs_offset(
-        self, wcs_slot: str, x: float, y: float, z: float
+        self, wcs_slot: str, x: float, y: float, z: float | None
     ) -> None:
         p_num = gcode_to_p_number(wcs_slot)
         if p_num is None:
             raise ValueError(f"Invalid WCS slot: {wcs_slot}")
-        dialect = self.dialect
-        cmd = dialect.set_wcs_offset.format(
-            p_num=p_num,
-            x=self._to_machine_length(x),
-            y=self._to_machine_length(y),
-            z=self._to_machine_length(z),
+        cmd = self.dialect.format_wcs_offset(
+            p_num,
+            self._to_machine_length(x),
+            self._to_machine_length(y),
+            self._to_machine_length(z) if z is not None else None,
         )
         await self._execute_command(cmd)
 
@@ -729,6 +831,12 @@ class GrblSerialSimpleDriver(Driver):
                     if self._report_in_inches
                     else parsed
                 )
+        sync_state_wco(
+            self.state,
+            offsets,
+            self._machine.active_wcs if self._machine else None,
+        )
+        self.state_changed.send(self, state=self.state)
         self.wcs_updated.send(self, offsets=offsets)
         return offsets
 

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from enum import Enum, auto
+from gettext import gettext as _
 from locale import format_string
 from typing import (
     TYPE_CHECKING,
@@ -17,6 +18,8 @@ from ..types import EntityID
 if TYPE_CHECKING:
     import cairo
 
+    from ..commands.mirror import MirrorAxis
+    from ..entities import Entity
     from ..params import ParameterContext
     from ..registry import EntityRegistry
     from ..selection import SketchSelection
@@ -44,6 +47,15 @@ class Constraint:
     def __init__(self, user_visible: bool = True):
         self.user_visible = user_visible
 
+    def is_world_anchored(self) -> bool:
+        """Returns True if this constraint pins geometry to global axes.
+
+        World-anchored constraints (e.g. horizontal/vertical) should be
+        stripped from array templates, since they conflict with the
+        rotations applied to array copies.
+        """
+        return False
+
     @classmethod
     def can_apply_to(
         cls, selection: SketchSelection, sketch: Sketch | None = None
@@ -54,6 +66,19 @@ class Constraint:
         Subclasses should override this method.
         """
         return False
+
+    @classmethod
+    def applies_to_entities(cls, entities: Sequence[Entity]) -> bool:
+        """
+        Returns True if this constraint type can apply to the given
+        entities.
+
+        ``can_apply_to`` resolves the selected entities and delegates
+        the type and capability requirements here, so applicability
+        can be declared and tested without a selection or sketch.
+        Constraints that operate on points only accept an empty list.
+        """
+        return not entities
 
     @classmethod
     def get_type_key(cls) -> str | None:
@@ -175,6 +200,13 @@ class Constraint:
         """
         return ""
 
+    def get_edit_subtitle(self) -> str:
+        """
+        Returns a user-facing hint string for the constraint edit dialog.
+        Subclasses should override to describe the expected input.
+        """
+        return _("Enter value or expression.")
+
     def _format_coord(self, x: float, y: float) -> str:
         """Formats coordinates respecting the user's locale."""
         return format_string("%.1f/%.1f", (x, y), grouping=True)
@@ -212,16 +244,37 @@ class Constraint:
 
     def depends_on_points(self, point_ids: set[EntityID]) -> bool:
         """Checks if the constraint references any of the given point IDs."""
-        for attr in ["p1", "p2", "p3", "p4", "center", "point_id"]:
-            if hasattr(self, attr):
-                pid = getattr(self, attr)
-                if pid is not None and pid in point_ids:
-                    return True
-        return False
+        return not self.get_referenced_point_ids().isdisjoint(point_ids)
 
     def depends_on_entities(self, entity_ids: set[EntityID]) -> bool:
         """Checks if the constraint references any of the given entity IDs."""
-        for attr in [
+        return not self.get_referenced_entity_ids().isdisjoint(entity_ids)
+
+    def get_referenced_point_ids(self) -> set[EntityID]:
+        """
+        Returns the set of point IDs this constraint references.
+
+        Subclasses that reference points via attributes not covered by the
+        default ``p1``..``p4``, ``center``, ``point_id`` names must override
+        this.
+        """
+        ids: set[EntityID] = set()
+        for attr in ("p1", "p2", "p3", "p4", "center", "point_id"):
+            if hasattr(self, attr):
+                pid = getattr(self, attr)
+                if pid is not None:
+                    ids.add(pid)
+        return ids
+
+    def get_referenced_entity_ids(self) -> set[EntityID]:
+        """
+        Returns the set of entity IDs this constraint references.
+
+        Subclasses that reference entities via attributes not covered by the
+        default names must override this.
+        """
+        ids: set[EntityID] = set()
+        for attr in (
             "e1_id",
             "e2_id",
             "line_id",
@@ -229,18 +282,36 @@ class Constraint:
             "entity_id",
             "circle_id",
             "axis",
-        ]:
+        ):
             if hasattr(self, attr):
                 eid = getattr(self, attr)
-                if eid is not None and eid in entity_ids:
-                    return True
-        # Special case for lists of entities
-        for attr in ["entity_ids"]:
-            if hasattr(self, attr):
-                eids = getattr(self, attr)
-                if eids and not entity_ids.isdisjoint(eids):
-                    return True
-        return False
+                if eid is not None:
+                    ids.add(eid)
+        entity_ids_attr = getattr(self, "entity_ids", None)
+        if entity_ids_attr:
+            ids.update(entity_ids_attr)
+        return ids
+
+    def is_mirror_compatible(self) -> bool:
+        """
+        Returns True if this constraint can be preserved when *all* its
+        referenced entities/points are mirrored together.
+
+        The default is True: most geometric constraints are invariant under
+        reflection. Subclasses that encode chirality or a signed value
+        (e.g. AngleConstraint with an expression) should override this.
+        """
+        return True
+
+    def mirror(self, axis: MirrorAxis) -> None:
+        """
+        Updates internal state for a mirror transform applied to all
+        referenced geometry. The default is a no-op: most constraints are
+        mirror-invariant when their references move together.
+
+        Subclasses that encode chirality or a signed value should override
+        this (see AngleConstraint).
+        """
 
     def get_draggable_point(self) -> EntityID | None:
         """

@@ -9,21 +9,36 @@ from gettext import gettext as _
 from typing import TYPE_CHECKING, Any, cast
 
 from raygeo.ops import Ops
-from raygeo.ops.state import AirAssistMode
+from raygeo.ops.state import AirAssistMode, PowerMode
 
 from rayforge.core.step import Step
 from rayforge.core.varset import (
     BoolVar,
+    IntVar,
+    LabeledChoiceVar,
     SliderFloatVar,
     VarSet,
 )
 from rayforge.machine.models.laser import LaserHead
 from rayforge.shared.units.formatter import format_value
 
-from ..capabilities import LaserHeadVar
+from ..laser_head_var import LaserHeadVar
 
 if TYPE_CHECKING:
     from rayforge.machine.models.machine import Machine
+
+_POWER_MODES: tuple[PowerMode, ...] = (
+    PowerMode.DYNAMIC,
+    PowerMode.CONSTANT,
+)
+
+
+def _power_mode_from_name(name: str | None) -> PowerMode | None:
+    """Resolve a serialized power-mode name, or None if unknown."""
+    for mode in _POWER_MODES:
+        if mode.name == name:
+            return mode
+    return None
 
 
 class LaserStep(Step):
@@ -32,6 +47,7 @@ class LaserStep(Step):
     def __init__(self, typelabel, name=None):
         self.power: float = 1.0
         self.max_power: int = 1000
+        self.power_mode: PowerMode = PowerMode.DYNAMIC
         self.air_assist: bool = False
         self.tab_power: float = 0.0
         self.frequency: int = 0
@@ -43,34 +59,83 @@ class LaserStep(Step):
         return VarSet(
             vars=[
                 LaserHeadVar(
-                    description=_("Optionally force a specific laser head")
+                    description=_(
+                        "Laser head used for this step; the machine's "
+                        "first head is used when unset"
+                    )
                 ),
                 SliderFloatVar(
                     key="power",
                     label=_("Power"),
+                    description=_("Laser power as a percentage"),
                     default=0.8,
                     min_val=0.0,
                     max_val=1.0,
                     show_value=True,
                     format_suffix="%",
+                    digits=0,
+                ),
+                LabeledChoiceVar(
+                    key="power_mode",
+                    label=_("Power Mode"),
+                    description=_(
+                        "Dynamic power (M4) scales power with head "
+                        "speed; constant power (M3) keeps it fixed. "
+                        "Use constant power if corners and curves "
+                        "burn too lightly"
+                    ),
+                    choices=[
+                        (
+                            _("Dynamic (M4)"),
+                            PowerMode.DYNAMIC.name,
+                        ),
+                        (
+                            _("Constant (M3)"),
+                            PowerMode.CONSTANT.name,
+                        ),
+                    ],
+                    default=PowerMode.DYNAMIC.name,
+                    allow_none=False,
                 ),
                 *Step.recipe_varset().vars,
+                BoolVar(
+                    key="air_assist",
+                    label=_("Air Assist"),
+                    description=_("Blow air over the cut to clear debris"),
+                    default=False,
+                ),
                 SliderFloatVar(
                     key="tab_power",
                     label=_("Tab Power"),
                     description=_(
-                        "Laser power at tab positions (% of cut power)"
+                        "Laser power at tab positions as a percentage"
                     ),
                     default=0.0,
                     min_val=0.0,
                     max_val=1.0,
                     show_value=True,
                     format_suffix="%",
+                    digits=0,
                 ),
-                BoolVar(
-                    key="air_assist",
-                    label=_("Air Assist"),
-                    default=False,
+                IntVar(
+                    key="frequency",
+                    label=_("Frequency"),
+                    description=_(
+                        "Laser pulse frequency in Hz (0 = head default)"
+                    ),
+                    default=0,
+                    min_val=0,
+                    max_val=100000,
+                ),
+                IntVar(
+                    key="pulse_width",
+                    label=_("Pulse Width"),
+                    description=_(
+                        "Laser pulse width in ns (0 = head default)"
+                    ),
+                    default=0,
+                    min_val=0,
+                    max_val=100000,
                 ),
             ]
         )
@@ -83,17 +148,20 @@ class LaserStep(Step):
         base_keys = {v.key for v in LaserStep.recipe_varset()}
         laser_vars = [v for v in full if v.key in base_keys]
         step_vars = [v for v in full if v.key not in base_keys]
-        groups: list[tuple[str, VarSet]] = []
-        if laser_vars:
-            groups.append((_("Laser"), VarSet(vars=laser_vars)))
+        laser_description = _(
+            "Laser power, speed, and head selection for this operation."
+        )
+        laser_vs = VarSet(vars=laser_vars, description=laser_description)
+        groups: list[tuple[str, VarSet]] = [(_("Laser"), laser_vs)]
         if step_vars:
             groups.append((_("Step Settings"), VarSet(vars=step_vars)))
-        return groups or [(_("Laser"), VarSet(vars=laser_vars))]
+        return groups
 
     def create_initial_ops(self) -> Ops:
         """Build the initial Ops object with step-wide machine settings."""
         ops = Ops()
         ops.set_power(self.power)
+        ops.set_power_mode(self.power_mode)
         ops.set_feed_rate(self.cut_speed)
         ops.set_rapid_rate(self.travel_speed)
         ops.set_air_assist(
@@ -108,6 +176,10 @@ class LaserStep(Step):
     def populate_payload(self, payload, machine: "Machine"):
         super().populate_payload(payload, machine)
         payload.power = self.power
+        payload.power_mode = self.power_mode
+        payload.air_assist = (
+            AirAssistMode.ON if self.air_assist else AirAssistMode.OFF
+        )
 
     def get_settings(self) -> dict[str, Any]:
         """
@@ -119,12 +191,12 @@ class LaserStep(Step):
             "power": self.power,
             "cut_speed": self.cut_speed,
             "travel_speed": self.travel_speed,
+            "power_mode": self.power_mode.name,
             "air_assist": self.air_assist,
             "pixels_per_mm": self.pixels_per_mm,
             "tab_power": self.tab_power,
             "frequency": self.frequency,
             "pulse_width": self.pulse_width,
-            "generated_workpiece_uid": self.generated_workpiece_uid,
         }
 
     def apply_import_settings(self, settings: dict[str, Any]) -> None:
@@ -140,6 +212,7 @@ class LaserStep(Step):
             {
                 "power": self.power,
                 "max_power": self.max_power,
+                "power_mode": self.power_mode.name,
                 "air_assist": self.air_assist,
                 "tab_power": self.tab_power,
                 "frequency": self.frequency,
@@ -160,6 +233,16 @@ class LaserStep(Step):
             raise ValueError("Power must be between 0.0 and 1.0")
         if self.power != power:
             self.power = power
+            self.updated.send(self)
+
+    def set_power_mode(self, mode: str | PowerMode):
+        """Set the power mode from a :class:`PowerMode` or its name."""
+        name = mode.name if isinstance(mode, PowerMode) else mode
+        member = _power_mode_from_name(name)
+        if member is None:
+            raise ValueError(f"Unknown power mode: {mode!r}")
+        if self.power_mode != member:
+            self.power_mode = member
             self.updated.send(self)
 
     def set_air_assist(self, enabled: bool):
@@ -203,6 +286,7 @@ class LaserStep(Step):
             {
                 "power": self.power,
                 "max_power": self.max_power,
+                "power_mode": self.power_mode.name,
                 "air_assist": self.air_assist,
                 "tab_power": self.tab_power,
                 "frequency": self.frequency,
@@ -216,6 +300,9 @@ class LaserStep(Step):
         step = cast("LaserStep", super().from_dict(data))
         step.power = data.get("power", step.power)
         step.max_power = data.get("max_power", step.max_power)
+        step.power_mode = (
+            _power_mode_from_name(data.get("power_mode")) or step.power_mode
+        )
         step.air_assist = data.get("air_assist", step.air_assist)
         step.tab_power = data.get("tab_power", step.tab_power)
         step.frequency = data.get("frequency", step.frequency)
@@ -228,6 +315,7 @@ class LaserStep(Step):
             {
                 "power",
                 "max_power",
+                "power_mode",
                 "air_assist",
                 "tab_power",
                 "frequency",

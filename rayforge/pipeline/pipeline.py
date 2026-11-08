@@ -20,11 +20,15 @@ from ..machine.kinematic_mapping import KinematicMapping
 from .artifact import (
     BaseArtifactHandle,
     JobArtifact,
-    StepOpsArtifact,
+    MaterialStateArtifact,
     WorkPieceArtifact,
 )
 from .artifact.store import ArtifactStore
 from .encoder.base import EncodedOutput, MachineCodeOpMap
+from .intent_builder import (
+    UnsupportedRotaryPanelOrientationError,
+    validate_panel_configuration,
+)
 from .intent_controller import IntentController
 
 if TYPE_CHECKING:
@@ -73,7 +77,7 @@ class Pipeline:
         self._last_known_busy = False
 
         self._wp_handles: dict[tuple[str, str], BaseArtifactHandle] = {}
-        self._step_handles: dict[str, BaseArtifactHandle] = {}
+        self._material_state_handles: dict[str, BaseArtifactHandle] = {}
         self._last_aggregate_output: Any = None
         self._last_job_handle: BaseArtifactHandle | None = None
 
@@ -84,6 +88,7 @@ class Pipeline:
         self.step_assembly_starting = Signal()
         self.job_generation_finished = Signal()
         self.job_time_updated = Signal()
+        self.material_state_ready = Signal()
         self.visual_chunk_available = Signal()
         self.data_stale = Signal()
         self.pipeline_error = Signal()
@@ -108,10 +113,15 @@ class Pipeline:
         if not self._doc:
             return False
         for layer in self._doc.layers:
-            if (
-                layer.workflow
-                and layer.workflow.steps
-                and layer.all_workpieces
+            if not (layer.workflow and layer.workflow.steps):
+                continue
+            if layer.all_workpieces:
+                return True
+            # Geometry-less steps (e.g. the Command step) run without
+            # any workpiece in the layer.
+            if any(
+                step.visible and not step.needs_workpieces
+                for step in layer.workflow.steps
             ):
                 return True
         return False
@@ -119,29 +129,34 @@ class Pipeline:
     def _can_generate_job(self) -> bool:
         """True when the current doc can produce a job aggregate.
 
-        Mirrors the intent builder's criteria: a visible step with at
-        least one workpiece in its layer.  Without these the builder
+        Mirrors the intent builder's criteria: a visible geometry-less
+        step, or a visible step whose workpiece selection matches at
+        least one workpiece of its layer.  Without these the builder
         emits no job node, so any rebuild would be a no-op and asking
         for a job artifact would spin forever.
         """
         if not self._doc:
             return False
         for layer in self._doc.layers:
-            if not layer.workflow:
+            if not layer.workflow or not layer.workflow.steps:
                 continue
-            if not layer.all_workpieces:
-                continue
-            if any(step.visible for step in layer.workflow.steps):
-                return True
+            workpieces = list(layer.all_workpieces)
+            for step in layer.workflow.steps:
+                if not step.visible:
+                    continue
+                if not step.needs_workpieces:
+                    return True
+                if step.selected_workpieces(workpieces):
+                    return True
         return False
 
     def _connect_ctl_signals(self) -> None:
         ctl = self._intent_ctl
         ctl.workpiece_artifact_ready.connect(self._on_wp_output)
-        ctl.step_artifact_ready.connect(self._on_step_output)
         ctl.job_aggregate_ready.connect(self._on_job_aggregate)
         ctl.job_generation_finished.connect(self._on_job_encoded)
         ctl.job_time_updated.connect(self._job_time_relay)
+        ctl.material_state_ready.connect(self._on_material_state)
         ctl.rebuild_started.connect(self._on_rebuild_started)
         ctl.rebuild_finished.connect(self._on_rebuild_finished)
         ctl.data_stale.connect(self._on_data_stale)
@@ -162,7 +177,7 @@ class Pipeline:
             return
         self._doc = new_doc
         self._wp_handles.clear()
-        self._step_handles.clear()
+        self._material_state_handles.clear()
         self._last_job_handle = None
         self._last_aggregate_output = None
         self._intent_ctl.set_doc(new_doc)
@@ -209,6 +224,24 @@ class Pipeline:
             self._intent_ctl.is_rebuild_pending
             or self._task_manager.has_tasks()
         )
+
+    def flush_pending_rebuild(self) -> None:
+        """Runs a pending debounced rebuild immediately.
+
+        Used by code that needs a guaranteed-idle pipeline: without
+        this, a rebuild armed by a recent model change could still
+        start after the caller observed an idle pipeline.
+        """
+        self._intent_ctl.flush_pending_debounce()
+
+    async def wait_until_idle(self, timeout: float = 10.0) -> None:
+        """Waits until no pipeline rebuild is pending or running.
+
+        Debounced rebuilds are flushed and one debounce period is
+        waited out, so a rebuild armed by a late callback cannot start
+        after this coroutine returns.
+        """
+        await self._intent_ctl.wait_until_idle(timeout)
 
     # ------------------------------------------------------------------
     # Pause / resume
@@ -262,7 +295,6 @@ class Pipeline:
             self._machine.changed.disconnect(self._on_machine_changed)
         self._intent_ctl.shutdown()
         self._wp_handles.clear()
-        self._step_handles.clear()
         self._last_job_handle = None
         self._last_aggregate_output = None
 
@@ -284,16 +316,41 @@ class Pipeline:
     def _on_data_stale(self, sender) -> None:
         self.data_stale.send(self)
 
-    def _on_pipeline_error(self, sender, *, error_kind) -> None:
-        if error_kind == ErrorKind.CACHE_BUDGET_EXCEEDED:
+    def _on_pipeline_error(
+        self,
+        sender,
+        *,
+        error_kind: ErrorKind | None = None,
+        message: str | None = None,
+    ) -> None:
+        if message is not None:
+            self.invalidate_job_output()
+        elif error_kind == ErrorKind.CACHE_BUDGET_EXCEEDED:
             message = (
                 "Scene too complex for the current cache budget. "
                 "Reduce the number of layers or increase the cache budget."
             )
         else:
-            message = f"Pipeline error: {error_kind.value}"
+            detail = error_kind.value if error_kind is not None else "unknown"
+            message = f"Pipeline error: {detail}"
         logger.error("Pipeline execution error: %s", message)
         self.pipeline_error.send(self, message=message)
+
+    def invalidate_job_output(self) -> None:
+        """Discards the cached job artifact so the next job generation
+        rebuilds it.
+
+        This covers both output that no longer matches the
+        configuration and output a caller deliberately invalidates to
+        have the next send produce a different variant. Callers that
+        checkout the current handle first may safely call this while
+        still using the artifact: the checkout's retain keeps it
+        alive.
+        """
+        if self._last_job_handle is not None:
+            self._store.release(self._last_job_handle)
+            self._last_job_handle = None
+        self._last_aggregate_output = None
 
     def _on_pipeline_warnings(self, sender, *, warnings) -> None:
         """Forward assembler warnings to the UI for translation."""
@@ -315,7 +372,15 @@ class Pipeline:
         if self._is_shutting_down or output is None:
             return
         source_dims = output.source_dimensions
-        gen_size = workpiece.size if workpiece else (0.0, 0.0)
+        # generation_size must be the size the ops were generated at:
+        # an output built before a resize can arrive on the main thread
+        # after the resize was committed, and consumers scale the ops
+        # by current_size / generation_size.
+        gen_size = (
+            source_dims
+            if source_dims
+            else (workpiece.size if workpiece else (0.0, 0.0))
+        )
         artifact = WorkPieceArtifact(
             ops=output.ops,
             is_scalable=output.is_scalable,
@@ -336,18 +401,35 @@ class Pipeline:
             generation_id=generation_id,
         )
 
-    def _on_step_output(self, sender, *, step, output, generation_id) -> None:
+    def _on_material_state(
+        self, sender, *, item, output, generation_id
+    ) -> None:
+        """Wrap a ``MaterialState`` into a :class:`MaterialStateArtifact`,
+        store it, and emit :attr:`material_state_ready` with the handle.
+
+        ``output`` is a raygeo ``MaterialState`` returned by the fold
+        compute node. ``item`` is the material host — a flat stock item
+        or a rotary layer. The artifact is stored so renderers can pick
+        it up without changing the signal path.
+        """
         if self._is_shutting_down or output is None:
             return
-        artifact = StepOpsArtifact(
-            ops=output.ops,
+        artifact = MaterialStateArtifact(
+            material_state=output,
+            stock_uid=item.uid,
             generation_id=generation_id,
         )
-        old = self._step_handles.pop(step.uid, None)
+        old = self._material_state_handles.pop(item.uid, None)
         if old is not None:
             self._store.release(old)
-        handle = self._store.put(artifact, "step")
-        self._step_handles[step.uid] = handle
+        handle = self._store.put(artifact, "material")
+        self._material_state_handles[item.uid] = handle
+        self.material_state_ready.send(
+            self,
+            item=item,
+            handle=handle,
+            generation_id=generation_id,
+        )
 
     def _on_job_aggregate(self, sender, *, output, generation_id) -> None:
         if self._is_shutting_down:
@@ -367,17 +449,20 @@ class Pipeline:
             return
         agg = self._last_aggregate_output
         if agg is None:
-            logger.debug("Encode finished but no aggregate output cached")
+            logger.warning("Encode finished but no aggregate output cached")
+            self.job_generation_finished.send(
+                self, handle=None, task_status=task_status
+            )
             return
 
         text = handle.text or ""
-        op_to_mc = handle.op_to_machine_code or {}
-        mc_to_op = handle.machine_code_to_op or {}
+        op_to_mc = handle.op_to_machine_code
+        mc_to_op = handle.machine_code_to_op
         encoded = EncodedOutput(
             text=text,
             op_map=MachineCodeOpMap(
-                op_to_machine_code=dict(op_to_mc),
-                machine_code_to_op=dict(mc_to_op),
+                op_to_machine_code=op_to_mc,
+                machine_code_to_op=mc_to_op,
             ),
         )
 
@@ -389,6 +474,7 @@ class Pipeline:
             ops
             and self._doc
             and self._machine
+            and self._doc.has_rotary_layer
             and MachineCapability.ROTARY in self._machine.get_capabilities()
         ):
             mapped_ops = ops.copy()
@@ -427,11 +513,6 @@ class Pipeline:
     ) -> BaseArtifactHandle | None:
         return self._wp_handles.get((workpiece_uid, step_uid))
 
-    def get_step_ops_artifact_handle(
-        self, step_uid: str
-    ) -> BaseArtifactHandle | None:
-        return self._step_handles.get(step_uid)
-
     def get_artifact(self, step: Step, workpiece: WorkPiece) -> Any:
         handle = self._wp_handles.get((workpiece.uid, step.uid))
         if handle is None:
@@ -462,6 +543,13 @@ class Pipeline:
             when_done(None, RuntimeError("No document is loaded."))
             return
 
+        try:
+            validate_panel_configuration(self._machine, self._doc)
+        except UnsupportedRotaryPanelOrientationError as exc:
+            self.invalidate_job_output()
+            when_done(None, exc)
+            return
+
         if self._last_job_handle is not None:
             when_done(self._last_job_handle, None)
             return
@@ -477,10 +565,34 @@ class Pipeline:
             return
 
         def _on_finished(sender, *, handle, task_status):
+            self._intent_ctl.rebuild_finished.disconnect(_on_settled)
             self.job_generation_finished.disconnect(_on_finished)
+            if task_status == "failed":
+                when_done(
+                    None,
+                    RuntimeError("Job generation failed — see logs."),
+                )
+                return
             when_done(handle, None)
 
+        def _on_settled(sender):
+            # rebuild_finished only fires once a rebuild chain has
+            # settled, and node completions are marshalled to the main
+            # thread before it.  Reaching this without having received
+            # job_generation_finished means this rebuild will never
+            # produce a job, so fail the request instead of leaving
+            # send/frame wedged forever.
+            if self._intent_ctl.has_pending_debounce():
+                return
+            self._intent_ctl.rebuild_finished.disconnect(_on_settled)
+            self.job_generation_finished.disconnect(_on_finished)
+            when_done(
+                None,
+                RuntimeError("Job generation did not produce a result."),
+            )
+
         self.job_generation_finished.connect(_on_finished, weak=False)
+        self._intent_ctl.rebuild_finished.connect(_on_settled, weak=False)
         self._intent_ctl.force_rebuild()
 
     async def generate_job_artifact_async(

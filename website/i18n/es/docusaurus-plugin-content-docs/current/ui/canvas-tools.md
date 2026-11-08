@@ -1,6 +1,7 @@
 # Herramientas del Lienzo
 
-El lienzo proporciona un conjunto completo de herramientas para manipular diseños, medir y preparar tus trabajos láser.
+El lienzo proporciona un conjunto completo de herramientas para manipular diseños, medir y preparar
+tus trabajos láser.
 
 ## Herramienta de Selección
 
@@ -17,16 +18,20 @@ Selecciona, mueve y transforma objetos en el lienzo.
 
 Mantener teclas modificadoras mientras arrastras cambia el comportamiento:
 
-- <kbd>ctrl</kbd> mientras **mueves**: Ajusta el objeto a la cuadrícula de 5mm, facilitando la alineación precisa
-- <kbd>ctrl</kbd> mientras **rotas**: Ajusta la rotación en incrementos de 5 grados para ángulos consistentes
+- <kbd>ctrl</kbd> mientras **mueves**: Ajusta el objeto a la cuadrícula de 5mm, facilitando la
+  alineación precisa
+- <kbd>ctrl</kbd> mientras **rotas**: Ajusta la rotación en incrementos de 5 grados para ángulos
+  consistentes
 - <kbd>shift</kbd> mientras **escala**: Restringe las proporciones (escala uniforme)
 - <kbd>ctrl</kbd> mientras **escala**: Escala desde el centro en lugar del borde opuesto
 
 **Manijas de Transformación:**
 
-- **Manijas de esquina**: Escalar proporcionalmente (mantén <kbd>shift</kbd> para escalar no proporcionalmente)
+- **Manijas de esquina**: Escalar proporcionalmente (mantén <kbd>shift</kbd> para escalar no
+  proporcionalmente)
 - **Manijas de borde**: Escalar en una dirección
-- **Manija de rotación**: Clic una vez en un objeto seleccionado para alternar el modo de rotación, luego arrastra para rotar alrededor del punto central
+- **Manija de rotación**: Clic una vez en un objeto seleccionado para alternar el modo de rotación,
+  luego arrastra para rotar alrededor del punto central
 
 **Atajos de Teclado:**
 
@@ -155,12 +160,30 @@ Combina o sustrae formas:
 
 ## Edición de Vectores
 
-Haz doble clic en una pieza de trabajo en el lienzo para entrar al modo de
-edición de vectores. En este modo, puedes seleccionar y eliminar segmentos de
-vector individuales de la pieza de trabajo.
+Haz doble clic en una pieza de trabajo importada en el lienzo para entrar al modo de edición de
+vectores. En este modo, puedes seleccionar y eliminar segmentos de vector individuales de la pieza
+de trabajo, y editar sus nodos.
 
-Para salir del modo de edición de vectores, haz clic fuera de la pieza de
-trabajo o presiona <kbd>Escape</kbd>.
+Haz clic en un segmento para seleccionarlo, o arrastra un marco alrededor de varios. Los nodos del
+contorno seleccionado aparecen como pequeños cuadrados, y los manejadores de las curvas
+seleccionadas como puntos redondos:
+
+- **Arrastra un nodo** para moverlo; los manejadores de curva contiguos se mueven con él. En una
+  ruta cerrada, el nodo inicial y el final son un solo nodo.
+- **Arrastra un manejador** para cambiar la forma de una curva.
+- Haz clic en un nodo y presiona <kbd>Supr</kbd> para eliminarlo; los segmentos de ambos lados se
+  unen en uno. Sin ningún nodo seleccionado, <kbd>Supr</kbd> elimina los segmentos seleccionados.
+- Apunta a un segmento y presiona <kbd>I</kbd> para insertar un nodo allí.
+- Presiona <kbd>C</kbd> para convertir los segmentos seleccionados en curvas, o de nuevo en líneas
+  rectas cuando ya son todos curvas.
+
+Cada cambio se puede deshacer. Los bocetos se editan en el diseñador paramétrico.
+
+Para salir del modo de edición de vectores, haz clic fuera de la pieza de trabajo o presiona
+<kbd>Escape</kbd>.
+
+Para cerrar huecos, unir piezas abiertas, eliminar rutas duplicadas o separar una pieza de trabajo,
+usa las herramientas de [Limpieza de rutas](../features/path-cleanup.md).
 
 ---
 

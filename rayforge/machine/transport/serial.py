@@ -2,16 +2,22 @@ import asyncio
 import glob
 import logging
 import os
+import re
 import threading
 import time
+from collections.abc import Iterable
+from dataclasses import dataclass
 from gettext import gettext as _
 
 import serial
 from serial.tools import list_ports
 
+from ...core.varset.serialportvar import format_vidpid, parse_vidpid
 from .transport import Transport, TransportStatus
 
 logger = logging.getLogger(__name__)
+
+USB_PORT_MARKERS = ("ttyUSB", "ttyACM")
 
 
 class SerialPort(str):
@@ -20,6 +26,88 @@ class SerialPort(str):
 
 class SerialPortPermissionError(Exception):
     """Custom exception for systemic serial port permission issues."""
+
+
+@dataclass(frozen=True)
+class SerialPortInfo:
+    """A serial port path together with optional metadata used to
+    identify the underlying USB device."""
+
+    device: str
+    description: str | None = None
+    manufacturer: str | None = None
+    vid: int | None = None
+    pid: int | None = None
+
+
+def is_usb_serial_port(port: str) -> bool:
+    """
+    Heuristically determines if a port path refers to a USB serial
+    device. On non-POSIX systems (e.g. Windows), every port is treated
+    as potentially USB.
+    """
+    if os.name != "posix":
+        return True
+    return any(marker in port for marker in USB_PORT_MARKERS)
+
+
+def natural_key(s: str) -> list[int | str]:
+    return [
+        int(t) if t.isdigit() else t.lower() for t in re.split("([0-9]+)", s)
+    ]
+
+
+def _port_sort_key(port: str) -> tuple[int, list[int | str]]:
+    return (not is_usb_serial_port(port), natural_key(port))
+
+
+def sort_ports(ports: Iterable[str]) -> list[str]:
+    """
+    Sorts ports so USB serial adapters come first, followed by all
+    other ports. Each group is ordered naturally, e.g.
+    ttyUSB2 before ttyUSB10.
+    """
+    return sorted(ports, key=_port_sort_key)
+
+
+_BY_ID_SUFFIX_RE = re.compile(r"-if\d+(-port\d+)?$")
+
+
+def _describe_by_id_link(path: str) -> str | None:
+    """
+    Extracts a device description from a /dev/serial/by-id symlink
+    name, which embeds vendor and product strings, e.g.
+    'usb-FTDI_FT232R_USB_UART_AH03K1A0-if00-port0'.
+    """
+    name = os.path.basename(path)
+    if not name.startswith("usb-"):
+        return None
+    name = name[len("usb-") :]
+    name = _BY_ID_SUFFIX_RE.sub("", name)
+    name = name.replace("_", " ").strip()
+    return name or None
+
+
+def _collect_by_id_descriptions(paths: list[str]) -> dict[str, str]:
+    """
+    Maps port paths to descriptions derived from /dev/serial/by-id
+    symlinks. Both the link path itself and the resolved device path
+    are mapped, so ttyUSB devices get described too.
+    """
+    descriptions: dict[str, str] = {}
+    for path in paths:
+        if "/by-id/" not in path:
+            continue
+        desc = _describe_by_id_link(path)
+        if not desc:
+            continue
+        try:
+            resolved = os.path.realpath(path)
+        except OSError:
+            continue
+        descriptions.setdefault(path, desc)
+        descriptions.setdefault(resolved, desc)
+    return descriptions
 
 
 def safe_list_ports_linux() -> list[str]:
@@ -50,6 +138,36 @@ def safe_list_ports_linux() -> list[str]:
     return sorted(ports)
 
 
+def resolve_serial_port(port: str) -> str:
+    """
+    Resolves a 'vid:pid' USB specification (e.g. '0403:6001') to a
+    concrete device path by scanning the available ports. Device paths
+    are returned unchanged.
+
+    Unlike a fixed path, a VID:PID match survives the OS re-enumerating
+    devices (e.g. ttyUSB0 becoming ttyUSB1 after a reconnect). If
+    several devices share the same VID:PID, the first one on the bus
+    wins. Raises SerialException when no matching device is present.
+    """
+    vidpid = parse_vidpid(port)
+    if vidpid is None:
+        return port
+    vid, pid = vidpid
+    for info in SerialTransport.list_port_info():
+        if info.vid == vid and info.pid == pid:
+            logger.debug(
+                f"Resolved {port} to {info.device} "
+                f"({info.description or 'no description'})."
+            )
+            return info.device
+    raise serial.SerialException(
+        _(
+            "No USB serial device with VID:PID {spec} found. "
+            "Is the device connected and powered on?"
+        ).format(spec=format_vidpid(vid, pid))
+    )
+
+
 class SerialTransport(Transport):
     """
     Asynchronous serial port transport.
@@ -57,17 +175,54 @@ class SerialTransport(Transport):
 
     @staticmethod
     def list_ports() -> list[str]:
-        """Lists available serial ports."""
+        """Lists available serial ports, USB adapters first."""
         # If we're on Linux (posix) and running in a Snap, use our
         # safe scanner, as list_ports.comports() fails with permission errors.
         if os.name == "posix" and "SNAP" in os.environ:
-            return safe_list_ports_linux()
+            return sort_ports(safe_list_ports_linux())
 
         # On other systems or outside a Snap, the default is fine.
         try:
-            return sorted([p.device for p in list_ports.comports()])
+            return sort_ports([p.device for p in list_ports.comports()])
         except (OSError, serial.SerialException, TypeError) as e:
             # Fallback for any other unexpected errors
+            logger.error(f"Failed to list serial ports with pyserial: {e}")
+            return []
+
+    @staticmethod
+    def list_port_info() -> list[SerialPortInfo]:
+        """
+        Lists available serial ports together with a human-readable
+        description when the platform provides one. USB adapters are
+        listed first.
+        """
+        if os.name == "posix" and "SNAP" in os.environ:
+            paths = safe_list_ports_linux()
+            descriptions = _collect_by_id_descriptions(paths)
+            infos = [
+                SerialPortInfo(path, descriptions.get(path)) for path in paths
+            ]
+            infos.sort(key=lambda info: _port_sort_key(info.device))
+            return infos
+
+        try:
+            infos = []
+            for port in list_ports.comports():
+                desc = port.description
+                if not desc or desc == "n/a":
+                    desc = None
+                infos.append(
+                    SerialPortInfo(
+                        device=port.device,
+                        description=desc,
+                        manufacturer=getattr(port, "manufacturer", None),
+                        vid=getattr(port, "vid", None),
+                        pid=getattr(port, "pid", None),
+                    )
+                )
+            infos.sort(key=lambda info: _port_sort_key(info.device))
+            return infos
+        except (OSError, serial.SerialException, TypeError) as e:
             logger.error(f"Failed to list serial ports with pyserial: {e}")
             return []
 
@@ -80,7 +235,7 @@ class SerialTransport(Transport):
             # On non-POSIX systems, we can't reliably filter, so return all.
             return all_ports
 
-        return [p for p in all_ports if "ttyUSB" in p or "ttyACM" in p]
+        return [p for p in all_ports if is_usb_serial_port(p)]
 
     @staticmethod
     def check_serial_permissions_globally() -> None:
@@ -161,7 +316,9 @@ class SerialTransport(Transport):
         Initialize serial transport.
 
         Args:
-            port: Device path (e.g., '/dev/ttyUSB0')
+            port: Device path (e.g., '/dev/ttyUSB0') or a USB
+                'vid:pid' spec (e.g. '0403:6001') that is resolved to
+                a path on every connect attempt
             baudrate: Communication speed in bits per second
         """
         super().__init__()
@@ -182,8 +339,12 @@ class SerialTransport(Transport):
         logger.debug("Attempting to connect serial port...")
         self.status_changed.send(self, status=TransportStatus.CONNECTING)
         try:
+            # Resolving on every attempt lets a 'vid:pid' spec follow
+            # the device when the OS reassigns its path, which is what
+            # makes auto-reconnect work across power cycles.
+            port = resolve_serial_port(self.port)
             self._serial = serial.Serial(
-                port=self.port,
+                port=port,
                 baudrate=self.baudrate,
                 timeout=self._READ_TIMEOUT,
                 exclusive=True,

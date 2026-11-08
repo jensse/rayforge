@@ -1,9 +1,14 @@
 from rayforge.machine.models.dialect import (
     GRBL_DIALECT,
+    GRBL_DYNAMIC_DIALECT,
+    GRBL_RASTER_DIALECT,
     LINUXCNC_DIALECT,
     MARLIN_DIALECT,
+    POWER_MOVE_TEMPLATE_KEYS,
     SMOOTHIEWARE_DIALECT,
     GcodeDialect,
+    has_s_command,
+    replace,
 )
 
 
@@ -408,3 +413,158 @@ def test_bezier_cubic_serialization():
     data = MARLIN_DIALECT.to_dict()
     assert "bezier_cubic" in data
     assert data["bezier_cubic"] == MARLIN_DIALECT.bezier_cubic
+
+
+def test_emergency_stop_defaults():
+    """Dialects without a failsafe command leave it empty by default."""
+    assert GRBL_DIALECT.emergency_stop == ""
+    assert MARLIN_DIALECT.emergency_stop == "M112"
+    assert SMOOTHIEWARE_DIALECT.emergency_stop == "M112"
+
+
+def test_move_to_park_defaults():
+    """Grbl dialects ship a machine-space park move; dialects whose
+    drivers do not send one leave it empty."""
+    assert GRBL_DIALECT.move_to_park == "G53 G0 X{x} Y{y}"
+    assert GRBL_DYNAMIC_DIALECT.move_to_park == "G53 G0 X{x} Y{y}"
+    assert GRBL_RASTER_DIALECT.move_to_park == "G53 G0 X{x} Y{y}"
+    assert MARLIN_DIALECT.move_to_park == ""
+    assert SMOOTHIEWARE_DIALECT.move_to_park == ""
+
+
+def test_move_to_park_survives_serialization_round_trip():
+    data = GRBL_DIALECT.to_dict()
+    restored = GcodeDialect.from_dict(data)
+    assert restored.move_to_park == "G53 G0 X{x} Y{y}"
+
+
+def test_move_to_park_missing_key_inherits_grbl_default():
+    """Persisted dialects from before the field existed pick up the
+    grbl default when deserialized."""
+    data = GRBL_DIALECT.to_dict()
+    del data["move_to_park"]
+    restored = GcodeDialect.from_dict(data)
+    assert restored.move_to_park == "G53 G0 X{x} Y{y}"
+
+
+def test_get_safety_off_commands_deduplicates():
+    """Safety commands must be unique, stripped, and non-empty."""
+    dialect = GcodeDialect(
+        label="Test",
+        description="Test",
+        laser_on="M4 S{power}",
+        laser_off="M5",
+        focus_laser_on="M3 S{power}",
+        tool_change="",
+        set_speed="",
+        travel_move="G0",
+        linear_move="G1",
+        arc_cw="G2",
+        arc_ccw="G3",
+        bezier_cubic="",
+        air_assist_on="M8",
+        air_assist_off="M9 ",
+        home_all="$H",
+        home_axis="$H{axis_letter}",
+        move_to="G0 X{x} Y{y}",
+        jog="G91 G0 F{speed}",
+        clear_alarm="$X",
+        set_wcs_offset="",
+        probe_cycle="",
+        spindle_off=" M5 ",
+        coolant_off="",
+    )
+    assert dialect.get_safety_off_commands() == ["M5", "M9"]
+
+
+def test_get_safety_off_commands_on_default_dialects():
+    assert GRBL_DIALECT.get_safety_off_commands() == [
+        "M5",
+        "M9",
+    ]
+    assert MARLIN_DIALECT.get_safety_off_commands() == [
+        "M5",
+        "M9",
+    ]
+
+
+def test_has_s_command():
+    assert has_s_command("G1{x_cmd}{y_cmd}{s_command}")
+    assert has_s_command("G1{f_command}{s_command:.0f}")
+    assert not has_s_command("G1{x_cmd}{y_cmd}{f_command}")
+    assert not has_s_command("G1{s_vel}")
+    assert not has_s_command("")
+    assert not has_s_command(None)
+
+
+def test_missing_s_command_templates_when_mode_disabled():
+    assert GRBL_DIALECT.find_missing_s_command_templates() == []
+
+
+def test_missing_s_command_templates_when_mode_enabled():
+    dialect = replace(GRBL_DIALECT, continuous_laser_mode=True)
+    assert dialect.find_missing_s_command_templates() == [
+        "travel_move",
+        "linear_move",
+        "arc_cw",
+        "arc_ccw",
+    ]
+
+
+def test_missing_s_command_templates_skips_empty_templates():
+    dialect = replace(GRBL_DIALECT, continuous_laser_mode=True)
+    assert "bezier_cubic" not in dialect.find_missing_s_command_templates()
+    dialect = replace(
+        dialect,
+        travel_move="",
+        linear_move="",
+        arc_cw="",
+        arc_ccw="",
+    )
+    assert dialect.find_missing_s_command_templates() == []
+
+
+def test_missing_s_command_templates_none_when_placeholder_present():
+    assert GRBL_RASTER_DIALECT.find_missing_s_command_templates() == []
+
+
+def test_missing_s_command_templates_reflects_fixed_template():
+    dialect = replace(
+        GRBL_DIALECT,
+        continuous_laser_mode=True,
+        linear_move="G1{x_cmd}{y_cmd}{f_command}{s_command}",
+    )
+    assert dialect.find_missing_s_command_templates() == [
+        "travel_move",
+        "arc_cw",
+        "arc_ccw",
+    ]
+
+
+def test_power_move_template_keys_are_dialect_fields():
+    for key in POWER_MOVE_TEMPLATE_KEYS:
+        assert hasattr(GRBL_DIALECT, key)
+
+
+def test_format_move_to_uses_move_to_template_without_z():
+    cmd = GRBL_DIALECT.format_move_to(x=10.5, y=20.0, speed=1500)
+    assert cmd == "$J=G90 G21 F1500 X10.5 Y20.0"
+
+
+def test_format_move_to_appends_z_target():
+    cmd = GRBL_DIALECT.format_move_to(x=10.5, y=20.0, speed=1500, z=5.0)
+    assert cmd == "$J=G90 G21 F1500 X10.5 Y20.0 Z5.0"
+
+
+def test_format_move_to_with_z_ignores_unused_speed_template():
+    cmd = SMOOTHIEWARE_DIALECT.format_move_to(x=1.0, y=2.0, z=3.0)
+    assert cmd == "G90 G0 X1.0 Y2.0 Z3.0"
+
+
+def test_format_move_to_move_to_template_with_removable_z_fragment():
+    dialect = replace(
+        GRBL_DIALECT,
+        move_to="G90 G0{x_cmd}{y_cmd}{z_cmd} F{speed}",
+    )
+    without_z = dialect.format_move_to(x=1.0, y=2.0, speed=1500)
+    assert without_z == "G90 G0 X1.0 Y2.0 F1500"

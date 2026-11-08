@@ -1,5 +1,6 @@
 import logging
 from abc import ABC
+from collections.abc import Sequence
 from gettext import gettext as _
 from typing import (
     TYPE_CHECKING,
@@ -19,9 +20,12 @@ from raygeo.ops.part import Part
 from raygeo.ops.state import CoolantMode
 
 from ..machine.models.head import Head
+from ..machine.models.laser import LaserHead
 from ..machine.models.spindle import SpindleHead
 from ..pipeline.transformer.registry import transformer_registry
-from .capability import MachineCapability, StepCapability
+from ..shared.units.formatter import format_value
+from .capability import MachineCapability
+from .image_edit import ImageEditStep
 from .item import DocItem
 from .step_registry import step_registry
 from .varset import SpeedVar, VarSet
@@ -70,10 +74,17 @@ class Step(DocItem, ABC):
 
     HIDDEN: bool = False
     ICON: str = ""
-    CAPABILITIES: tuple[StepCapability, ...] = ()
     REQUIRED_MACHINE_CAPS: ClassVar[frozenset[MachineCapability]] = frozenset()
+    TYPELABEL: ClassVar[str] = ""
     ASSEMBLER_NAME: ClassVar[str] = ""
     uses_global_state: ClassVar[bool] = False
+
+    #: Whether this step kind operates on the layer's workpieces.
+    #: Geometry-less steps (e.g. the Command step) run once per layer
+    #: at their workflow position instead of once per workpiece; the
+    #: intent builder gives them a single compute node with no
+    #: workpiece markers.
+    needs_workpieces: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -84,7 +95,7 @@ class Step(DocItem, ABC):
         self.typelabel = typelabel
         self.visible = True
         self.selected_head_uid: str | None = None
-        self.generated_workpiece_uid: str | None = None
+        self.workpiece_uids: list[str] = []
         self.applied_recipe_uid: str | None = None
 
         per_wp_defaults, per_sp_defaults = (
@@ -119,10 +130,6 @@ class Step(DocItem, ABC):
         # original type name can be reported and round-tripped.
         self._original_step_type: str | None = None
 
-    @property
-    def capabilities(self) -> tuple[StepCapability, ...]:
-        return type(self).CAPABILITIES
-
     @classmethod
     def recipe_varset(cls) -> VarSet:
         """The VarSet used to render this step type's recipe editor.
@@ -138,6 +145,7 @@ class Step(DocItem, ABC):
                 SpeedVar(
                     key="cut_speed",
                     label=_("Cut Speed"),
+                    description=_("Speed of the cutting operation"),
                     default=500,
                     min_val=1,
                     role="cut",
@@ -145,6 +153,7 @@ class Step(DocItem, ABC):
                 SpeedVar(
                     key="travel_speed",
                     label=_("Travel Speed"),
+                    description=_("Speed of rapid positioning moves"),
                     default=5000,
                     min_val=1,
                     role="travel",
@@ -164,6 +173,53 @@ class Step(DocItem, ABC):
         return tuple(var.key for var in cls.recipe_varset())
 
     @classmethod
+    def recipe_value(cls, key: str, value: Any) -> Any:
+        """Serialize a step attribute value for recipe storage and
+        comparison.
+
+        The base serializes enum-backed attributes (e.g.
+        ``coolant_method``) to their string names so recipes stay
+        YAML-safe. Other values pass through unchanged. Domain bases
+        extend this via ``super()`` composition.
+        """
+        if key == "coolant_method" and isinstance(value, CoolantMode):
+            return value.name
+        return value
+
+    def get_recipe_setter_name(self, key: str) -> str | None:
+        """The ``set_{key}`` setter name for a recipe key, if any.
+
+        Only keys the step type owns via :meth:`recipe_keys` are
+        considered; any other key yields ``None``. Callers use this to
+        apply a recipe setting through the step's own setter (which
+        keeps invariants and emits update signals) instead of raw
+        attribute assignment.
+        """
+        if key not in self.recipe_keys():
+            return None
+        name = f"set_{key}"
+        return name if hasattr(type(self), name) else None
+
+    def set_recipe_value(self, key: str, value: Any) -> None:
+        """Apply a recipe value to this step.
+
+        Only keys the step type owns via :meth:`recipe_keys` are
+        applied; anything else is ignored. Recipe files are
+        user-provided, so this must never reach arbitrary step
+        attributes. Prefers the ``set_{key}`` setter when this step
+        type provides one, falling back to plain attribute assignment.
+        Domain bases override this to deserialize stored values (e.g.
+        enum names) before applying them.
+        """
+        if key not in self.recipe_keys():
+            return
+        setter_name = self.get_recipe_setter_name(key)
+        if setter_name is not None:
+            getattr(self, setter_name)(value)
+        else:
+            setattr(self, key, value)
+
+    @classmethod
     def recipe_varset_groups(cls) -> list[tuple[str, VarSet]]:
         """Split :meth:`recipe_varset` into named groups for the editor.
 
@@ -173,6 +229,129 @@ class Step(DocItem, ABC):
         "Step Settings").
         """
         return [(_("Settings"), cls.recipe_varset())]
+
+    @classmethod
+    def common_recipe_varset_groups(
+        cls, step_classes: list[type["Step"]]
+    ) -> list[tuple[str, VarSet]]:
+        """Settings groups common to all the given step types.
+
+        Used by the recipe editor when a recipe targets more than one
+        step type: only settings shared by every selected type are
+        offered. The group structure (titles) of the lowest common
+        ancestor of the selected types is reused, with each group
+        filtered down to the keys present in every type's
+        :meth:`recipe_varset`. Mixing laser and CNC steps therefore
+        yields the base "Settings" group rather than a domain tab.
+        Falls back to the base :meth:`recipe_varset_groups` when
+        nothing is shared.
+        """
+        if not step_classes:
+            return cls.recipe_varset_groups()
+
+        common_keys: set[str] | None = None
+        for step_cls in step_classes:
+            keys = {var.key for var in step_cls.recipe_varset()}
+            common_keys = keys if common_keys is None else common_keys & keys
+            if not common_keys:
+                break
+
+        if not common_keys:
+            return cls.recipe_varset_groups()
+
+        reference = cls._common_base(step_classes)
+        groups: list[tuple[str, VarSet]] = []
+        for title, varset in reference.recipe_varset_groups():
+            filtered = [v for v in varset if v.key in common_keys]
+            if filtered:
+                groups.append(
+                    (
+                        title,
+                        VarSet(vars=filtered, description=varset.description),
+                    )
+                )
+        return groups or cls.recipe_varset_groups()
+
+    @staticmethod
+    def _common_base(
+        step_classes: list[type["Step"]],
+    ) -> type["Step"]:
+        """The most-derived step class that all given classes inherit.
+
+        Walks the first class's MRO and returns the first candidate
+        that every given class is a subclass of. This is the class
+        whose :meth:`recipe_varset_groups` structure applies to the
+        whole selection (e.g. ``Step`` for a laser + CNC mix, so the
+        editor shows the neutral "Settings" group instead of a domain
+        tab).
+        """
+        for candidate in step_classes[0].__mro__:
+            if all(issubclass(cls, candidate) for cls in step_classes):
+                return candidate
+        return Step
+
+    @classmethod
+    def common_transformer_dicts(
+        cls, step_classes: list[type["Step"]]
+    ) -> list[dict[str, Any]]:
+        """Transformer dicts common to all the given step types.
+
+        Analogous to :meth:`common_recipe_varset_groups`: when a recipe
+        targets more than one step type, only transformers present in
+        every type's :meth:`get_default_transformers_dicts` are
+        offered. Returns a deduplicated list of copies using the first
+        type's dicts as the structural reference. Empty when no classes
+        are given.
+        """
+        if not step_classes:
+            return []
+
+        common_names: set[str] | None = None
+        for step_cls in step_classes:
+            per_wp, per_step = step_cls.get_default_transformers_dicts()
+            names = {
+                d.get("name")
+                for d in list(per_wp) + list(per_step)
+                if d.get("name")
+            }
+            common_names = (
+                names if common_names is None else common_names & names
+            )
+            if not common_names:
+                break
+
+        if not common_names:
+            return []
+
+        reference_wp, reference_step = step_classes[
+            0
+        ].get_default_transformers_dicts()
+        result: list[dict[str, Any]] = []
+        for t_dict in list(reference_wp) + list(reference_step):
+            name = t_dict.get("name")
+            if not name or name not in common_names:
+                continue
+            if any(d.get("name") == name for d in result):
+                continue
+            result.append(dict(t_dict))
+        return result
+
+    @staticmethod
+    def _dedupe_transformer_dicts_by_name(
+        dicts: list[dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        """Return a ``name -> dict`` map, keeping the first occurrence.
+
+        Used to deduplicate a step's combined per-workpiece + per-step
+        transformer dicts (a single dict can appear in both lists and is
+        shared by reference).
+        """
+        out: dict[str, dict[str, Any]] = {}
+        for t_dict in dicts:
+            name = t_dict.get("name")
+            if name and name not in out:
+                out[name] = t_dict
+        return out
 
     @classmethod
     def create(
@@ -226,6 +405,30 @@ class Step(DocItem, ABC):
             part = Part(size_mm=workpiece.size)
         return part, ComputePayload(assembler=Assembler(ContourSpec()))
 
+    def build_command_payload(
+        self,
+        machine: "Machine",
+    ) -> "tuple[Part, ComputePayload]":
+        """
+        Build the raygeo :class:`Part` and :class:`ComputePayload`
+        for the single compute node of a geometry-less step
+        (``needs_workpieces == False``).
+
+        Such steps run once per layer at their workflow position and
+        have no workpiece context; the default returns an empty part
+        and a bare :class:`ContourSpec` payload. Geometry-less step
+        kinds override this with their own assembler (see
+        :class:`CommandStep`).
+
+        :param machine: The machine context the step resolves its
+            process defaults from.
+        :returns: ``(part, payload)`` for ``StageSpec.Compute``.
+        """
+        return (
+            Part(size_mm=(0.0, 0.0)),
+            ComputePayload(assembler=Assembler(ContourSpec())),
+        )
+
     def assembler_token_params(
         self,
         machine: "Machine",
@@ -258,6 +461,51 @@ class Step(DocItem, ABC):
         head = self.get_selected_head(machine)
         payload.head_uid = head.uid if head else None
         payload.power = 0.0
+        self._populate_laser_physics(payload, head)
+
+    @staticmethod
+    def _populate_laser_physics(payload, head) -> None:
+        """Stamp the laser physics fields the burn fluence model needs.
+
+        Reads wavelength, optical wattage, spot size, and scan speed
+        from the selected head when it is a ``LaserHead``. The cut
+        speed is the step's ``cut_speed`` (mm/min → mm/s). Unconfigured
+        heads leave the 0-sentinels; the raygeo converter falls back
+        to neutral defaults so the burn still renders.
+        """
+        if not isinstance(head, LaserHead):
+            return
+        payload.wavelength_nm = head.effective_wavelength_nm()
+        payload.max_power_watts = head.effective_max_power_watts()
+        spot_x, spot_y = LaserHead.get_spot_size(head)
+        payload.spot_size_mm = (spot_x, spot_y)
+        # cut_speed is mm/min; the fluence model wants mm/s.
+        payload.scan_speed_mm_per_s = max(0.0, payload.cut_speed / 60.0)
+        if payload.scan_speed_mm_per_s <= 0.0:
+            # Fallback so a zero cut speed does not zero the fluence.
+            payload.scan_speed_mm_per_s = 100.0
+
+    def get_laser_cache_params(self, machine) -> dict[str, Any]:
+        """JSON-serialisable effective laser physics for cache tokens.
+
+        The burn fluence model consumes the selected head's wavelength,
+        optical wattage, and spot size (plus this step's cut speed via
+        the scan-speed conversion). Folding them into the compute token
+        ensures a machine-power/wavelength/spot change invalidates the
+        raster/vector compute cache — otherwise the pipeline would keep
+        returning the pre-change burn until some unrelated edit bumps
+        the token. Returns ``{}`` for non-laser or headless steps.
+        """
+        head = self.get_selected_head(machine)
+        if not isinstance(head, LaserHead):
+            return {}
+        spot_x, spot_y = LaserHead.get_spot_size(head)
+        return {
+            "wavelength_nm": head.effective_wavelength_nm(),
+            "max_power_watts": head.effective_max_power_watts(),
+            "spot_size_mm": [spot_x, spot_y],
+            "cut_speed_mm_min": self.cut_speed,
+        }
 
     def get_cache_params(self) -> dict[str, Any]:
         """JSON-serialisable step attributes that influence compute output.
@@ -301,6 +549,14 @@ class Step(DocItem, ABC):
         if cut_speed is not None:
             self.set_cut_speed(cut_speed)
 
+    def pop_legacy_image_edits(self) -> list[ImageEditStep]:
+        """
+        Image edits that an older file stored as a setting of this step.
+        They are handed over once, after the document is loaded, to the
+        workpieces of the step's layer; later calls return nothing.
+        """
+        return []
+
     def to_dict(self) -> dict:
         """Serializes the step and its configuration to a dictionary."""
         step_type = (
@@ -317,7 +573,12 @@ class Step(DocItem, ABC):
             "typelabel": self.typelabel,
             "visible": self.visible,
             "selected_head_uid": self.selected_head_uid,
-            "generated_workpiece_uid": self.generated_workpiece_uid,
+            "workpiece_uids": self.workpiece_uids,
+            "generated_workpiece_uid": (
+                self.workpiece_uids[0]
+                if len(self.workpiece_uids) == 1
+                else None
+            ),
             "applied_recipe_uid": self.applied_recipe_uid,
             "per_workpiece_transformers_dicts": (
                 self.per_workpiece_transformers_dicts
@@ -354,6 +615,7 @@ class Step(DocItem, ABC):
                 "visible",
                 "selected_laser_uid",
                 "selected_head_uid",
+                "workpiece_uids",
                 "generated_workpiece_uid",
                 "applied_recipe_uid",
                 "modifiers_dicts",
@@ -420,7 +682,11 @@ class Step(DocItem, ABC):
         step.selected_head_uid = data.get(
             "selected_head_uid", data.get("selected_laser_uid")
         )
-        step.generated_workpiece_uid = data.get("generated_workpiece_uid")
+        step.workpiece_uids = list(data.get("workpiece_uids") or [])
+        if not step.workpiece_uids:
+            legacy = data.get("generated_workpiece_uid")
+            if legacy:
+                step.workpiece_uids = [legacy]
         step.applied_recipe_uid = data.get("applied_recipe_uid")
 
         default_per_wp, default_per_step = (
@@ -555,9 +821,39 @@ class Step(DocItem, ABC):
             self.selected_head_uid = uid
             self.updated.send(self)
 
+    def selected_workpieces(
+        self, workpieces: Sequence["WorkPiece"]
+    ) -> list["WorkPiece"]:
+        """
+        The given workpieces this step applies to, in input order.
+
+        An empty ``workpiece_uids`` filter matches every workpiece; a
+        set filter matches only the workpieces whose uid it lists, and
+        silently skips uids that are not present.
+        """
+        if not self.workpiece_uids:
+            return list(workpieces)
+        uids = set(self.workpiece_uids)
+        return [wp for wp in workpieces if wp.uid in uids]
+
+    def set_workpiece_uids(self, uids: list[str]):
+        """
+        Sets the workpieces this step applies to (empty means all of
+        the layer's workpieces) and notifies listeners of the change.
+        """
+        normalized = list(dict.fromkeys(uids))
+        if self.workpiece_uids == normalized:
+            return
+        self.workpiece_uids = normalized
+        self.updated.send(self)
+
     def set_name(self, name: str):
-        if self.name != name:
-            self.name = name
+        """Sets the step name.
+
+        The ``name`` property sends ``renamed``; a rename is not a
+        content change, so ``updated`` stays untouched.
+        """
+        self.name = name
 
     def set_visible(self, visible: bool):
         if self.visible != visible:
@@ -575,8 +871,14 @@ class Step(DocItem, ABC):
             self.travel_speed = int(speed)
             self.updated.send(self)
 
-    def set_coolant_method(self, mode: CoolantMode):
-        """Sets the coolant method used while this step runs."""
+    def set_coolant_method(self, mode: CoolantMode | str):
+        """Sets the coolant method used while this step runs.
+
+        Accepts the enum or its ``name`` string (as stored in varsets
+        and recipes).
+        """
+        if isinstance(mode, str):
+            mode = _COOLANT_MODE_BY_NAME.get(mode, CoolantMode.OFF)
         if self.coolant_method is not mode:
             self.coolant_method = mode
             self.updated.send(self)
@@ -620,6 +922,42 @@ class Step(DocItem, ABC):
         :class:`LaserStep`) override this to describe their process.
         """
         return self.typelabel
+
+    def check(self, machine) -> list[str]:
+        """Return a list of configuration warning strings for this step.
+
+        The UI (step box, settings pages) surfaces these to flag issues
+        such as a speed that exceeds the active machine's maximum.
+        Subclasses extend this with their own warnings. ``machine`` may
+        be None when no machine is configured.
+        """
+        warnings: list[str] = []
+        if machine is None:
+            return warnings
+        if self.cut_speed > machine.max_cut_speed:
+            warnings.append(
+                _(
+                    "Cut speed ({value}) exceeds the machine's "
+                    "maximum ({max})."
+                ).format(
+                    value=format_value(self.cut_speed, "speed"),
+                    max=format_value(machine.max_cut_speed, "speed"),
+                )
+            )
+        if (
+            machine.supports_travel_speed()
+            and self.travel_speed > machine.max_travel_speed
+        ):
+            warnings.append(
+                _(
+                    "Travel speed ({value}) exceeds the machine's "
+                    "maximum ({max})."
+                ).format(
+                    value=format_value(self.travel_speed, "speed"),
+                    max=format_value(machine.max_travel_speed, "speed"),
+                )
+            )
+        return warnings
 
     def dump(self, indent: int = 0):
         print("  " * indent, self.name)

@@ -1,7 +1,6 @@
 from unittest.mock import MagicMock
 
 import pytest
-from laser_essentials.capabilities import CUT, SCORE
 from laser_essentials.steps import FrameStep
 
 from rayforge.core.workpiece import WorkPiece
@@ -26,7 +25,6 @@ class TestFrameStep:
     def test_instantiation(self):
         step = FrameStep(name="Test")
         assert step.typelabel == "Frame"
-        assert step.capabilities == (CUT, SCORE)
 
     def test_create(self, mock_context):
         step = FrameStep.create(mock_context)
@@ -43,16 +41,39 @@ class TestFrameStep:
         workpiece.size = (100, 100)
         kwargs = step.get_assembler_kwargs(machine, workpiece)
         assert isinstance(kwargs, dict)
-        expected_keys = {"cut_side", "offset_mm"}
+        expected_keys = {
+            "cut_side",
+            "offset_mm",
+            "corner_radius",
+            "arc_tolerance",
+            "allow_arcs",
+        }
         assert set(kwargs.keys()) == expected_keys
+        assert kwargs["arc_tolerance"] == machine.arc_tolerance
+        assert kwargs["allow_arcs"] is machine.supports_arcs
+
+    def test_assembler_kwargs_corner_radius(self, machine):
+        step = FrameStep(name="Test")
+        workpiece = MagicMock(spec=["size"])
+        workpiece.size = (100, 100)
+        kwargs = step.get_assembler_kwargs(machine, workpiece)
+        assert kwargs["corner_radius"] == 0
+        step.round_corners = True
+        step.corner_radius_mm = 4.0
+        kwargs = step.get_assembler_kwargs(machine, workpiece)
+        assert kwargs["corner_radius"] == 4.0
 
     def test_roundtrip_serialization(self):
         step = FrameStep(name="Test")
         step.cut_side = "OUTSIDE"
         step.offset_mm = 0.5
+        step.round_corners = True
+        step.corner_radius_mm = 2.5
         data = step.to_dict()
         restored = FrameStep.from_dict(data)
         assert data == restored.to_dict()
+        assert restored.round_corners is True
+        assert restored.corner_radius_mm == 2.5
 
     def test_from_dict_migrates_legacy_opsproducer_params(self):
         """True legacy files store frame params in
@@ -84,6 +105,8 @@ class TestFrameComputePayload:
         step = FrameStep(name="frame")
         step.cut_side = "outside"
         step.offset_mm = 0.3
+        step.round_corners = True
+        step.corner_radius_mm = 2.0
         wp = WorkPiece(name="wp")
         wp.set_size(10.0, 10.0)
 
@@ -95,6 +118,9 @@ class TestFrameComputePayload:
         assert isinstance(spec, FrameSpec)
         assert spec.cut_side == "outside"
         assert spec.offset_mm == 0.3
+        assert spec.corner_radius == 2.0
+        assert spec.arc_tolerance == machine.arc_tolerance
+        assert spec.allow_arcs is machine.supports_arcs
 
     def test_assembler_token_params_mirrors_kwargs(self, machine):
         step = FrameStep(name="frame")

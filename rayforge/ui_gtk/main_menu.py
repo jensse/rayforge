@@ -1,9 +1,21 @@
 from gettext import gettext as _
 
-from gi.repository import Gio, GLib, Gtk
+from gi.repository import Gio, Gtk
 
 from ..machine.models.macro import Macro
 from .action_registry import action_registry
+
+
+def _escape_menu_label(text: str) -> str:
+    """Make text that GtkModelButton renders literally.
+
+    Menu items are built from a GMenu model and rendered by
+    GtkModelButton, which always treats underscores as mnemonics. GMenu
+    offers no way to turn that off, so every underscore is doubled to make
+    it show up as a literal underscore. Labels are plain text rather than
+    Pango markup, so characters such as ``&`` and ``<`` need no escaping.
+    """
+    return text.replace("_", "__")
 
 
 class MainMenu(Gio.Menu):
@@ -37,6 +49,10 @@ class MainMenu(Gio.Menu):
 
         import_export_group = Gio.Menu()
         import_export_group.append(_("Import..."), "win.import")
+        import_export_group.append(_("Reload from Disk"), "win.reload-source")
+        import_export_group.append(
+            _("Relink Source File..."), "win.relink-source"
+        )
         import_export_group.append(_("Export G-code..."), "win.export")
         import_export_group.append(
             _("Export Document..."), "win.export_document"
@@ -108,8 +124,15 @@ class MainMenu(Gio.Menu):
 
         other_group = Gio.Menu()
         other_group.append(_("Split"), "win.split")
+        other_group.append(_("Break Apart"), "win.break-apart")
         other_group.append(_("Export Object..."), "win.export-object")
         object_menu.append_section(None, other_group)
+
+        cleanup_group = Gio.Menu()
+        cleanup_group.append(_("Close Paths…"), "win.close-paths")
+        cleanup_group.append(_("Join Open Paths…"), "win.join-paths")
+        cleanup_group.append(_("Delete Duplicates"), "win.delete-duplicates")
+        object_menu.append_section(None, cleanup_group)
 
         # Addon section for Object menu
         self._addon_sections["object"] = Gio.Menu()
@@ -284,9 +307,7 @@ class MainMenu(Gio.Menu):
             return
 
         for info in recent_infos:
-            # Use Glib.markup_escape to prevent issues with special chars
-            # in filenames.
-            display_name = GLib.markup_escape_text(info.get_display_name())
+            display_name = _escape_menu_label(info.get_display_name())
             uri = info.get_uri()
             action_name = f"win.open-recent('{uri}')"
             self.dynamic_recent_files_section.append(display_name, action_name)

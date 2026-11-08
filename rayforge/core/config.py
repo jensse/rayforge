@@ -1,7 +1,9 @@
 import logging
+import os
 from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 from enum import Enum
+from gettext import gettext as _
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +11,7 @@ import yaml
 from blinker import Signal
 
 from ..machine.models.machine import Machine
+from ..shared.util.atomic import atomic_write_yaml, load_yaml_with_backup
 
 logger = logging.getLogger(__name__)
 
@@ -28,17 +31,38 @@ class StartupBehavior(Enum):
     SPECIFIC_PROJECT = "specific_project"
 
 
+class RightPanelMode(Enum):
+    """Enum for right panel display modes."""
+
+    HIDDEN = "hidden"
+    ACTIVE_LAYER = "active_layer"
+    NON_EMPTY_LAYERS = "non_empty_layers"
+    ALL_LAYERS = "all_layers"
+
+    def label(self) -> str:
+        """Return a translatable label for this panel mode."""
+        labels = {
+            self.HIDDEN: _("Hidden"),
+            self.ACTIVE_LAYER: _("Active Layer Workflow"),
+            self.NON_EMPTY_LAYERS: _("All Non-Empty Layers"),
+            self.ALL_LAYERS: _("All Layers"),
+        }
+        return labels[self]
+
+
 @dataclass
 class CanvasViewState:
     """Persistent view toggle states for the 2D/3D canvases."""
 
     show_workpieces: bool = True
+    show_workpiece_image: bool = True
     show_camera: bool = True
     show_travel_lines: bool = False
     show_nogo_zones: bool = True
     show_grid: bool = True
     show_models: bool = True
     show_tabs: bool = True
+    show_stock: bool = True
     perspective_mode: bool = False
 
     def to_dict(self) -> dict[str, bool]:
@@ -72,10 +96,14 @@ class Config:
         # UI visibility states
         self.bottom_panel: dict[str, Any] | None = None
         self.right_panel_visible: bool = True
+        self.right_panel_mode: RightPanelMode = RightPanelMode.NON_EMPTY_LAYERS
         self.canvas_view: CanvasViewState = CanvasViewState()
         self.auto_pipeline: bool = True
         self.ops_color_mode: OpsColorMode = OpsColorMode.LASER
         self.check_for_app_updates: bool = True
+        # Whether to watch imported files and offer to reload them when
+        # they change on disk.
+        self.watch_source_files: bool = True
         # Usage tracking consent date: None = not asked, "" = declined,
         # ISO date string = consent given on that date
         self.usage_consent_date: str | None = None
@@ -85,6 +113,21 @@ class Config:
         self.cache_budget_bytes: int = 2 * 1024 * 1024 * 1024
         # Language preference: None = system default, or a code like "de"
         self.language: str | None = None
+        # Default stock material UID: None = use the bundled fallback
+        # material (oak). When the user picks a material in the
+        # settings, its UID is stored here.
+        self.default_stock_material_uid: str | None = None
+        # Default stock thickness in mm, applied to new stock assets.
+        self.default_stock_thickness_mm: float = 18.0
+        # Whether the first-run machine setup wizard has been completed
+        # (or dismissed). Absent in older configs; the wizard itself
+        # only triggers while placeholder machines are the only ones.
+        self.setup_completed: bool = False
+        # Mouse gesture bindings: maps context_id -> (slot_id ->
+        # binding spec string). A value of None marks the slot as
+        # unassigned. Absent entries fall back to the slot defaults
+        # declared in the gesture registry.
+        self.gesture_bindings: dict[str, dict[str, str | None]] = {}
         self.changed = Signal()
 
     def set_machine(self, machine: Machine | None):
@@ -146,6 +189,13 @@ class Config:
         self.right_panel_visible = visible
         self.changed.send(self)
 
+    def set_right_panel_mode(self, mode: RightPanelMode):
+        """Sets the right panel display mode."""
+        if self.right_panel_mode == mode:
+            return
+        self.right_panel_mode = mode
+        self.changed.send(self)
+
     def set_import_dpi(self, dpi: float):
         """Sets the default DPI for unitless SVG imports."""
         if self.import_dpi == dpi:
@@ -174,6 +224,13 @@ class Config:
         self.check_for_app_updates = enabled
         self.changed.send(self)
 
+    def set_watch_source_files(self, enabled: bool):
+        """Sets whether imported files are watched for changes."""
+        if self.watch_source_files == enabled:
+            return
+        self.watch_source_files = enabled
+        self.changed.send(self)
+
     def set_ops_color_mode(self, mode: OpsColorMode):
         """Sets the ops color mode."""
         if self.ops_color_mode == mode:
@@ -192,6 +249,31 @@ class Config:
         self.language = language
         self.changed.send(self)
 
+    def set_default_stock_material(self, uid: str | None):
+        """Sets the default stock material UID.
+
+        Args:
+            uid: Material UID, or None to use the bundled fallback.
+        """
+        if self.default_stock_material_uid == uid:
+            return
+        self.default_stock_material_uid = uid
+        self.changed.send(self)
+
+    def set_default_stock_thickness(self, thickness_mm: float):
+        """Sets the default stock thickness in mm."""
+        if self.default_stock_thickness_mm == thickness_mm:
+            return
+        self.default_stock_thickness_mm = thickness_mm
+        self.changed.send(self)
+
+    def set_setup_completed(self, completed: bool):
+        """Marks the first-run machine setup wizard as handled."""
+        if self.setup_completed == completed:
+            return
+        self.setup_completed = completed
+        self.changed.send(self)
+
     def set_usage_consent(self, consent: bool):
         """Sets the usage tracking consent preference."""
         new_value = ""
@@ -200,6 +282,34 @@ class Config:
         if self.usage_consent_date == new_value:
             return
         self.usage_consent_date = new_value
+        self.changed.send(self)
+
+    def set_gesture_binding(
+        self, context_id: str, slot_id: str, value: str | None
+    ):
+        """
+        Stores a custom gesture binding for a slot.
+
+        Args:
+            context_id: The gesture context the slot belongs to.
+            slot_id: The gesture slot to bind.
+            value: The serialized gesture spec, or None to mark the
+                slot as unassigned.
+        """
+        per_context = self.gesture_bindings.setdefault(context_id, {})
+        if slot_id in per_context and per_context[slot_id] == value:
+            return
+        per_context[slot_id] = value
+        self.changed.send(self)
+
+    def reset_gesture_binding(self, context_id: str, slot_id: str):
+        """Removes a custom gesture binding, restoring the default."""
+        per_context = self.gesture_bindings.get(context_id)
+        if not per_context or slot_id not in per_context:
+            return
+        del per_context[slot_id]
+        if not per_context:
+            del self.gesture_bindings[context_id]
         self.changed.send(self)
 
     @property
@@ -238,14 +348,20 @@ class Config:
             ),
             "bottom_panel": self.bottom_panel,
             "right_panel_visible": self.right_panel_visible,
+            "right_panel_mode": self.right_panel_mode.value,
             "canvas_view": self.canvas_view.to_dict(),
             "auto_pipeline": self.auto_pipeline,
             "check_for_app_updates": self.check_for_app_updates,
+            "watch_source_files": self.watch_source_files,
             "ops_color_mode": self.ops_color_mode.value,
             "usage_consent_date": self.usage_consent_date,
             "import_dpi": self.import_dpi,
             "cache_budget_bytes": self.cache_budget_bytes,
             "language": self.language,
+            "default_stock_material_uid": self.default_stock_material_uid,
+            "default_stock_thickness_mm": self.default_stock_thickness_mm,
+            "setup_completed": self.setup_completed,
+            "gesture_bindings": self.gesture_bindings,
         }
 
     @classmethod
@@ -290,11 +406,18 @@ class Config:
         # Load UI visibility states
         config.bottom_panel = data.get("bottom_panel", None)
         config.right_panel_visible = data.get("right_panel_visible", True)
+        default_panel_mode = RightPanelMode.NON_EMPTY_LAYERS.value
+        panel_mode_str = data.get("right_panel_mode", default_panel_mode)
+        try:
+            config.right_panel_mode = RightPanelMode(panel_mode_str)
+        except ValueError:
+            config.right_panel_mode = RightPanelMode.NON_EMPTY_LAYERS
         config.canvas_view = CanvasViewState.from_dict(
             data.get("canvas_view", {})
         )
         config.auto_pipeline = data.get("auto_pipeline", True)
         config.check_for_app_updates = data.get("check_for_app_updates", True)
+        config.watch_source_files = data.get("watch_source_files", True)
 
         ops_color_mode_str = data.get(
             "ops_color_mode", OpsColorMode.LASER.value
@@ -318,6 +441,24 @@ class Config:
         # Load language preference (None = system default)
         config.language = data.get("language", None)
 
+        # Load default stock material (None = bundled fallback)
+        config.default_stock_material_uid = data.get(
+            "default_stock_material_uid", None
+        )
+
+        # Load default stock thickness
+        config.default_stock_thickness_mm = data.get(
+            "default_stock_thickness_mm", 18.0
+        )
+
+        # Load first-run setup flag
+        config.setup_completed = data.get("setup_completed", False)
+
+        # Load custom mouse gesture bindings
+        config.gesture_bindings = cls._load_gesture_bindings(
+            data.get("gesture_bindings", {})
+        )
+
         # Get the machine by ID. add fallbacks in case the machines
         # no longer exist.
         machine_id = data.get("machine")
@@ -331,6 +472,38 @@ class Config:
             config.set_machine(machine)
 
         return config
+
+    @staticmethod
+    def _load_gesture_bindings(data: Any) -> dict[str, dict[str, str | None]]:
+        """
+        Validates the stored gesture bindings, dropping malformed
+        entries. Binding specs are validated against the gesture
+        registry at lookup time, because unknown contexts and slots
+        are legal in the config (e.g. written by an addon that is
+        currently disabled).
+        """
+        if not isinstance(data, dict):
+            logger.warning("Invalid gesture bindings in config, ignoring.")
+            return {}
+        bindings: dict[str, dict[str, str | None]] = {}
+        for context_id, per_context in data.items():
+            if not isinstance(per_context, dict):
+                logger.warning(
+                    f"Invalid gesture bindings for '{context_id}', ignoring."
+                )
+                continue
+            valid: dict[str, str | None] = {}
+            for slot_id, value in per_context.items():
+                if value is None or isinstance(value, str):
+                    valid[str(slot_id)] = value
+                else:
+                    logger.warning(
+                        f"Invalid gesture binding '{slot_id}' for "
+                        f"'{context_id}', ignoring."
+                    )
+            if valid:
+                bindings[str(context_id)] = valid
+        return bindings
 
 
 class ConfigManager:
@@ -369,8 +542,7 @@ class ConfigManager:
         if not self.config:
             return
         self.filepath.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.filepath, "w") as f:
-            yaml.safe_dump(self.config.to_dict(), f)
+        atomic_write_yaml(self.filepath, self.config.to_dict())
 
     def load(self) -> "Config":
         if not self.filepath.exists():
@@ -379,29 +551,26 @@ class ConfigManager:
             return self.config
 
         try:
-            with open(self.filepath, "r") as f:
-                data = yaml.safe_load(f)
-                if not data:
+            data, recovered = load_yaml_with_backup(self.filepath)
+            if not data:
+                logger.info("Config file is empty, creating default config.")
+                self.config = Config()
+            else:
+                if recovered:
+                    self._repair_corrupted()
+                machine_id = data.get("machine")
+                logger.info(f"Loading config with machine_id: {machine_id}")
+                self.config = Config.from_dict(
+                    data, self.machine_mgr.get_machine_by_id
+                )
+                if self.config.machine:
                     logger.info(
-                        "Config file is empty, creating default config."
+                        f"Config loaded with machine: "
+                        f"{self.config.machine.id} "
+                        f"({self.config.machine.name})"
                     )
-                    self.config = Config()
                 else:
-                    machine_id = data.get("machine")
-                    logger.info(
-                        f"Loading config with machine_id: {machine_id}"
-                    )
-                    self.config = Config.from_dict(
-                        data, self.machine_mgr.get_machine_by_id
-                    )
-                    if self.config.machine:
-                        logger.info(
-                            f"Config loaded with machine: "
-                            f"{self.config.machine.id} "
-                            f"({self.config.machine.name})"
-                        )
-                    else:
-                        logger.info("Config loaded but no machine set.")
+                    logger.info("Config loaded but no machine set.")
         except (OSError, yaml.YAMLError) as e:
             logger.error(
                 f"Failed to load config file: {e}. Creating a default config."
@@ -409,3 +578,22 @@ class ConfigManager:
             self.config = Config()
 
         return self.config
+
+    def _repair_corrupted(self) -> None:
+        """Moves a primary file that failed to parse out of the way.
+
+        Called only after a successful backup recovery so the damaged
+        file no longer shadows the good backup on future starts. The
+        recovered settings are written back on the next save.
+        """
+        corrupt_path = self.filepath.with_name(self.filepath.name + ".corrupt")
+        try:
+            os.replace(self.filepath, corrupt_path)
+            logger.warning(
+                "Moved unreadable %s to %s; the recovered settings "
+                "will be written back on the next save.",
+                self.filepath,
+                corrupt_path,
+            )
+        except OSError as e:
+            logger.warning("Could not quarantine %s: %s", self.filepath, e)

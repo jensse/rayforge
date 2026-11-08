@@ -1,9 +1,16 @@
 from unittest.mock import MagicMock
 
-from rayforge.core.capability import MachineCapability, StepCapability
-from rayforge.core.varset import VarSet
+from rayforge.core.capability import MachineCapability
 from rayforge.machine.driver.driver import PWMParams
-from rayforge.machine.models.laser import Laser, LaserHead, LaserType
+from rayforge.machine.models.head import Head
+from rayforge.machine.models.laser import (
+    DEFAULT_FOCAL_DISTANCE_MM,
+    DEFAULT_MAX_POWER_WATTS,
+    Laser,
+    LaserHead,
+    LaserType,
+    effective_focal_distance,
+)
 
 
 def test_laser_initialization():
@@ -17,6 +24,23 @@ def test_laser_initialization():
     assert laser.focus_power_percent == 0
     assert laser.spot_size_mm == (0.1, 0.1)
     assert laser.uid is not None
+
+
+def test_effective_focal_distance_uses_configured_value():
+    laser = LaserHead()
+    laser.focal_distance = 30.0
+    assert effective_focal_distance(laser) == 30.0
+
+
+def test_effective_focal_distance_defaults_for_laser_head():
+    laser = LaserHead()
+    laser.focal_distance = 0.0
+    assert effective_focal_distance(laser) == DEFAULT_FOCAL_DISTANCE_MM
+
+
+def test_effective_focal_distance_zero_for_non_laser():
+    assert effective_focal_distance(Head()) == 0.0
+    assert effective_focal_distance(None) == 0.0
 
 
 def test_set_focus_power():
@@ -125,6 +149,20 @@ def test_laser_roundtrip_serialization():
     assert new_laser.focus_power_percent == original_laser.focus_power_percent
     assert new_laser.name == original_laser.name
     assert new_laser.uid == original_laser.uid
+
+
+def test_laser_none_colors_coerce_to_magenta():
+    """A laser must never hold a None operation colour.
+
+    An unset (None) colour — which can arrive via imported profiles —
+    coerces to magenta so the scanline/ops rendering never falls back
+    to the theme foreground (grey in light mode).
+    """
+    laser = Laser.from_dict({"uid": "l1", "cut_color": None})
+    assert laser.cut_color == "#ff00ff"
+
+    laser.set_cut_color(None)
+    assert laser.cut_color == "#ff00ff"
 
 
 def test_backward_compatibility_old_format():
@@ -454,90 +492,6 @@ def test_get_pwm_settings_none_without_pwm(isolated_machine):
     assert isolated_machine.get_pwm_settings(head) is None
 
 
-def test_get_usable_capabilities_filters_by_machine_capability(
-    isolated_machine,
-):
-    """A step capability is usable only when the machine has the machine
-    capabilities it requires."""
-
-    class LaserOp(StepCapability):
-        REQUIRED_MACHINE_CAPS = frozenset({MachineCapability.LASER})
-
-        @property
-        def name(self):
-            return "LASER_OP"
-
-        @property
-        def label(self):
-            return "Laser Op"
-
-        @property
-        def varset(self):
-            return VarSet(vars=[])
-
-    class MillOp(StepCapability):
-        REQUIRED_MACHINE_CAPS = frozenset({MachineCapability.MILL})
-
-        @property
-        def name(self):
-            return "MILL_OP"
-
-        @property
-        def label(self):
-            return "Mill Op"
-
-        @property
-        def varset(self):
-            return VarSet(vars=[])
-
-    laser_op = LaserOp()
-    mill_op = MillOp()
-    isolated_machine.set_explicit_capabilities({MachineCapability.LASER})
-
-    usable = isolated_machine.get_usable_capabilities((laser_op, mill_op))
-
-    assert usable == (laser_op,)
-
-
-def test_get_usable_capabilities_filters_by_pwm_machine_capability(
-    isolated_machine,
-):
-    """A capability requiring the PWM machine capability is usable only
-    when the machine's driver supports PWM."""
-
-    class PwmOp(StepCapability):
-        REQUIRED_MACHINE_CAPS = frozenset({MachineCapability.PWM})
-
-        @property
-        def name(self):
-            return "PWM_OP"
-
-        @property
-        def label(self):
-            return "PWM Op"
-
-        @property
-        def varset(self):
-            return VarSet(vars=[])
-
-    pwm_op = PwmOp()
-    head = LaserHead()
-    isolated_machine.heads = [head]
-    mock_driver = isolated_machine.driver
-    mock_driver.supports_pwm = MagicMock(return_value=False)
-
-    assert isolated_machine.get_usable_capabilities((pwm_op,), head) == ()
-
-    mock_driver.supports_pwm = MagicMock(return_value=True)
-    assert isolated_machine.get_usable_capabilities((pwm_op,), head) == (
-        pwm_op,
-    )
-
-
-def test_get_usable_capabilities_empty(isolated_machine):
-    assert isolated_machine.get_usable_capabilities(()) == ()
-
-
 def test_laser_type_default():
     laser = Laser()
     assert laser.laser_type == LaserType.DIODE
@@ -593,3 +547,196 @@ def test_laser_type_missing_defaults_to_diode():
     }
     laser = Laser.from_dict(data)
     assert laser.laser_type == LaserType.DIODE
+
+
+# --- Wavelength / physical power model -------------------------------
+
+
+def test_laser_type_default_wavelengths():
+    """Each LaserType has a published default wavelength."""
+    assert LaserType.DIODE.default_wavelength_nm == 455.0
+    assert LaserType.CO2.default_wavelength_nm == 10600.0
+    assert LaserType.FIBER.default_wavelength_nm == 1064.0
+
+
+def test_wavelength_defaults_to_zero():
+    """A fresh LaserHead has wavelength_nm = 0 (sentinel for the
+    laser-type default)."""
+    assert LaserHead().wavelength_nm == 0.0
+
+
+def test_max_power_watts_defaults_to_zero():
+    """A fresh LaserHead has max_power_watts = 0 (sentinel for the
+    nominal 40 W default)."""
+    assert LaserHead().max_power_watts == 0.0
+
+
+def test_effective_wavelength_uses_explicit_value():
+    laser = LaserHead()
+    laser.set_laser_type(LaserType.DIODE)
+    laser.wavelength_nm = 405.0
+    assert laser.effective_wavelength_nm() == 405.0
+
+
+def test_effective_wavelength_falls_back_to_laser_type():
+    laser = LaserHead()
+    laser.set_laser_type(LaserType.CO2)
+    laser.wavelength_nm = 0.0
+    assert laser.effective_wavelength_nm() == 10600.0
+
+
+def test_effective_max_power_watts_uses_explicit_value():
+    laser = LaserHead()
+    laser.max_power_watts = 20.0
+    assert laser.effective_max_power_watts() == 20.0
+
+
+def test_effective_max_power_watts_falls_back_to_default():
+    laser = LaserHead()
+    laser.max_power_watts = 0.0
+    assert laser.effective_max_power_watts() == DEFAULT_MAX_POWER_WATTS
+
+
+def test_watts_at_scales_with_power_fraction():
+    laser = LaserHead()
+    laser.max_power_watts = 60.0
+    assert laser.watts_at(1.0) == 60.0
+    assert laser.watts_at(0.5) == 30.0
+    assert laser.watts_at(0.0) == 0.0
+
+
+def test_watts_at_uses_default_when_unconfigured():
+    laser = LaserHead()
+    laser.max_power_watts = 0.0
+    assert laser.watts_at(1.0) == DEFAULT_MAX_POWER_WATTS
+
+
+def test_wavelength_and_power_serialization_roundtrip():
+    laser = LaserHead()
+    laser.wavelength_nm = 1064.0
+    laser.max_power_watts = 100.0
+
+    data = laser.to_dict()
+    assert data["wavelength_nm"] == 1064.0
+    assert data["max_power_watts"] == 100.0
+
+    restored = Laser.from_dict(data)
+    assert restored.wavelength_nm == 1064.0
+    assert restored.max_power_watts == 100.0
+
+
+def test_wavelength_and_power_missing_fields_use_defaults():
+    data = {
+        "uid": "test-uid",
+        "name": "Test Laser",
+        "tool_number": 0,
+        "max_power": 1000,
+    }
+    laser = Laser.from_dict(data)
+    assert laser.wavelength_nm == 0.0
+    assert laser.max_power_watts == 0.0
+    assert (
+        laser.effective_wavelength_nm()
+        == LaserType.DIODE.default_wavelength_nm
+    )
+    assert laser.effective_max_power_watts() == DEFAULT_MAX_POWER_WATTS
+
+
+# --- Pointer offset ---------------------------------------------------
+
+
+def test_pointer_offset_defaults_to_disabled():
+    """A fresh LaserHead has no pointer offset configured."""
+    laser = LaserHead()
+    assert laser.pointer_offset_enabled is False
+    assert laser.pointer_offset_x == 0.0
+    assert laser.pointer_offset_y == 0.0
+    assert laser.pointer_offset == (0.0, 0.0)
+
+
+def test_pointer_offset_property_zero_when_disabled():
+    """A configured offset is ignored while the toggle is off."""
+    laser = LaserHead()
+    laser.set_pointer_offset(12.0, -3.5)
+    assert laser.pointer_offset == (0.0, 0.0)
+
+    laser.set_pointer_offset_enabled(True)
+    assert laser.pointer_offset == (12.0, -3.5)
+
+
+def test_set_pointer_offset_signals():
+    """set_pointer_offset and set_pointer_offset_enabled send changed."""
+    laser = LaserHead()
+    signal_calls = []
+
+    def handler(sender):
+        signal_calls.append(sender)
+
+    laser.changed.connect(handler)
+    laser.set_pointer_offset(12.0, -3.5)
+    laser.set_pointer_offset_enabled(True)
+    assert len(signal_calls) == 2
+
+
+def test_set_pointer_offset_no_signal_on_same_value():
+    laser = LaserHead()
+    signal_calls = []
+
+    def handler(sender):
+        signal_calls.append(sender)
+
+    laser.changed.connect(handler)
+    laser.set_pointer_offset(1.0, 2.0)
+    laser.set_pointer_offset(1.0, 2.0)
+    assert len(signal_calls) == 1
+
+    laser.set_pointer_offset_enabled(True)
+    laser.set_pointer_offset_enabled(True)
+    assert len(signal_calls) == 2
+
+
+def test_pointer_offset_serialization_roundtrip():
+    laser = LaserHead()
+    laser.set_pointer_offset(12.0, -3.5)
+    laser.set_pointer_offset_enabled(True)
+
+    data = laser.to_dict()
+    assert data["pointer_offset_enabled"] is True
+    assert data["pointer_offset_x"] == 12.0
+    assert data["pointer_offset_y"] == -3.5
+
+    restored = Laser.from_dict(data)
+    assert restored.pointer_offset_enabled is True
+    assert restored.pointer_offset_x == 12.0
+    assert restored.pointer_offset_y == -3.5
+
+
+def test_pointer_offset_missing_fields_use_defaults():
+    """Machines saved before the field existed default to disabled."""
+    data = {
+        "uid": "test-uid",
+        "name": "Test Laser",
+        "tool_number": 0,
+        "max_power": 1000,
+    }
+    laser = Laser.from_dict(data)
+    assert laser.pointer_offset_enabled is False
+    assert laser.pointer_offset == (0.0, 0.0)
+
+
+def test_machine_get_pointer_offset(isolated_machine):
+    """Machine.get_pointer_offset resolves the default laser head."""
+    head = isolated_machine.get_default_laser_head()
+    assert isolated_machine.get_pointer_offset() == (0.0, 0.0)
+
+    head.set_pointer_offset(5.0, 6.0)
+    head.set_pointer_offset_enabled(True)
+    assert isolated_machine.get_pointer_offset() == (5.0, 6.0)
+    assert isolated_machine.get_pointer_offset(head) == (5.0, 6.0)
+
+
+def test_machine_get_pointer_offset_disabled_returns_zero(isolated_machine):
+    """A configured but disabled offset resolves to (0.0, 0.0)."""
+    head = isolated_machine.get_default_laser_head()
+    head.set_pointer_offset(5.0, 6.0)
+    assert isolated_machine.get_pointer_offset() == (0.0, 0.0)

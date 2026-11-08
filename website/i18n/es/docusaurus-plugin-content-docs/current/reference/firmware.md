@@ -4,7 +4,8 @@ Esta página documenta la compatibilidad de firmware para controladores láser u
 
 ## Resumen
 
-Rayforge está diseñado principalmente para **controladores basados en GRBL** pero también es compatible con Marlin, Smoothieware y otros tipos de firmware.
+Rayforge está diseñado principalmente para **controladores basados en GRBL** pero también es
+compatible con Marlin, Smoothieware y otros tipos de firmware.
 
 ### Matriz de Compatibilidad
 
@@ -23,15 +24,15 @@ Rayforge está diseñado principalmente para **controladores basados en GRBL** p
 
 ## Firmware GRBL
 
-**Estado:** ✓ Completamente Soportado
-**Versiones:** 1.1+
-**Controlador:** GRBL Serial, GRBL Serial Simple
+**Estado:** ✓ Completamente Soportado **Versiones:** 1.1+ **Controlador:** GRBL Serial, GRBL Serial
+Simple
 
 ### GRBL 1.1 (Recomendado)
 
 **¿Qué es GRBL 1.1?**
 
-GRBL 1.1 es el firmware más común para máquinas CNC y láser de aficionado. Lanzado en 2017, es estable, bien documentado y ampliamente soportado.
+GRBL 1.1 es el firmware más común para máquinas CNC y láser de aficionado. Lanzado en 2017, es
+estable, bien documentado y ampliamente soportado.
 
 **Funciones soportadas por Rayforge:**
 
@@ -95,9 +96,8 @@ GRBL 0.9 es una versión antigua con algunos problemas de compatibilidad:
 
 ### Controlador GRBL Serial Simple
 
-Rayforge incluye un segundo controlador serie GRBL para dispositivos
-donde el controlador estándar con contador de búfer causa falsas alarmas
-o errores de comunicación.
+Rayforge incluye un segundo controlador serie GRBL para dispositivos donde el controlador estándar
+con contador de búfer causa falsas alarmas o errores de comunicación.
 
 **Cómo funciona:**
 
@@ -115,17 +115,14 @@ o errores de comunicación.
 **Cuándo NO usarlo:**
 
 - El controlador GRBL Serial estándar funciona de manera fiable en la mayoría de dispositivos
-- El controlador simple carece de recuperación de bloqueos, por lo que
-  los trabajos pueden detenerse ante una respuesta "ok" perdida sin
-  recuperación automática
+- El controlador simple carece de recuperación de bloqueos, por lo que los trabajos pueden detenerse
+  ante una respuesta "ok" perdida sin recuperación automática
 
 ---
 
 ## grblHAL
 
-**Estado:** Compatible
-**Versiones:** 2023+
-**Controlador:** GRBL Serial
+**Estado:** Compatible **Versiones:** 2023+ **Controlador:** GRBL Serial
 
 ### ¿Qué es grblHAL?
 
@@ -156,15 +153,13 @@ grblHAL es un fork moderno de GRBL con funciones mejoradas:
 
 ## Controlador GRBL Telnet
 
-**Estado:** Soportado
-**Firmware:** grblHAL, ESP3D y otros controladores GRBL en red
+**Estado:** Soportado **Firmware:** grblHAL, ESP3D y otros controladores GRBL en red
 **Controlador:** GRBL Telnet
 
 ### Acerca del Controlador GRBL Telnet
 
-El controlador GRBL Telnet se conecta a controladores basados en GRBL a través de la red
-mediante una interfaz Telnet. Ideal para placas con WiFi o Ethernet integrado — sin
-necesidad de cable USB.
+El controlador GRBL Telnet se conecta a controladores basados en GRBL a través de la red mediante
+una interfaz Telnet. Ideal para placas con WiFi o Ethernet integrado — sin necesidad de cable USB.
 
 **Características:**
 
@@ -223,13 +218,12 @@ Smoothieware usa sintaxis de código G diferente:
 
 ## Marlin
 
-**Versiones:** 2.0+ con soporte láser
-**Controlador:** Marlin Serial
+**Versiones:** 2.0+ con soporte láser **Controlador:** Marlin Serial
 
 ### Controlador Marlin Serial
 
-Rayforge incluye un MarlinSerialDriver dedicado que se conecta al firmware Marlin
-a través de serial (USB). Marlin 2.0+ puede controlar láseres cuando está configurado apropiadamente.
+Rayforge incluye un MarlinSerialDriver dedicado que se conecta al firmware Marlin a través de serial
+(USB). Marlin 2.0+ puede controlar láseres cuando está configurado apropiadamente.
 
 **Características:**
 
@@ -508,36 +502,50 @@ $22=1       ; Homing habilitado
 
 ---
 
-## Soporte de Firmware Futuro
+## Controladores Ruida
 
-### Controladores Ruida
-
-Rayforge incluye soporte experimental para controladores basados en Ruida (p.ej.
-RDC6442, RDC6445, Ruida R5). El controlador Ruida se conecta por red y soporta
-jogging, reporte de posición, control de aire asistido, selección de capa,
-auto-conexión y sondeo de estado.
+Rayforge se conecta a controladores basados en Ruida (p.ej. RDC6442, RDC6445, Ruida R5) mediante el
+controlador **Ruida RPA**, que habla el protocolo nativo del controlador por USB o UDP, o vía TUI
+RPC a través del Ruida Protocol Analyzer. Los perfiles de dispositivo Generic Ruida RPA y Monport
+MP-570 60W CO2 proporcionan puntos de partida para máquinas nuevas.
 
 **Funciones:**
 
-- Conectividad de red (Ethernet/WiFi)
-- Reporte de posición
-- Controles de jogging
-- Aire asistido y selección de capa
-- Soporte de puntos de referencia
+- Conectividad USB y UDP; cuando ambos están configurados, Rayforge alterna automáticamente entre
+  ellos a medida que se conectan y desconectan los cables
+- Envío de trabajos con reporte de posición, jogging, homing y Mover a Posición
+- El encuadre traza el contorno del trabajo con movimientos absolutos sin haz, por lo que funciona
+  sin disparar el láser
+- Honra el ajuste de Modo de Potencia de cada paso: Dinámico activa el escalado de potencia del
+  controlador y Constante lo desactiva
+- Los puertos serie pueden vincularse desde un desplegable de dispositivos USB con coincidencia
+  VID:PID, de modo que la reconexión automática sigue a la máquina después de que el sistema
+  operativo reenumere los dispositivos USB
+
+**Ajustes de afinado de potencia:**
+
+- **Power scaling** — eleva la potencia mínima emitida a medida que la velocidad de corte de la capa
+  disminuye
+- **VECTOR power floor** — potencia mínima para la compensación de corte vectorial durante la
+  aceleración y la desaceleración, reduciendo el sobre-quemado en los extremos de las líneas
+- **IMAGE power bias** — potencia añadida a las líneas de escaneo raster, ya que los tubos CO2 no
+  disparan con potencias muy bajas
 
 **Limitaciones:**
 
-- Experimental — aún no completamente estable
+- Experimental — probado hasta ahora en un controlador RDC6442S (Monport MP570 CO2)
 - Sin generación de G-code; Ruida usa su propio protocolo propietario
-- Envío de trabajos aún no soportado
+- El modo rotatorio aún no está soportado
 
 ---
 
+## Controladores Experimentales
+
 ### OctoPrint
 
-Rayforge incluye un controlador OctoPrint experimental que envía G-code
-directamente a un servidor OctoPrint a través de la red. Esto es útil si tu
-láser está conectado a una Raspberry Pi u otra máquina ejecutando OctoPrint.
+Rayforge incluye un controlador OctoPrint experimental que envía G-code directamente a un servidor
+OctoPrint a través de la red. Esto es útil si tu láser está conectado a una Raspberry Pi u otra
+máquina ejecutando OctoPrint.
 
 **Funcionalidades:**
 
@@ -553,8 +561,8 @@ láser está conectado a una Raspberry Pi u otra máquina ejecutando OctoPrint.
 1. Selecciona el controlador "OctoPrint" en los ajustes de la máquina
 2. Introduce el nombre de host o dirección IP de tu servidor OctoPrint
 3. Establece el puerto (predeterminado: 80)
-4. Haz clic en "Solicitar Acceso" para obtener una clave API a través del
-   sistema de claves de aplicación de OctoPrint
+4. Haz clic en "Solicitar Acceso" para obtener una clave API a través del sistema de claves de
+   aplicación de OctoPrint
 5. Conecta — Rayforge establecerá una conexión WebSocket
 
 **Limitaciones:**

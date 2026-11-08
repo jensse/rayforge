@@ -20,9 +20,16 @@ class FloatVar(Var[float]):
         min_val: float | None = None,
         max_val: float | None = None,
         extra_validator: Callable[[float], None] | None = None,
+        digits: int | None = None,
+        step: float | None = None,
+        *,
+        visible_when: "Callable[[dict[str, Any]], bool] | None" = None,
+        sensitive_when: "Callable[[dict[str, Any]], bool] | None" = None,
     ):
         self.min_val = min_val
         self.max_val = max_val
+        self.digits = digits
+        self.step = step
 
         def validator(v: float | None):
             # A None value is valid for an unset optional field.
@@ -52,11 +59,17 @@ class FloatVar(Var[float]):
             default=default,
             value=value,
             validator=validator,
+            visible_when=visible_when,
+            sensitive_when=sensitive_when,
         )
 
     def to_dict(self, include_value: bool = False) -> dict[str, Any]:
         data = super().to_dict(include_value=include_value)
         data.update({"min_val": self.min_val, "max_val": self.max_val})
+        if self.digits is not None:
+            data["digits"] = self.digits
+        if self.step is not None:
+            data["step"] = self.step
         return data
 
 
@@ -82,6 +95,10 @@ class SliderFloatVar(FloatVar):
         extra_validator: Callable[[float], None] | None = None,
         show_value: bool = True,
         format_suffix: str | None = None,
+        digits: int | None = None,
+        *,
+        visible_when: "Callable[[dict[str, Any]], bool] | None" = None,
+        sensitive_when: "Callable[[dict[str, Any]], bool] | None" = None,
     ):
         self.show_value = show_value
         self.format_suffix = format_suffix
@@ -94,6 +111,9 @@ class SliderFloatVar(FloatVar):
             min_val=min_val,
             max_val=max_val,
             extra_validator=extra_validator,
+            digits=digits,
+            visible_when=visible_when,
+            sensitive_when=sensitive_when,
         )
 
     def to_dict(self, include_value: bool = False) -> dict[str, Any]:

@@ -18,6 +18,7 @@ from ....core.varset.hostnamevar import is_valid_hostname_or_ip
 from ....pipeline.encoder.base import EncodedOutput, OpsEncoder
 from ....pipeline.encoder.gcode import GcodeEncoder
 from ....shared.units.system import UnitSystem, inches_to_mm
+from ...discovery.spec import DiscoverySpec, MdnsRecognizer
 from ...transport import HttpTransport, TransportStatus, WebSocketTransport
 from ..driver import (
     Axis,
@@ -28,13 +29,17 @@ from ..driver import (
     DriverSetupError,
     Pos,
 )
+from .grbl_fingerprint import fingerprint_grbl_http
 from .grbl_probe import probe_grbl_device
 from .grbl_util import (
     CommandRequest,
+    apply_setting_to_varset,
     command_url,
     detect_unit_system_from_settings,
     eeprom_info_url,
     execute_url,
+    fluidnc_command_url,
+    fluidnc_status_url,
     fw_info_url,
     gcode_to_p_number,
     get_grbl_setting_varsets,
@@ -45,6 +50,7 @@ from .grbl_util import (
     parse_state,
     prb_re,
     status_url,
+    sync_state_wco,
     upload_url,
     wcs_re,
 )
@@ -73,6 +79,15 @@ class GrblNetworkDriver(Driver):
     supports_probing = True
     supports_unit_detection = True
     reports_granular_progress = False
+    # ESP3D v3 firmware advertises a dedicated _esp3d._tcp service;
+    # FluidNC only announces the generic _http._tcp and is confirmed
+    # by fingerprinting its [ESP800] firmware-info endpoint.
+    DISCOVERY = DiscoverySpec(
+        mdns=MdnsRecognizer(
+            services=("_esp3d._tcp.local.",),
+            fingerprint=fingerprint_grbl_http,
+        )
+    )
 
     def __init__(self, context: RayforgeContext, machine: "Machine"):
         super().__init__(context, machine)
@@ -88,6 +103,7 @@ class GrblNetworkDriver(Driver):
         self._current_request: CommandRequest | None = None
         self._cmd_lock = asyncio.Lock()
         self._report_in_inches: bool = False
+        self.is_fluidnc = False
 
     @classmethod
     async def probe(
@@ -137,15 +153,20 @@ class GrblNetworkDriver(Driver):
                 PortVar(
                     key="ws_port",
                     label=_("WebSocket Port"),
-                    description=_("The WebSocket port for the device"),
+                    description=_(
+                        "The WebSocket port for the device. For FluidNC,"
+                        " use the same port as HTTP (usually 80)."
+                    ),
                     default=81,
                 ),
                 ChoiceVar(
                     key="protocol",
                     label=_("Protocol variant"),
-                    description=_("Standard, ESP3D, or Longer GRBL variant"),
+                    description=_(
+                        "Standard, ESP3D, Longer, or FluidNC variant"
+                    ),
                     default="ESP3D",
-                    choices=["ESP3D", "Longer"],
+                    choices=["ESP3D", "Longer", "FluidNC"],
                     null_label=_("Standard"),
                 ),
             ]
@@ -171,9 +192,16 @@ class GrblNetworkDriver(Driver):
         self.protocol = protocol
 
         self.http_base = f"http://{host}:{port}"
-        self.http = HttpTransport(
-            f"{self.http_base}{status_url}", receive_interval=0.5
-        )
+        self.is_fluidnc = protocol == "FluidNC"
+        if self.is_fluidnc:
+            self.http = HttpTransport(
+                f"{self.http_base}{fluidnc_status_url}",
+                receive_interval=0.5,
+            )
+        else:
+            self.http = HttpTransport(
+                f"{self.http_base}{status_url}", receive_interval=0.5
+            )
         self.http.received.connect(self.on_http_data_received)
         self.http.status_changed.connect(self.on_http_status_changed)
 
@@ -235,7 +263,8 @@ class GrblNetworkDriver(Driver):
             )
 
         encoded = quote(command, safe="")
-        url = f"{self.http_base}{command_url.format(command=encoded)}"
+        command_path = fluidnc_command_url if self.is_fluidnc else command_url
+        url = f"{self.http_base}{command_path.format(command=encoded)}"
         logger.debug(
             f"GET {url}",
             extra={
@@ -273,7 +302,7 @@ class GrblNetworkDriver(Driver):
         multipart/form-data POST request.
         """
         form = aiohttp.FormData()
-        if self.protocol == "Longer":
+        if self.protocol in ("Longer", "FluidNC"):
             form.add_field("path", "/")
             form.add_field("size", str(len(gcode)))
             form.add_field(
@@ -355,14 +384,18 @@ class GrblNetworkDriver(Driver):
         while self.keep_running:
             self._update_connection_status(TransportStatus.CONNECTING)
             try:
-                logger.info("Fetching hardware info...")
-                await self._http_get(f"{self.http_base}{hw_info_url}")
+                if self.is_fluidnc:
+                    logger.info("Fetching firmware info...")
+                    await self._http_get(f"{self.http_base}/api/status")
+                else:
+                    logger.info("Fetching hardware info...")
+                    await self._http_get(f"{self.http_base}{hw_info_url}")
 
-                logger.info("Fetching device info...")
-                await self._http_get(f"{self.http_base}{fw_info_url}")
+                    logger.info("Fetching device info...")
+                    await self._http_get(f"{self.http_base}{fw_info_url}")
 
-                logger.info("Fetching EEPROM info...")
-                await self._http_get(f"{self.http_base}{eeprom_info_url}")
+                    logger.info("Fetching EEPROM info...")
+                    await self._http_get(f"{self.http_base}{eeprom_info_url}")
 
                 logger.info("Starting HTTP and WebSocket transports...")
                 async with asyncio.TaskGroup() as tg:
@@ -400,9 +433,7 @@ class GrblNetworkDriver(Driver):
             # since we upload the entire file at once
             if on_command_done is not None:
                 # Call the callback for each op to indicate completion
-                num_ops = 0
-                if op_map and op_map.op_to_machine_code:
-                    num_ops = max(op_map.op_to_machine_code.keys()) + 1
+                num_ops = op_map.op_count if op_map else 0
 
                 for op_index in range(num_ops):
                     result = on_command_done(op_index)
@@ -474,7 +505,7 @@ class GrblNetworkDriver(Driver):
     async def set_hold(self, hold: bool = True) -> None:
         await self._send_command("!" if hold else "~")
 
-    async def cancel(self) -> None:
+    async def cancel(self, emergency: bool = False) -> None:
         self._is_cancelled = True
         # Soft reset: send Ctrl-X (0x18) as a raw byte.  _send_command
         # URL-encodes the argument, so '\x18' becomes '%18' on the wire —
@@ -482,7 +513,25 @@ class GrblNetworkDriver(Driver):
         # GRBL soft-reset byte.  (Do NOT pass the literal string '%18',
         # because quote() would double-encode the '%' to '%2518'.)
         await self._send_command("\x18")
+        await self._send_safety_shutdown(emergency)
         self.job_finished.send(self)
+
+    async def _send_safety_shutdown(self, emergency: bool = False) -> None:
+        """
+        Best-effort transmission of the dialect's tool-off commands so
+        a cancelled or aborted job cannot leave persistent PWM outputs
+        energized.
+        """
+        dialect = self.dialect
+        commands = dialect.get_safety_off_commands()
+        if emergency and dialect.emergency_stop:
+            commands.append(dialect.emergency_stop)
+        for command in commands:
+            try:
+                logger.info(command, extra=self._log_extra("USER_COMMAND"))
+                await self._send_command(command)
+            except DeviceConnectionError as e:
+                logger.warning(f"Safety command '{command}' failed: {e}")
 
     def can_home(self, axis: Axis | None = None) -> bool:
         """GRBL supports homing for all axes."""
@@ -522,13 +571,16 @@ class GrblNetworkDriver(Driver):
         await self.execute_interactive_command(temp_wcs)
         await self.execute_interactive_command(active_wcs)
 
-    async def move_to(self, pos_x, pos_y) -> None:
-        dialect = self.dialect
-        cmd = dialect.move_to.format(
-            speed=self._to_machine_speed(1500),
-            x=self._to_machine_length(float(pos_x)),
-            y=self._to_machine_length(float(pos_y)),
-        )
+        park = self._machine.park_position_after_homing
+        if axes is None and park is not None:
+            template = self.dialect.move_to_park
+            if template:
+                await self.execute_interactive_command(
+                    template.format(x=park[0], y=park[1])
+                )
+
+    async def move_to(self, pos_x, pos_y, pos_z=None, speed=None) -> None:
+        cmd = self._format_move_to(float(pos_x), float(pos_y), pos_z, speed)
         await self.execute_interactive_command(cmd)
 
     async def select_tool(self, tool_number: int) -> None:
@@ -733,7 +785,7 @@ class GrblNetworkDriver(Driver):
                 target_varset = key_to_varset_map.get(key)
                 if target_varset:
                     # Update the value in the correct VarSet
-                    target_varset[key] = value_str
+                    apply_setting_to_varset(target_varset, key, value_str)
                 else:
                     # This setting is not defined in our known VarSets
                     if unknown_vars.get(key) is None:
@@ -768,17 +820,16 @@ class GrblNetworkDriver(Driver):
         await self.execute_interactive_command(cmd)
 
     async def set_wcs_offset(
-        self, wcs_slot: str, x: float, y: float, z: float
+        self, wcs_slot: str, x: float, y: float, z: float | None
     ) -> None:
         p_num = gcode_to_p_number(wcs_slot)
         if p_num is None:
             raise ValueError(f"Invalid WCS slot: {wcs_slot}")
-        dialect = self.dialect
-        cmd = dialect.set_wcs_offset.format(
-            p_num=p_num,
-            x=self._to_machine_length(x),
-            y=self._to_machine_length(y),
-            z=self._to_machine_length(z),
+        cmd = self.dialect.format_wcs_offset(
+            p_num,
+            self._to_machine_length(x),
+            self._to_machine_length(y),
+            self._to_machine_length(z) if z is not None else None,
         )
         await self.execute_interactive_command(cmd)
 
@@ -796,6 +847,12 @@ class GrblNetworkDriver(Driver):
                     if self._report_in_inches
                     else parsed
                 )
+        sync_state_wco(
+            self.state,
+            offsets,
+            self._machine.active_wcs if self._machine else None,
+        )
+        self.state_changed.send(self, state=self.state)
         self.wcs_updated.send(self, offsets=offsets)
         return offsets
 

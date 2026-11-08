@@ -5,17 +5,20 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import cairo
+from gi.repository import PangoCairo
 from raygeo.geo import Geometry, Matrix
 from raygeo.geo.shape.text import text_to_geometry
 from raygeo.geo.types import Point as GeoPoint
 
 from rayforge.image.geo_renderer import geometry_to_cairo
 from rayforge.ui_gtk.canvas import WorldSurface
+from rayforge.ui_gtk.shared.text import create_text_layout
 
 from ..core.commands import BezierPreviewState
 from ..core.commands.dimension import DimensionData
 from ..core.constraints import (
     CoincidentConstraint,
+    PointOnCurveConstraint,
     PointOnLineConstraint,
 )
 from ..core.entities import (
@@ -26,6 +29,7 @@ from ..core.entities import (
     Entity,
     Line,
     Point,
+    PolygonEntity,
     TextBoxEntity,
 )
 from ..core.sketch import FillStyle
@@ -86,8 +90,6 @@ class SketchRenderer:
         if not self.element.canvas:
             return
 
-        ctx.set_font_size(12)
-
         to_screen = self.element.hittester.get_model_to_screen_transform(
             self.element
         )
@@ -119,6 +121,8 @@ class SketchRenderer:
             has_path = self._define_bezier_path(ctx, entity)
         elif isinstance(entity, Ellipse):
             has_path = self._define_ellipse_path(ctx, entity)
+        elif isinstance(entity, PolygonEntity):
+            has_path = self._define_polygon_path(ctx, entity)
 
         if has_path:
             ctx.set_source_rgba(*color)
@@ -303,9 +307,7 @@ class SketchRenderer:
                 and isinstance(entity, TextBoxEntity)
                 and entity.fill_color is not None
             ):
-                text_geo = entity.create_text_fill_geometry(
-                    self.element.sketch.registry
-                )
+                text_geo = entity.to_geometry(self.element.sketch.registry)
                 if text_geo:
                     ctx.new_path()
                     geometry_to_cairo(text_geo, ctx)
@@ -322,6 +324,9 @@ class SketchRenderer:
     ):
         is_sketch_fully_constrained = self.element.sketch.is_fully_constrained
         entities = self.element.sketch.registry.entities or []
+        # Draw array copies first (behind) so original geometry like
+        # the guide path stays on top and easy to select.
+        entities = sorted(entities, key=lambda e: not e.array_copy)
         text_tool = self.element.tools.get("text_box")
         select_tool = self.element.tools.get("select")
         hovered_entity_id = (
@@ -365,6 +370,8 @@ class SketchRenderer:
                 has_path = self._define_circle_path(ctx, entity)
             elif isinstance(entity, Ellipse):
                 has_path = self._define_ellipse_path(ctx, entity)
+            elif isinstance(entity, PolygonEntity):
+                has_path = self._define_polygon_path(ctx, entity)
             elif isinstance(entity, TextBoxEntity):
                 has_path = self._define_text_box_path(ctx, entity)
 
@@ -416,6 +423,17 @@ class SketchRenderer:
                     ctx.set_source_rgb(0.2, 0.3, 0.6)
                 else:
                     ctx.set_source_rgb(0.3, 0.5, 0.8)
+                ctx.stroke()
+            elif entity.array_copy:
+                # Solid like regular geometry, slightly thinner to read
+                # as derived rather than seed geometry.
+                ctx.set_line_width(base_line_width * 0.6)
+                self._set_standard_color(
+                    ctx,
+                    is_sel or is_hovered,
+                    entity.constrained,
+                    is_sketch_fully_constrained,
+                )
                 ctx.stroke()
             else:
                 self._set_standard_color(
@@ -524,6 +542,24 @@ class SketchRenderer:
         ctx.restore()
         return True
 
+    def _define_polygon_path(
+        self, ctx: cairo.Context, polygon: PolygonEntity
+    ) -> bool:
+        """Defines the path for a polygon outline without stroking.
+        Hole rings are added to the same path; their reversed winding
+        cancels the enclosed area under Cairo's winding fill rule."""
+        registry = self.element.sketch.registry
+        rings = polygon.get_world_rings(registry)
+        if not rings or len(rings[0]) < 2:
+            return False
+        for vertices in rings:
+            ctx.move_to(vertices[0][0], vertices[0][1])
+            for x, y in vertices[1:]:
+                ctx.line_to(x, y)
+            if polygon.closed:
+                ctx.close_path()
+        return True
+
     def _define_bezier_path(self, ctx: cairo.Context, bezier: Bezier) -> bool:
         """Defines the path for a bezier curve without stroking."""
         start = self._safe_get_point(bezier.start_idx)
@@ -624,7 +660,12 @@ class SketchRenderer:
 
             # Filter specific constraints on text box points to reduce clutter
             if isinstance(
-                constr, (CoincidentConstraint, PointOnLineConstraint)
+                constr,
+                (
+                    CoincidentConstraint,
+                    PointOnCurveConstraint,
+                    PointOnLineConstraint,
+                ),
             ) and constr.depends_on_points(text_box_point_ids):
                 continue
 
@@ -856,7 +897,6 @@ class SketchRenderer:
         to_screen = to_screen_transform.transform_point
 
         ctx.save()
-        ctx.set_font_size(11)
         ctx.set_line_width(1.0)
 
         dim_input_buffer = getattr(tool, "_dim_input", None)
@@ -883,10 +923,11 @@ class SketchRenderer:
                     label = dim_input_buffer.get_display_text() or label
                     is_editing = True
 
-            extents = ctx.text_extents(label)
+            layout = create_text_layout(ctx, label, 11)
+            extents, _ = layout.get_pixel_extents()
             text_w = extents.width
             text_h = extents.height
-            x_bearing = extents.x_bearing
+            x_bearing = extents.x
 
             label_offset_x = 15
             label_offset_y = -15
@@ -917,8 +958,8 @@ class SketchRenderer:
                 ctx.set_source_rgba(0.0, 0.2, 0.8, 1.0)
             else:
                 ctx.set_source_rgba(0.1, 0.1, 0.1, 1.0)
-            ctx.move_to(label_sx, label_sy)
-            ctx.show_text(label)
+            ctx.move_to(label_sx, label_sy - text_h - extents.y)
+            PangoCairo.show_layout(ctx, layout)
 
         ctx.restore()
 

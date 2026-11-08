@@ -177,7 +177,7 @@ def test_two_opt(mock_progress_context):
         ]
     )
     travel_before = _travel_distance(ops.copy())
-    optimizer = Optimize()
+    optimizer = Optimize(merge_scanlines=False)
     _apply(optimizer, ops, mock_progress_context)
     travel_after = _travel_distance(ops)
     # Original: (1,0)→(10,10)≈12.8, (11,10)→(2,0)≈10.5, (1,0)→(11,10)≈10.5
@@ -942,3 +942,156 @@ def test_mixed_lines_and_bezier(mock_progress_context):
         if ops.command_type(i) == CommandType.LINE_TO
     ]
     assert len(line_indices) == 2
+
+
+MACHINE_SETTINGS = {
+    "machine_max_cut_speed": 6000,
+    "machine_max_travel_speed": 12000,
+    "machine_acceleration": 500,
+}
+
+
+def _apply_with_machine(optimizer, ops, settings=MACHINE_SETTINGS):
+    specs = [optimizer.to_spec(None, None, settings)]
+    Ops.apply_transformers(ops, specs, progress_cb=None)
+
+
+def _array_ops():
+    """Two full-sweep 'workpieces' side by side, one shared row."""
+    ops = Ops()
+    ops.set_feed_rate(6000)
+    ops.set_rapid_rate(12000)
+    for name, x0 in [("wp-a", 0.0), ("wp-b", 12.0)]:
+        ops.workpiece_start(name)
+        ops.move_to(x0, 0)
+        ops.scan_to(x0 + 10, 0, 0, power_values=[128] * 10)
+        ops.workpiece_end(name)
+    return ops
+
+
+class TestMergeScanlines:
+    def test_merges_array_rows_with_machine_settings(self):
+        ops = _array_ops()
+        _apply_with_machine(Optimize(), ops)
+        assert len(ops.indices_of(CommandType.SCAN_LINE)) == 1
+
+    def test_merge_disabled(self):
+        ops = _array_ops()
+        _apply_with_machine(Optimize(merge_scanlines=False), ops)
+        assert len(ops.indices_of(CommandType.SCAN_LINE)) == 2
+
+    def test_to_spec_bakes_machine_settings(self):
+        spec = Optimize(merge_max_gap_mm=3.0, merge_tolerance=0.2).to_spec(
+            None, None, MACHINE_SETTINGS
+        )
+        assert spec.merge_scanlines is not None
+        merge = spec.merge_scanlines
+        assert merge.acceleration == 500
+        assert merge.cut_speed == 6000
+        assert merge.rapid_speed == 12000
+        assert merge.max_gap_mm == 3.0
+        assert merge.tolerance == 0.2
+
+    def test_to_spec_without_merge(self):
+        spec = Optimize(merge_scanlines=False).to_spec(
+            None, None, MACHINE_SETTINGS
+        )
+        assert spec.merge_scanlines is None
+
+    def test_manual_max_gap_overrides_cost_model(self):
+        # Feed/accel where the cost model declines: the ceiling wins.
+        ops = Ops()
+        ops.set_feed_rate(1010)
+        ops.set_rapid_rate(3000)
+        ops.move_to(0, 0)
+        ops.scan_to(25, 0, 0, power_values=[128] * 25)
+        ops.move_to(26, 0)
+        ops.scan_to(51, 0, 0, power_values=[128] * 25)
+        settings = dict(
+            MACHINE_SETTINGS,
+            machine_max_cut_speed=1010,
+            machine_acceleration=1000,
+        )
+        _apply_with_machine(Optimize(merge_max_gap_mm=2.0), ops, settings)
+        assert len(ops.indices_of(CommandType.SCAN_LINE)) == 1
+
+    def test_serialization_defaults_to_enabled(self):
+        data = {"name": "Optimize"}
+        transformer = Optimize.from_dict(data)
+        assert transformer.merge_scanlines is True
+        assert transformer.merge_max_gap_mm == 0.0
+        assert transformer.merge_tolerance == 0.05
+
+    def test_serialization_roundtrip(self):
+        transformer = Optimize(
+            merge_scanlines=False, merge_max_gap_mm=4.0, merge_tolerance=0.1
+        )
+        restored = Optimize.from_dict(transformer.to_dict())
+        assert restored.merge_scanlines is False
+        assert restored.merge_max_gap_mm == 4.0
+        assert restored.merge_tolerance == 0.1
+
+
+def _closed_loop(start, points):
+    """A closed MoveTo + LineTo loop returning to *start*."""
+    ops = Ops()
+    ops.move_to(*start)
+    for x, y in points:
+        ops.line_to(x, y)
+    ops.line_to(*start)
+    return ops
+
+
+def _seed_and_loop():
+    """
+    A small seed loop ending at (30, 5), then a loop drawn from (45, 5)
+    that has a vertex at the seed's exit point.
+    """
+    ops = _closed_loop((30, 5), [(32, 5), (32, 7), (30, 7)])
+    ops.extend(_closed_loop((45, 5), [(30, 5), (25, 5), (25, 20), (45, 20)]))
+    return ops
+
+
+def _loop_starts(ops):
+    return [
+        ops.endpoint(i)[:2]
+        for i in range(ops.len())
+        if ops.command_type(i) == CommandType.MOVE_TO
+    ]
+
+
+class TestCutPlannerOptions:
+    def test_serialization_defaults_off(self):
+        transformer = Optimize.from_dict({"name": "Optimize"})
+        assert transformer.best_start_point is False
+        assert transformer.prefer_corners is False
+
+    def test_serialization_roundtrip(self):
+        transformer = Optimize(best_start_point=True, prefer_corners=True)
+        restored = Optimize.from_dict(transformer.to_dict())
+        assert restored.best_start_point is True
+        assert restored.prefer_corners is True
+
+    def test_to_spec_passes_flags(self):
+        spec = Optimize(best_start_point=True, prefer_corners=True).to_spec(
+            None, None, None
+        )
+        assert spec.best_start_point is True
+        assert spec.prefer_corners is True
+
+    def test_best_start_rotates_closed_path(self, mock_progress_context):
+        ops = _seed_and_loop()
+        _apply(
+            Optimize(best_start_point=True),
+            ops,
+            mock_progress_context,
+        )
+        starts = _loop_starts(ops)
+        assert (30.0, 5.0) in starts
+        assert (45.0, 5.0) not in starts[1:]
+
+    def test_default_keeps_drawn_start(self, mock_progress_context):
+        ops = _seed_and_loop()
+        _apply(Optimize(), ops, mock_progress_context)
+        starts = _loop_starts(ops)
+        assert starts[1] == (45.0, 5.0)

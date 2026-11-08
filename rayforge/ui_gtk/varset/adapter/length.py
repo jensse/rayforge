@@ -35,9 +35,12 @@ class LengthRowAdapter(RowAdapter):
             value_in_base=(
                 float(initial_val) if initial_val is not None else 0.0
             ),
+            step_in_base=var.step,
         )
         if var.description:
             row.set_subtitle(var.description)
+        if var.digits is not None:
+            row.set_min_digits(var.digits)
         return row, cls(row)
 
     def get_value(self) -> Any | None:

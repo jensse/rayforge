@@ -3,6 +3,7 @@ import math
 import time
 from typing import TYPE_CHECKING
 
+import numpy as np
 from gi.repository import Gdk, Gtk, Pango
 from OpenGL import GL
 from OpenGL.error import GLError
@@ -13,11 +14,14 @@ from ...shared.units.formatter import (
     get_default_grid_step_mm,
     get_preferred_unit_factor,
 )
+from ...simulator.scene3d import PickContext, SceneItem, build_pick_scene
 from .camera import ViewDirection
 from .camera_controller import CameraController
 from .chunked_upload import ChunkedUploadController
 from .doc_signals import DocSignalHub
+from .picking import PickScene
 from .render_context import FrameInputs, RenderContext
+from .renderer.model_renderer import model_world_matrix
 from .renderer.scene_renderer import SceneRenderer
 from .scene_presenter import ScenePresenter
 from .theme_resolver import ThemeResolver
@@ -42,16 +46,17 @@ class Canvas3D(Gtk.GLArea):
         **kwargs,
     ):
         super().__init__(**kwargs)
+        # Render only on demand (queue_render), not continuously: GTK 4.22
+        # defaults auto_render to True, which renders every frame clock
+        # tick and starves lower-priority idle callbacks (task when_done
+        # handlers) while wasting GPU work.
+        self.set_auto_render(False)
         self._context = context
         self._doc_editor = doc_editor
         self._viewport = viewport
 
         self._scene = SceneRenderer()
         self._ctx = RenderContext()
-        self._show_travel_moves = False
-        self._show_nogo_zones = True
-        self._show_models = True
-        self._show_grid = True
         self._gl_initialized = False
         self._scene_gl_dirty = False
 
@@ -66,7 +71,9 @@ class Canvas3D(Gtk.GLArea):
         self._upload_ctrl = ChunkedUploadController(
             self._scene,
             get_artifact=lambda: self._presenter.compiled_artifact,
-            get_show_travel_moves=lambda: self._show_travel_moves,
+            get_show_travel_moves=(
+                lambda: self._presenter.visibility.show_travel_moves
+            ),
             get_gl_initialized=lambda: self._gl_initialized,
             make_current=self.make_current,
             request_render=self.queue_render,
@@ -80,7 +87,6 @@ class Canvas3D(Gtk.GLArea):
             theme_resolver=self._theme_resolver,
             get_viewport=self._get_viewport,
             get_gl_initialized=lambda: self._gl_initialized,
-            get_show_travel_moves=lambda: self._show_travel_moves,
             get_camera_available=lambda: self._cam_ctrl.camera is not None,
             make_current=self.make_current,
             mark_scene_dirty=self._mark_scene_dirty,
@@ -97,6 +103,7 @@ class Canvas3D(Gtk.GLArea):
             get_viewport=self._get_viewport,
             request_render=self.queue_render,
             on_key_pressed=self._on_key_pressed,
+            get_pick_scene=self._build_pick_scene,
         )
 
         self._doc_hub = DocSignalHub(
@@ -180,6 +187,11 @@ class Canvas3D(Gtk.GLArea):
         logger.info("GLArea realized.")
 
         self._cam_ctrl.create_camera(self.get_width(), self.get_height())
+        camera = self._cam_ctrl.camera
+        if camera is not None:
+            camera.is_perspective = (
+                self._context.config.canvas_view.perspective_mode
+            )
 
         self._init_gl_resources()
         self._theme_resolver.mark_dirty()
@@ -254,6 +266,43 @@ class Canvas3D(Gtk.GLArea):
         """Returns the current viewport configuration."""
         return self._viewport
 
+    def _build_pick_scene(self) -> PickScene | None:
+        """Assembles pickable geometry for cursor ray-casting.
+
+        Collects the visible scene items (stock, workpiece base images,
+        machine models) and hands them, with a per-frame
+        :class:`PickContext`, to the scene-item picker.  Only items
+        whose category is currently visible contribute, so picking
+        always matches what is drawn.
+        """
+        vis = self._presenter.visibility
+        items: list[SceneItem] = []
+        artifact = self._presenter.compiled_artifact
+        if artifact is not None and vis.show_stock:
+            items.extend(artifact.stock_layers)
+        if vis.show_workpiece_image:
+            items.extend(self._presenter.workpiece_images)
+        if vis.show_models:
+            items.extend(self._scene.machine_models)
+
+        kinematics = self._ctx.kinematics
+        ctx = PickContext(
+            cyl_model=kinematics.cylinder_model_matrix(),
+            model_matrices=self._model_matrices(kinematics),
+        )
+        return build_pick_scene(items, ctx)
+
+    def _model_matrices(self, kinematics) -> dict[str, np.ndarray]:
+        """Per-link current visual-space matrices for machine models."""
+        matrices: dict[str, np.ndarray] = {}
+        for item in self._scene.machine_models:
+            matrix = model_world_matrix(
+                item.link_name, kinematics, self._viewport
+            )
+            if matrix is not None:
+                matrices[item.link_name] = matrix
+        return matrices
+
     def _set_viewport(self, viewport: ViewportConfig):
         """Sets the viewport configuration (from the signal hub)."""
         self._viewport = viewport
@@ -305,6 +354,7 @@ class Canvas3D(Gtk.GLArea):
                 camera=self._cam_ctrl.camera,
                 viewport=self._viewport,
                 color_set=self._theme_resolver.color_set,
+                visibility=self._presenter.visibility,
                 op_player=self._presenter.op_player,
                 machine=self._context.machine,
                 playback_assembly=self._presenter.playback_assembly,
@@ -312,14 +362,27 @@ class Canvas3D(Gtk.GLArea):
                 doc=self.doc,
                 cylinder_transform=self._scene.cylinder_transform,
                 had_rotary_layers=self._scene.had_rotary_layers,
-                show_travel_moves=self._show_travel_moves,
-                show_grid=self._show_grid,
-                show_nogo_zones=self._show_nogo_zones,
-                show_models=self._show_models,
+                stock_top_z=self._presenter.stock_top_z,
+                has_z_axis=self._presenter.has_z_axis,
             )
             self._ctx.update(frame)
             self._scene.prepare(self._ctx)
             self._scene.render(self._ctx, None)
+
+            # Force the framebuffer alpha to 1.0 so the GLArea is
+            # always opaque.  Blended render passes (ops lines, ring
+            # buffer, workpiece image) write sub-unity alpha to the
+            # framebuffer; without this fixup GTK composites those
+            # pixels with the widget background, making the scanline
+            # overlay colour depend on the theme instead of the stock
+            # behind it.  Writing only the alpha channel (RGB masked
+            # off) with a clear leaves the rendered colours untouched.
+            saved_clear = GL.glGetFloatv(GL.GL_COLOR_CLEAR_VALUE)
+            GL.glColorMask(GL.GL_FALSE, GL.GL_FALSE, GL.GL_FALSE, GL.GL_TRUE)
+            GL.glClearColor(0.0, 0.0, 0.0, 1.0)
+            GL.glClear(GL.GL_COLOR_BUFFER_BIT)
+            GL.glColorMask(GL.GL_TRUE, GL.GL_TRUE, GL.GL_TRUE, GL.GL_TRUE)
+            GL.glClearColor(*saved_clear[:4])
 
         except Exception:
             logger.exception("OpenGL Render Error")
@@ -332,28 +395,22 @@ class Canvas3D(Gtk.GLArea):
 
     def set_show_travel_moves(self, visible: bool):
         """Sets the visibility of travel moves in the 3D view."""
-        if self._show_travel_moves == visible:
-            return
-        self._show_travel_moves = visible
-        self._presenter.update_renderers_from_artifact()
+        self._presenter.set_show_travel_moves(visible)
 
     def set_show_nogo_zones(self, visible: bool):
-        if self._show_nogo_zones == visible:
-            return
-        self._show_nogo_zones = visible
-        self.queue_render()
+        self._presenter.set_show_nogo_zones(visible)
 
     def set_show_models(self, visible: bool):
-        if self._show_models == visible:
-            return
-        self._show_models = visible
-        self.queue_render()
+        self._presenter.set_show_models(visible)
 
     def set_show_grid(self, visible: bool):
-        if self._show_grid == visible:
-            return
-        self._show_grid = visible
-        self.queue_render()
+        self._presenter.set_show_grid(visible)
+
+    def set_show_stock(self, visible: bool):
+        self._presenter.set_show_stock(visible)
+
+    def set_show_workpiece_image(self, visible: bool):
+        self._presenter.set_show_workpiece_image(visible)
 
     def update_scene_from_doc(self):
         """Refreshes the 3D scene content from the document."""

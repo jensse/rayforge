@@ -1,3 +1,4 @@
+import logging
 from gettext import gettext as _
 
 from gi.repository import Adw, GLib, Gtk
@@ -9,6 +10,8 @@ from ..icons import get_icon
 from ..shared.gtk import apply_css
 from ..shared.pref_rows.base import SpinRow
 from ..shared.slider import create_slider
+
+logger = logging.getLogger(__name__)
 
 _POWER_CSS = """
 entry.power-value {
@@ -141,9 +144,18 @@ class LaserControlWidget(Gtk.Box):
                 self._on_connection_status_changed
             )
             self.machine.changed.disconnect(self._on_machine_changed)
-            self.machine.controller.laser_power_changed.disconnect(
-                self._on_laser_power_changed
-            )
+            # The laser power signal is sourced directly from the
+            # controller object rather than proxied through the
+            # machine. When the old machine has been removed (e.g. the
+            # user deleted it), its controller is torn down before
+            # this handler runs, so accessing ``controller`` would
+            # lazily fail with a ValueError. Skip the disconnect in
+            # that case: the controller (and its signal) is already
+            # gone, so there is nothing left to detach.
+            if self.machine.has_controller:
+                self.machine.controller.laser_power_changed.disconnect(
+                    self._on_laser_power_changed
+                )
         self.machine = machine
         self.machine_cmd = machine_cmd
         if self.machine:
@@ -163,11 +175,20 @@ class LaserControlWidget(Gtk.Box):
         laser_heads = [
             h for h in self.machine.heads if isinstance(h, LaserHead)
         ]
-        model = Gtk.StringList.new([h.name for h in laser_heads])
-        self._head_row.set_model(model)
-        if laser_heads:
-            self._head_row.set_selected(0)
-            self._sync_head_fields(laser_heads[0])
+        names = [h.name for h in laser_heads]
+        model = self._head_row.get_model()
+        current = (
+            [model.get_string(i) for i in range(model.get_n_items())]
+            if isinstance(model, Gtk.StringList)
+            else []
+        )
+        if current != names:
+            self._head_row.set_model(Gtk.StringList.new(names))
+            if laser_heads:
+                self._head_row.set_selected(0)
+        head = self._get_selected_head()
+        if head:
+            self._sync_head_fields(head)
 
     def _get_selected_head(self) -> Laser | None:
         if not self.machine:
@@ -247,7 +268,12 @@ class LaserControlWidget(Gtk.Box):
             return
 
         percent = self._power_adj.get_value() / 100.0
-        self.machine_cmd.set_focus_power(head, percent, self.machine)
+        self.machine_cmd.set_focus_power(
+            head,
+            percent,
+            self.machine,
+            when_done=lambda task: self._on_command_done(task, on=True),
+        )
 
         self._is_on = True
         self._update_toggle_ui()
@@ -269,8 +295,28 @@ class LaserControlWidget(Gtk.Box):
             and self.machine.is_connected()
             and self.machine_cmd
         ):
-            self.machine_cmd.set_focus_power(head, 0, self.machine)
+            self.machine_cmd.set_focus_power(
+                head,
+                0,
+                self.machine,
+                when_done=lambda task: self._on_command_done(task, on=False),
+            )
         self._is_on = False
+        self._update_toggle_ui()
+        self._update_sensitivity()
+
+    def _on_command_done(self, task, *, on: bool):
+        """Reverts the optimistic toggle state when the command did
+        not take effect, so the button never drifts out of sync with
+        the laser."""
+        if task.get_status() == "completed":
+            return
+        logger.warning(
+            "Laser power command did not take effect "
+            "(task status: %s); restoring toggle state.",
+            task.get_status(),
+        )
+        self._is_on = not on
         self._update_toggle_ui()
         self._update_sensitivity()
 

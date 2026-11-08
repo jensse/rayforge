@@ -8,7 +8,7 @@ resource creation, rebuilds and theme/colour application to this class.
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Protocol
 
 import numpy as np
@@ -29,10 +29,12 @@ from ..gl_utils import ShaderSet
 from ..render_context import RenderContext
 from ..shader import (
     BackgroundShader,
+    ImageShader,
+    LineDepthBiasShader,
     Shader,
     SimpleShader,
+    StockShader,
     TextShader,
-    TextureShader,
 )
 from ..viewport import ViewportConfig
 from .axis_renderer_3d import AxisRenderer3D
@@ -40,10 +42,15 @@ from .background_renderer import BackgroundRenderer
 from .base import BaseRenderer
 from .cylinder_renderer import CylinderRenderer
 from .laser_beam_renderer import LaserBeamRenderer
-from .model_renderer import ModelRenderer
-from .ops_renderer import OpsRenderer
+from .model_renderer import MachineModel, ModelRenderer
+from .ops_renderer import OpsRenderer, OpsUploadPayload, prepare_vertex_layer
 from .ring_buffer_renderer import RingBufferRenderer
-from .texture_renderer import TextureArtifactRenderer
+from .stock_renderer import (
+    PreparedStockLayer,
+    StockRenderer,
+    prepare_stock_layer,
+)
+from .workpiece_image_renderer import WorkpieceImageRenderer
 from .zone_renderer import ZoneRenderer
 
 logger = logging.getLogger(__name__)
@@ -69,8 +76,23 @@ def match_overlay_layer(
     return None
 
 
+def _ring_capacity_for(
+    artifact: "CompiledSceneArtifact", is_rotary: bool
+) -> int:
+    """Returns the ring buffer capacity needed for an overlay layer."""
+    ol = match_overlay_layer(artifact.overlay_layers, is_rotary)
+    if ol is None:
+        return 0
+    # Float32, 3 components per vertex.
+    return ol.positions.uncompressed_size // (3 * 4)
+
+
 class UploadItem(Protocol):
     """A single unit of work in a chunked scene upload."""
+
+    def prepare(self) -> "OpsUploadPayload | None":
+        """Prepares this item's data off the main thread."""
+        raise NotImplementedError
 
     def upload(self) -> None:
         """Uploads this item's data into its renderer."""
@@ -84,10 +106,30 @@ class OpsLayerUploadItem:
     renderer: "OpsRenderer"
     vertex_layer: VertexLayer
     show_travel_moves: bool
+    _payload: OpsUploadPayload | None = field(
+        default=None, init=False, repr=False
+    )
+
+    def prepare(self) -> OpsUploadPayload:
+        """Decompresses/concat vertex arrays off the main thread.
+
+        Stores the built payload on the item so the main-thread
+        ``upload`` only performs the GL buffer uploads.
+        """
+        payload = prepare_vertex_layer(
+            self.vertex_layer, self.show_travel_moves
+        )
+        self._payload = payload
+        return payload
 
     def upload(self) -> None:
-        self.renderer.update_from_vertex_layer(
-            self.vertex_layer, self.show_travel_moves
+        payload = self._payload
+        if payload is None:
+            payload = self.prepare()
+        self.renderer.update_from_vertex_data(
+            payload.powered_vertices,
+            payload.powered_attrib,
+            payload.travel_vertices,
         )
 
 
@@ -97,21 +139,52 @@ class OverlayLayerUploadItem:
 
     renderer: "RingBufferRenderer"
     overlay_layer: ScanlineOverlayLayer
+    _positions: np.ndarray | None = field(default=None, init=False, repr=False)
+    _attrib: np.ndarray | None = field(default=None, init=False, repr=False)
+
+    def prepare(self) -> None:
+        """Decompresses overlay arrays off the main thread."""
+        self._positions = self.overlay_layer.positions.to_numpy()
+        self._attrib = self.overlay_layer.overlay_attrib.to_numpy()
 
     def upload(self) -> None:
-        self.renderer.update_from_overlay_layer(self.overlay_layer)
+        positions = self._positions
+        attrib = self._attrib
+        if positions is None or attrib is None:
+            self.prepare()
+            positions = self._positions
+            attrib = self._attrib
+        assert positions is not None and attrib is not None
+        self.renderer.update_from_overlay_layer_payload(positions, attrib)
 
 
 @dataclass
-class TextureUploadItem:
-    """Uploads the artifact's texture layers into the texture renderer."""
+class StockUploadItem:
+    """Uploads the artifact's stock layers into the stock renderer."""
 
-    renderer: Optional["TextureArtifactRenderer"]
+    renderer: Optional["StockRenderer"]
     artifact: CompiledSceneArtifact
+    _prepared_layers: list[PreparedStockLayer] | None = field(
+        default=None, init=False, repr=False
+    )
+
+    def prepare(self) -> None:
+        """Expands indices and decodes material textures off-thread."""
+        if self.renderer is None:
+            return
+        self._prepared_layers = [
+            prepare_stock_layer(sl) for sl in self.artifact.stock_layers
+        ]
 
     def upload(self) -> None:
-        if self.renderer is not None:
-            self.renderer.update_from_artifact(self.artifact)
+        if self.renderer is None:
+            return
+        prepared = self._prepared_layers
+        if prepared is None:
+            self.prepare()
+            prepared = self._prepared_layers
+        assert prepared is not None
+        self.renderer.upload_prepared(prepared)
 
 
 class SceneRenderer(BaseRenderer):
@@ -121,15 +194,19 @@ class SceneRenderer(BaseRenderer):
         super().__init__()
         self.main_shader: Shader | None = None
         self.text_shader: Shader | None = None
-        self.texture_shader: Shader | None = None
         self.background_shader: Shader | None = None
+        self.stock_shader: Shader | None = None
+        self.image_shader: Shader | None = None
         self.shader_set: ShaderSet | None = None
 
         self.axis_renderer: AxisRenderer3D | None = None
         self.background_renderer: BackgroundRenderer | None = (
             BackgroundRenderer()
         )
-        self.texture_renderer: TextureArtifactRenderer | None = None
+        self.stock_renderer: StockRenderer | None = StockRenderer()
+        self.workpiece_image_renderer: WorkpieceImageRenderer | None = (
+            WorkpieceImageRenderer()
+        )
         self.zone_renderer: ZoneRenderer | None = None
         self.laser_beam_renderer: LaserBeamRenderer | None = (
             LaserBeamRenderer()
@@ -139,15 +216,14 @@ class SceneRenderer(BaseRenderer):
         self.ring_renderers: list[RingBufferRenderer] = []
         self.cylinder_renderers: dict[float, CylinderRenderer] = {}
         self.model_renderers: list[ModelRenderer] = []
+        self.machine_models: list[MachineModel] = []
         self.had_rotary_layers = False
         self.cylinder_transform = np.eye(4, dtype=np.float64)
 
         self._viewport: ViewportConfig | None = None
         self._font_family: str | None = None
 
-        # Ordered list of (renderer, shader_keys) in draw order.  The
-        # deferred ring passes come after the texture renderer so rings
-        # draw on top of the textures during playback.
+        # Ordered list of (renderer, shader_keys) in draw order.
         self.render_registry: list[tuple[BaseRenderer, tuple[str, ...]]] = []
 
     def _rebuild_registry(self) -> None:
@@ -168,9 +244,12 @@ class SceneRenderer(BaseRenderer):
         for renderer in self.cylinder_renderers.values():
             registry.append((renderer, ("main",)))
 
-        # Draw the ops and textures.
-        if self.texture_renderer is not None:
-            registry.append((self.texture_renderer, ("texture",)))
+        # Draw the stock and ops.  Workpiece base images draw on the
+        # stock face but below the toolpaths.
+        if self.stock_renderer is not None:
+            registry.append((self.stock_renderer, ("stock",)))
+        if self.workpiece_image_renderer is not None:
+            registry.append((self.workpiece_image_renderer, ("image",)))
         for renderer in self.ops_renderers:
             registry.append((renderer, ("main",)))
         for renderer in self.ring_renderers:
@@ -178,6 +257,22 @@ class SceneRenderer(BaseRenderer):
         if self.laser_beam_renderer is not None:
             registry.append((self.laser_beam_renderer, ("main",)))
         self.render_registry = registry
+
+    def _active_registry(self, ctx: RenderContext):
+        """Filters the draw list by the frame's scene visibility.
+
+        Visibility is a scene-assembly decision applied here, once, so
+        renderers never read visibility flags themselves: a renderer
+        either declares a ``visibility_key`` naming a ``SceneVisibility``
+        toggle or always participates.
+        """
+        vis = ctx.visibility
+        active = []
+        for renderer, shader_keys in self.render_registry:
+            key = renderer.visibility_key
+            if key is None or getattr(vis, key):
+                active.append((renderer, shader_keys))
+        return active
 
     def set_cylinder_transform(self, transform: np.ndarray):
         """Stores the assembly's cylinder base transform."""
@@ -198,14 +293,18 @@ class SceneRenderer(BaseRenderer):
             viewport = ViewportConfig.default()
         font_family = self._font_family or "sans-serif"
         self.main_shader = SimpleShader()
+        self.line_shader = LineDepthBiasShader()
         self.text_shader = TextShader()
-        self.texture_shader = TextureShader()
         self.background_shader = BackgroundShader()
+        self.stock_shader = StockShader()
+        self.image_shader = ImageShader()
         self.shader_set = ShaderSet(
             main=self.main_shader,
+            main_lines=self.line_shader,
             text=self.text_shader,
-            texture=self.texture_shader,
             background=self.background_shader,
+            stock=self.stock_shader,
+            image=self.image_shader,
         )
 
         self.axis_renderer = AxisRenderer3D(
@@ -217,8 +316,10 @@ class SceneRenderer(BaseRenderer):
         )
         self.apply_extent_frame(viewport)
         self.axis_renderer.init_gl()
-        self.texture_renderer = TextureArtifactRenderer()
-        self.texture_renderer.init_gl()
+        if self.stock_renderer:
+            self.stock_renderer.init_gl()
+        if self.workpiece_image_renderer:
+            self.workpiece_image_renderer.init_gl()
         if self.laser_beam_renderer:
             self.laser_beam_renderer.init_gl()
         try:
@@ -237,7 +338,8 @@ class SceneRenderer(BaseRenderer):
         for renderer in (
             self.axis_renderer,
             self.background_renderer,
-            self.texture_renderer,
+            self.stock_renderer,
+            self.workpiece_image_renderer,
             self.zone_renderer,
             self.laser_beam_renderer,
         ):
@@ -249,7 +351,7 @@ class SceneRenderer(BaseRenderer):
     def _cleanup_self(self):
         """Cleans up dynamically-rebuilt collections and shaders.
 
-        Static children (axis, background, texture, zone, laser) are
+        Static children (axis, background, zone, laser) are
         cleaned automatically by the base ``cleanup()`` walking
         ``_owned_renderers``.  Only the rebuilt collections and the
         owned shaders need manual cleanup here.
@@ -266,10 +368,12 @@ class SceneRenderer(BaseRenderer):
             self.main_shader.cleanup()
         if self.text_shader:
             self.text_shader.cleanup()
-        if self.texture_shader:
-            self.texture_shader.cleanup()
         if self.background_shader:
             self.background_shader.cleanup()
+        if self.stock_shader:
+            self.stock_shader.cleanup()
+        if self.image_shader:
+            self.image_shader.cleanup()
 
     def apply_extent_frame(self, viewport: ViewportConfig):
         """Applies the extent frame to the axis renderer if present."""
@@ -313,44 +417,15 @@ class SceneRenderer(BaseRenderer):
         return True
 
     def update_cylinders_from_doc(self, doc, viewport, machine):
-        """Reads chuck diameters from the assembly and rebuilds cylinders."""
-        desired_diameters: dict[float, bool] = {}
-        if machine and self.had_rotary_layers:
-            for layer in doc.layers:
-                if layer.rotary_enabled and layer.rotary_diameter > 0:
-                    desired_diameters[layer.rotary_diameter] = True
+        """Remove any wireframe cylinder renderers.
 
-        max_length = viewport.width_mm
-        if machine:
-            default_rm = machine.get_default_rotary_module()
-            if default_rm:
-                max_length = min(max_length, default_rm.max_workpiece_length)
-
+        Rotary layers now always render a solid stock shell (using the
+        default material when none is explicitly assigned), so the
+        wireframe placeholder is no longer needed.
+        """
         for diameter, renderer in list(self.cylinder_renderers.items()):
-            if diameter not in desired_diameters:
-                renderer.cleanup()
-                del self.cylinder_renderers[diameter]
-
-        grid_size = (
-            self.axis_renderer.grid_size_mm if self.axis_renderer else 10.0
-        )
-        length_segments = max(1, round(max_length / grid_size))
-
-        for diameter in desired_diameters:
-            if diameter not in self.cylinder_renderers:
-                renderer = CylinderRenderer(
-                    diameter=diameter,
-                    length=max_length,
-                    rings=24,
-                    length_segments=length_segments,
-                )
-                renderer.set_color((0.4, 0.6, 0.8, 0.25))
-                renderer.init_gl()
-                self.cylinder_renderers[diameter] = renderer
-                logger.debug(
-                    f"Initialized cylinder renderer: "
-                    f"diameter={diameter}mm, length={max_length}mm"
-                )
+            renderer.cleanup()
+            del self.cylinder_renderers[diameter]
         self._rebuild_registry()
 
     def update_zones_from_machine(self, machine):
@@ -367,10 +442,16 @@ class SceneRenderer(BaseRenderer):
         for renderer in self.model_renderers:
             renderer.cleanup()
         self.model_renderers.clear()
+        self.machine_models.clear()
         self._rebuild_registry()
 
     def update_models_from_context(self, context, machine):
-        """Rebuilds renderers for all assembly links with 3D models."""
+        """Rebuilds renderers for all assembly links with 3D models.
+
+        Builds one :class:`MachineModel` scene item per resolved link
+        and retains them on the scene; both the model renderers and the
+        picker consume the same items.
+        """
         self.clear_models()
         if not machine:
             return
@@ -397,7 +478,8 @@ class SceneRenderer(BaseRenderer):
                 )
                 continue
 
-            renderer = ModelRenderer(resolved, link_name=link.name)
+            item = MachineModel(resolved, link.name)
+            renderer = ModelRenderer(item)
             renderer.init_gl()
             logger.debug(
                 "Model renderer created: vao=%d, vertex_count=%d, bounds=%s",
@@ -405,6 +487,7 @@ class SceneRenderer(BaseRenderer):
                 renderer._vertex_count,
                 renderer.bounds,
             )
+            self.machine_models.append(item)
             self.model_renderers.append(renderer)
         self._rebuild_registry()
 
@@ -429,14 +512,6 @@ class SceneRenderer(BaseRenderer):
             renderer.update_color_lut_from(provider)
         for renderer in self.ring_renderers:
             renderer.update_color_lut_from(provider)
-
-        if self.texture_renderer:
-            if provider.has_lasers:
-                logger.debug(
-                    f"[COLOR_LUT] Using multi-laser 2D LUT "
-                    f"({provider.num_lasers} lasers)"
-                )
-            self.texture_renderer.update_color_lut_from(provider)
 
     def update_from_artifact(
         self, artifact: CompiledSceneArtifact, show_travel_moves: bool
@@ -468,8 +543,8 @@ class SceneRenderer(BaseRenderer):
                 ring.ring_offsets = np.array([], dtype=np.int32)
             self.ring_renderers.append(ring)
 
-        if self.texture_renderer:
-            self.texture_renderer.update_from_artifact(artifact)
+        if self.stock_renderer:
+            self.stock_renderer.update_from_artifact(artifact)
         self._rebuild_registry()
 
     def prepare_chunked_upload(
@@ -491,7 +566,10 @@ class SceneRenderer(BaseRenderer):
             self.ops_renderers.append(ops)
             upload_items.append(OpsLayerUploadItem(ops, vl, show_travel_moves))
 
-            ring = RingBufferRenderer(is_rotary=vl.is_rotary)
+            ring = RingBufferRenderer(
+                capacity_vertices=_ring_capacity_for(artifact, vl.is_rotary),
+                is_rotary=vl.is_rotary,
+            )
             ring.init_gl()
             self.ring_renderers.append(ring)
 
@@ -501,7 +579,7 @@ class SceneRenderer(BaseRenderer):
                     upload_items.append(OverlayLayerUploadItem(ring, ol))
                     break
 
-        upload_items.append(TextureUploadItem(self.texture_renderer, artifact))
+        upload_items.append(StockUploadItem(self.stock_renderer, artifact))
         self._rebuild_registry()
         return upload_items
 
@@ -510,13 +588,15 @@ class SceneRenderer(BaseRenderer):
         item.upload()
 
     def clear_layers(self) -> None:
-        """Clears all per-layer ops/ring/texture GPU buffers."""
+        """Clears all per-layer ops/ring GPU buffers."""
         for renderer in self.ops_renderers:
             renderer.clear()
         for renderer in self.ring_renderers:
             renderer.clear()
-        if self.texture_renderer:
-            self.texture_renderer.clear()
+        if self.stock_renderer:
+            self.stock_renderer.clear()
+        if self.workpiece_image_renderer:
+            self.workpiece_image_renderer.clear()
 
     def extract_playback_offsets(self, artifact: CompiledSceneArtifact):
         """Stores each renderer's playback offsets from an artifact."""
@@ -540,13 +620,21 @@ class SceneRenderer(BaseRenderer):
 
     def prepare(self, ctx: RenderContext) -> None:
         """
-        Prepares every registry renderer for the current frame.
+        Prepares every visible registry renderer for the current frame.
 
-        Runs the ``prepare`` phase of each renderer in the registry so
-        that frame-level cross-dependencies (e.g. the laser point light
-        feeding the model renderers) resolve before any draw.
+        Runs the ``prepare`` phase of each renderer in the active
+        (visibility-filtered) draw list so that frame-level
+        cross-dependencies (e.g. the laser point light feeding the model
+        renderers) resolve before any draw.
         """
-        for renderer, _ in self.render_registry:
+        # The laser beam publishes the point-light position that the
+        # model renderers consume, so it must be prepared first even
+        # though it draws last.
+        if self.laser_beam_renderer is not None:
+            self.laser_beam_renderer.prepare(ctx)
+        for renderer, _ in self._active_registry(ctx):
+            if renderer is self.laser_beam_renderer:
+                continue
             renderer.prepare(ctx)
 
     def render(
@@ -566,8 +654,9 @@ class SceneRenderer(BaseRenderer):
         for shader in (
             self.main_shader,
             self.text_shader,
-            self.texture_shader,
             self.background_shader,
+            self.stock_shader,
+            self.image_shader,
         ):
             if shader:
                 shader.reset_uniforms()
@@ -576,7 +665,7 @@ class SceneRenderer(BaseRenderer):
         if shaders is None:
             return
 
-        for renderer, shader_keys in self.render_registry:
+        for renderer, shader_keys in self._active_registry(ctx):
             pass_shaders = tuple(getattr(shaders, key) for key in shader_keys)
             with render_pass(*pass_shaders):
                 renderer.render(ctx, shaders)

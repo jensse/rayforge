@@ -104,8 +104,8 @@ echo ""
 
 VENV_PATH=${VENV_PATH:-.venv}
 PYTHON_BOOTSTRAP=python3
-if command -v python3.11 >/dev/null 2>&1; then
-    PYTHON_BOOTSTRAP=python3.11
+if command -v python3.12 >/dev/null 2>&1; then
+    PYTHON_BOOTSTRAP=python3.12
 fi
 if [ ! -d "$VENV_PATH" ]; then
     "$PYTHON_BOOTSTRAP" -m venv "$VENV_PATH"
@@ -252,9 +252,9 @@ PY
 
     if [ "$ICON_SOURCE" = "icns" ]; then
         if [ ! -f "rayforge.icns" ] || \
-           [ "website/static/images/icon-app.svg" -nt "rayforge.icns" ]; then
+           [ "rayforge/resources/icons/org.rayforge.rayforge.svg" -nt "rayforge.icns" ]; then
             echo "Generating macOS icon..."
-            bash scripts/mac/mac_create_icon.sh
+            "$VENV_PY" scripts/create_icon.py
         else
             echo "Icon is up to date, skipping generation."
         fi
@@ -615,8 +615,19 @@ if (( DO_DMG == 1 )); then
     fi
     DMG_PATH="dist/Rayforge_${VERSION}.dmg"
     rm -f "$DMG_PATH"
-    hdiutil create -volname "Rayforge" -srcfolder "dist/Rayforge.app" \
+    tries=0
+    max_tries=10
+    until hdiutil create -volname "Rayforge" -srcfolder "dist/Rayforge.app" \
         -ov -format UDZO "$DMG_PATH"
+    do
+        tries=$((tries + 1))
+        if [ "$tries" -ge "$max_tries" ]; then
+            echo "Error: hdiutil failed after ${max_tries} attempts" >&2
+            exit 1
+        fi
+        echo "hdiutil failed (attempt ${tries}), retrying..." >&2
+        sleep $((tries * 2))
+    done
 fi
 
 if (( DO_BUILD == 1 )) && (( DO_BUNDLE == 1 )) && (( DO_DMG == 1 )); then

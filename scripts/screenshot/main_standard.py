@@ -9,15 +9,14 @@ import time
 
 from utils import (
     clear_window_subtitle,
-    get_target,
     load_project,
+    restore_config,
     restore_panel_states,
     save_panel_states,
     set_window_size,
     show_bottom_tab,
     show_panel,
     take_screenshot,
-    target_to_filename,
     wait_for_settled,
 )
 
@@ -28,8 +27,8 @@ logger = logging.getLogger(__name__)
 PANELS = ["toggle_bottom_panel"]
 
 
+@restore_config
 def main():
-    target = get_target("main:standard")
     set_window_size(win, 2400, 1650)
 
     load_project(win, "contour.ryp")
@@ -48,8 +47,8 @@ def main():
     time.sleep(0.25)
 
     clear_window_subtitle(win)
-    logger.info("Taking screenshot: main-standard.png")
-    take_screenshot(target_to_filename(target))
+    logger.info("Taking screenshot: main-standard.webp")
+    take_screenshot()
 
     restore_panel_states(win, saved_states)
 

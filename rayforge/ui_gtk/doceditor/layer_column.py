@@ -146,7 +146,7 @@ class LayerColumn(Gtk.Box):
 
         self._connect_signals()
         self._update_style()
-        self._update_subtitle()
+        self._update_ui()
 
     def do_measure(self, orientation, for_size):
         min_, nat, min_bl, nat_bl = super().do_measure(orientation, for_size)
@@ -319,9 +319,9 @@ class LayerColumn(Gtk.Box):
         for item in self.layer.get_content_items():
             row = Gtk.ListBoxRow()
             if isinstance(item, Group):
-                item_row = GroupRow(item)
+                item_row = GroupRow(item, on_rename=self._on_rename_item)
             elif isinstance(item, WorkPiece):
-                item_row = WorkpieceRow(item)
+                item_row = WorkpieceRow(item, on_rename=self._on_rename_item)
             else:
                 continue
             row.set_child(item_row)
@@ -329,6 +329,19 @@ class LayerColumn(Gtk.Box):
             self._ordered_items.append(item)
             self._setup_row_drag_source(row, item_row)
             self.listbox.append(row)
+
+    def _on_rename_item(self, item: DocItem, new_name: str):
+        self.editor.edit.rename_item(item, new_name)
+
+    def start_item_rename(self, item: DocItem) -> bool:
+        """Starts in-place renaming of the given item, if present in this
+        column."""
+        for row, row_item in self._row_items.items():
+            if row_item is not item:
+                continue
+            row.get_child().start_rename()
+            return True
+        return False
 
     def update_row_selection(self, selected_uids: set):
         self._selected_uids = {
@@ -392,6 +405,7 @@ class LayerColumn(Gtk.Box):
             self.visibility_button.set_child(self.visibility_on_icon)
         else:
             self.visibility_button.set_child(self.visibility_off_icon)
+        self.set_opacity(1.0 if self.layer.visible else 0.5)
 
     def _update_subtitle(self):
         machine = get_context().machine
@@ -404,12 +418,14 @@ class LayerColumn(Gtk.Box):
 
     def _connect_signals(self):
         self.layer.updated.connect(self._on_layer_updated)
+        self.layer.renamed.connect(self._on_layer_renamed)
         self.layer.descendant_added.connect(self._on_layer_structure_changed)
         self.layer.descendant_removed.connect(self._on_layer_structure_changed)
         self.doc.active_layer_changed.connect(self._on_active_layer_changed)
 
     def do_destroy(self):
         self.layer.updated.disconnect(self._on_layer_updated)
+        self.layer.renamed.disconnect(self._on_layer_renamed)
         self.layer.descendant_added.disconnect(
             self._on_layer_structure_changed
         )
@@ -421,6 +437,9 @@ class LayerColumn(Gtk.Box):
     def _on_layer_updated(self, sender, **kwargs):
         self._update_ui()
         self._rebuild_workpiece_list()
+
+    def _on_layer_renamed(self, sender):
+        self._update_ui()
 
     def _on_layer_structure_changed(self, sender, **kwargs):
         self.workflow_row.refresh()
@@ -457,6 +476,12 @@ class LayerColumn(Gtk.Box):
                     item = self._row_items.get(widget)
                     if item is None:
                         break
+                    row_child = widget.get_child()
+                    if (
+                        isinstance(row_child, (WorkpieceRow, GroupRow))
+                        and row_child.is_renaming()
+                    ):
+                        return
                     if n_press == 1:
                         if not self._handle_item_click(item, gesture):
                             return
@@ -570,7 +595,20 @@ class LayerColumn(Gtk.Box):
                     items=[clicked_item],
                     extend=False,
                 )
-            self._show_item_context_menu(gesture)
+            else:
+                selected = [
+                    i
+                    for i in self._ordered_items
+                    if i.uid in self._selected_uids
+                ]
+                selected.remove(clicked_item)
+                selected.insert(0, clicked_item)
+                self.select_items_requested.send(
+                    self,
+                    items=selected,
+                    extend=False,
+                )
+            self._show_item_context_menu(gesture, clicked_item)
 
     def _popup_context_menu(self, menu: Gio.Menu, gesture: Gtk.Gesture):
         if self._context_popover:
@@ -589,9 +627,20 @@ class LayerColumn(Gtk.Box):
         menu.append_item(Gio.MenuItem.new(_("Paste"), "win.paste"))
         self._popup_context_menu(menu, gesture)
 
-    def _show_item_context_menu(self, gesture):
+    def _show_item_context_menu(self, gesture, item):
         menu = Gio.Menu.new()
+        menu.append_item(Gio.MenuItem.new(_("Rename"), "win.rename-item"))
+        menu.append_section(None, Gio.Menu.new())
         menu.append_item(Gio.MenuItem.new(_("Duplicate"), "win.duplicate"))
+        menu.append_section(None, Gio.Menu.new())
+        menu.append_item(
+            Gio.MenuItem.new(_("Reload from Disk"), "win.reload-source")
+        )
+        menu.append_item(
+            Gio.MenuItem.new(
+                _("Relink Source File\u2026"), "win.relink-source"
+            )
+        )
         menu.append_section(None, Gio.Menu.new())
         menu.append_item(Gio.MenuItem.new(_("Copy"), "win.copy"))
         menu.append_item(Gio.MenuItem.new(_("Cut"), "win.cut"))
@@ -717,14 +766,7 @@ class LayerColumn(Gtk.Box):
     def _get_center_position(self) -> tuple:
         machine = get_context().machine
         if machine:
-            work_area = machine.work_area
-            wa_w, wa_h = work_area[2], work_area[3]
-            origin_x, origin_y = machine.get_reference_position_world()
-            space = machine.get_coordinate_space()
-            bl_x, bl_y = space.world_position_from_origin(
-                origin_x, origin_y, (wa_w, wa_h)
-            )
-            return (bl_x + wa_w / 2, bl_y + wa_h / 2)
+            return machine.panel.work_area_center()
         return (50.0, 50.0)
 
     def _on_drop_accept(self, drop_target, drop):

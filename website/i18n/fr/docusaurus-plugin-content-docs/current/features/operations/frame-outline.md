@@ -1,6 +1,8 @@
 # Contour de Cadrage
 
-Le Contour de Cadrage crée un parcours de coupe rectangulaire simple autour de votre design complet. C'est le moyen le plus rapide d'ajouter une bordure propre ou de couper votre travail libre de la feuille de matériau.
+Le Contour de Cadrage crée un parcours de coupe rectangulaire simple autour de votre design complet.
+C'est le moyen le plus rapide d'ajouter une bordure propre ou de couper votre travail libre de la
+feuille de matériau.
 
 ## Aperçu
 
@@ -49,23 +51,25 @@ Configurez les paramètres du cadre :
 
 ## Paramètres Clés
 
-La boîte de dialogue des paramètres d'étape comporte trois onglets : **Paramètres d'étape**, **Laser** et **Post-Traitement**. Les paramètres sont décrits ci-dessous dans l'ordre des onglets.
+La boîte de dialogue des paramètres d'étape comporte quatre onglets : **Paramètres d'étape**,
+**Laser**, **Post-Traitement** et **Pièces**. Les paramètres sont décrits ci-dessous dans l'ordre
+des onglets.
 
 ### Géométrie
 
-![Paramètres d'étape contour de cadrage](/screenshots/step-settings-frame-outline-general.png)
+![Paramètres d'étape contour de cadrage](/screenshots/step-settings-frame-outline-general.webp)
 
-Le groupe **Géométrie** de l'onglet *Paramètres d'étape* contrôle la forme du cadre.
+Le groupe **Géométrie** de l'onglet _Paramètres d'étape_ contrôle la forme du cadre.
 
 #### Côté de Coupe
 
 Contrôle où le laser coupe par rapport au parcours du cadre :
 
-| Côté de Coupe | Description | Utilisation |
-| ------------- | ----------- | ----------- |
-| **Ligne Centrale** | Coupe directement sur le parcours | Coupe standard |
-| **Extérieur** | Coupe à l'extérieur du parcours du cadre | Rend le cadre légèrement plus grand |
-| **Intérieur** | Coupe à l'intérieur du parcours du cadre | Rend le cadre légèrement plus petit |
+| Côté de Coupe      | Description                              | Utilisation                         |
+| ------------------ | ---------------------------------------- | ----------------------------------- |
+| **Ligne Centrale** | Coupe directement sur le parcours        | Coupe standard                      |
+| **Extérieur**      | Coupe à l'extérieur du parcours du cadre | Rend le cadre légèrement plus grand |
+| **Intérieur**      | Coupe à l'intérieur du parcours du cadre | Rend le cadre légèrement plus petit |
 
 #### Distance de Décalage
 
@@ -80,11 +84,25 @@ Contrôle où le laser coupe par rapport au parcours du cadre :
 - **2-5mm :** Petite marge pour une apparence propre
 - **10mm+ :** Grande bordure pour le montage ou la manipulation
 
+#### Coins Arrondis
+
+Activez **Coins Arrondis** pour remplacer les coins à 90° du cadre par des arcs arrondis, puis
+définissez le **Rayon des Coins** en mm. Le rayon est automatiquement réduit lorsqu'il est trop
+grand pour tenir dans le cadre.
+
+- **0mm :** Coins nets (par défaut)
+- **3-10mm :** Coins plus doux, plus faciles à manipuler
+- **Plus grand :** Cadre fortement arrondi, limité à la moitié du côté le plus court du cadre
+
+Les coins arrondis sont utiles pour les matériaux qui s'écaillent ou se fendent aux angles vifs, et
+évitent de devoir post-traiter le cadre ou dessiner à la main un contour arrondi.
+
 ### Paramètres Laser
 
-![Paramètres laser](/screenshots/step-settings-frame-outline-laser.png)
+![Paramètres laser](/screenshots/step-settings-frame-outline-laser.webp)
 
-La puissance, la vitesse et la sélection de la tête laser se trouvent sur la page **Laser** de la boîte de dialogue des paramètres d'étape.
+La puissance, la vitesse et la sélection de la tête laser se trouvent sur la page **Laser** de la
+boîte de dialogue des paramètres d'étape.
 
 #### Puissance & Vitesse
 
@@ -98,6 +116,18 @@ La puissance, la vitesse et la sélection de la tête laser se trouvent sur la p
 - À quelle vitesse le laser se déplace
 - Plus lent pour les matériaux plus épais
 
+#### Mode de Puissance
+
+Le réglage du Mode de Puissance contrôle comment la puissance laser est émise pendant les mouvements
+:
+
+- **Dynamique (M4)** ajuste la puissance à la vitesse de déplacement (défaut)
+- **Constant (M3)** maintient la puissance fixe quelle que soit la vitesse
+
+La puissance dynamique réduit la puissance lorsque la tête ralentit dans un coin, ce qui peut
+laisser des coins sous-brûlés sur certaines machines. Passe en **Constant (M3)** si les coins du
+cadre brûlent trop faiblement.
+
 Pour couper le cadre plus d'une fois, ajoutez un post-processeur [Passe Multiple](../multi-pass.md).
 
 #### Compensation de Kerf
@@ -110,7 +140,7 @@ Le contour de cadrage supporte la compensation de kerf :
 
 ## Post-Traitement
 
-![Paramètres de post-traitement du contour de cadrage](/screenshots/step-settings-frame-outline-post.png)
+![Paramètres de post-traitement du contour de cadrage](/screenshots/step-settings-frame-outline-post.webp)
 
 Les opérations de Contour de Cadrage supportent plusieurs options de post-traitement :
 
@@ -118,7 +148,8 @@ Les opérations de Contour de Cadrage supportent plusieurs options de post-trait
 - **[Rognage au Stock](../crop-to-stock.md)** - Limiter les coupes à la limite du matériau
 - **[Optimisation de Parcours](../path-optimization.md)** - Réduire la distance de déplacement
 - **[Passe Multiple](../multi-pass.md)** - Répéter les coupes pour les matériaux épais
-- **[Entrée/Sortie](../lead-in-out.md)** - Ajouter des mouvements d'approche et de sortie à puissance nulle pour des extrémités de coupe plus propres
+- **[Entrée/Sortie](../lead-in-out.md)** - Ajouter des mouvements d'approche et de sortie à
+  puissance nulle pour des extrémités de coupe plus propres
 
 ## Cas d'Utilisation
 
@@ -220,12 +251,12 @@ Flux de travail typique pour une pièce finie :
 
 ### Cadre vs Shrink Wrap
 
-| Fonctionnalité | Contour de Cadrage | Shrink Wrap |
-| -------------- | ------------------ | ----------- |
-| **Forme** | Toujours rectangulaire | Suit les contours des objets |
-| **Vitesse** | Très rapide (4 lignes) | Dépend de la complexité |
+| Fonctionnalité        | Contour de Cadrage            | Shrink Wrap                      |
+| --------------------- | ----------------------------- | -------------------------------- |
+| **Forme**             | Toujours rectangulaire        | Suit les contours des objets     |
+| **Vitesse**           | Très rapide (4 lignes)        | Dépend de la complexité          |
 | **Cas d'utilisation** | Bordures simples, coupe libre | Utilisation efficace du matériau |
-| **Flexibilité** | Rectangle fixe | S'adapte au design |
+| **Flexibilité**       | Rectangle fixe                | S'adapte au design               |
 
 **Choisissez Contour de Cadrage quand :**
 

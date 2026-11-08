@@ -8,7 +8,11 @@ from raygeo.ops.axis import Axis
 
 from rayforge.core.color import ColorSet
 from rayforge.ui_gtk.sim3d.camera import Camera
-from rayforge.ui_gtk.sim3d.render_context import FrameInputs, RenderContext
+from rayforge.ui_gtk.sim3d.render_context import (
+    FrameInputs,
+    RenderContext,
+    SceneVisibility,
+)
 from rayforge.ui_gtk.sim3d.viewport import ViewportConfig
 
 
@@ -41,11 +45,22 @@ def _update(
     show_grid=True,
     show_nogo_zones=True,
     show_models=True,
+    show_stock=True,
+    show_workpiece_image=True,
 ):
+    visibility = SceneVisibility(
+        show_travel_moves=show_travel_moves,
+        show_grid=show_grid,
+        show_nogo_zones=show_nogo_zones,
+        show_models=show_models,
+        show_stock=show_stock,
+        show_workpiece_image=show_workpiece_image,
+    )
     frame = FrameInputs(
         camera=camera or _make_camera(),
         viewport=viewport or ViewportConfig.default(),
         color_set=ColorSet(),
+        visibility=visibility,
         op_player=op_player,
         compiled_artifact=MagicMock(),
         doc=MagicMock(),
@@ -57,10 +72,6 @@ def _update(
             else _make_scene().cylinder_transform
         ),
         had_rotary_layers=scene.had_rotary_layers if scene else False,
-        show_travel_moves=show_travel_moves,
-        show_grid=show_grid,
-        show_nogo_zones=show_nogo_zones,
-        show_models=show_models,
     )
     ctx = RenderContext()
     ctx.update(frame)
@@ -228,11 +239,15 @@ def test_update_propagates_show_toggles():
         show_grid=False,
         show_nogo_zones=False,
         show_models=False,
+        show_stock=False,
+        show_workpiece_image=False,
     )
-    assert ctx.camera.show_travel_moves is True
-    assert ctx.camera.show_grid is False
-    assert ctx.camera.show_nogo_zones is False
-    assert ctx.camera.show_models is False
+    assert ctx.visibility.show_travel_moves is True
+    assert ctx.visibility.show_grid is False
+    assert ctx.visibility.show_nogo_zones is False
+    assert ctx.visibility.show_models is False
+    assert ctx.visibility.show_stock is False
+    assert ctx.visibility.show_workpiece_image is False
 
 
 @pytest.mark.ui

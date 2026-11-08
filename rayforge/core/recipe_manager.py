@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Optional
 
 import yaml
 
-from .capability import StepCapability
+from ..shared.util.atomic import atomic_write_yaml, load_yaml_with_backup
 from .recipe import Recipe
 
 if TYPE_CHECKING:
@@ -32,34 +32,41 @@ class RecipeManager:
     def load(self):
         """Loads all recipes from the base directory."""
         self.recipes.clear()
-        for file in self.base_dir.glob("*.yaml"):
-            try:
-                with open(file, "r") as f:
-                    data = yaml.safe_load(f)
-                if not data:
-                    logger.warning(
-                        f"Skipping empty or invalid recipe {file.name}"
-                    )
-                    continue
-
-                recipe = Recipe.from_dict(data)
-                # Ensure UID from file content is used, but fallback
-                # to filename
-                recipe.uid = data.get("uid", file.stem)
-                self.recipes[recipe.uid] = recipe
-
-            except Exception as e:  # noqa: BLE001 - arbitrary user YAML file
-                logger.error(f"Error loading recipe file {file.name}: {e}")
+        for file in sorted(self.base_dir.glob("*.yaml")):
+            self._load_file(file)
         logger.info(f"Loaded {len(self.recipes)} recipes.")
+
+    def _load_file(self, file: Path):
+        """Loads a single recipe file, keeping a backup-based recovery
+        path for files damaged by an interrupted write."""
+        try:
+            data, _ = load_yaml_with_backup(file)
+        except Exception as e:  # noqa: BLE001 - arbitrary user YAML file
+            logger.error(f"Error loading recipe file {file.name}: {e}")
+            return
+        if not data:
+            logger.warning(f"Skipping empty or invalid recipe {file.name}")
+            return
+        try:
+            recipe = Recipe.from_dict(data)
+            # Ensure UID from file content is used, but fallback
+            # to filename
+            recipe.uid = data.get("uid", file.stem)
+            self.recipes[recipe.uid] = recipe
+        except Exception as e:  # noqa: BLE001 - arbitrary user YAML file
+            logger.error(f"Error loading recipe file {file.name}: {e}")
 
     def save_recipe(self, recipe: Recipe):
         """Saves a single recipe to a YAML file."""
         logger.debug(f"Saving recipe {recipe.name} ({recipe.uid})")
         recipe_file = self.filename_from_id(recipe.uid)
         try:
-            with open(recipe_file, "w") as f:
-                data = recipe.to_dict()
-                yaml.safe_dump(data, f, sort_keys=False)
+            data = recipe.to_dict()
+        except Exception as e:  # noqa: BLE001 - recipe may hold user data
+            logger.error(f"Failed to serialize recipe {recipe.uid}: {e}")
+            return
+        try:
+            atomic_write_yaml(recipe_file, data)
         except (OSError, yaml.YAMLError) as e:
             logger.error(f"Failed to save recipe {recipe.uid}: {e}")
 
@@ -97,7 +104,6 @@ class RecipeManager:
     def find_recipes(
         self,
         stock_items: list["StockItem"],
-        capabilities: tuple[StepCapability, ...] | None = None,
         machine: Optional["Machine"] = None,
         step_type: str | None = None,
     ) -> list[Recipe]:
@@ -107,12 +113,10 @@ class RecipeManager:
         Args:
             stock_items: A list of StockItems. If empty, only generic recipes
                          (without material/thickness constraints) are returned.
-            capabilities: An optional filter to only return recipes for a
-                         specific set of capabilities.
             machine: An optional machine context to match against. Can be None.
             step_type: An optional step class name (as registered in
                        ``step_registry``) to match
-                       :attr:`Recipe.target_step_type` against.
+                       :attr:`Recipe.target_step_types` against.
 
         Returns:
             A list of Recipe objects, sorted by relevance.
@@ -121,9 +125,7 @@ class RecipeManager:
         candidates = [
             r
             for r in self.get_all_recipes()
-            if r.matches(
-                stock_items, capabilities, machine, step_type=step_type
-            )
+            if r.matches(stock_items, machine, step_type=step_type)
         ]
 
         # 2. Sort candidates based on their specificity score and name

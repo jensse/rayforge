@@ -16,6 +16,7 @@ from gi.repository import Adw, Gtk
 
 from ....machine.device.profile import DeviceProfile
 from ....machine.models.machine import Origin
+from ....machine.models.machine_panel import PanelOrientation
 from ...shared.pref_rows.acceleration_spin_row import AccelerationSpinRow
 from ...shared.pref_rows.length_spin_row import LengthSpinRow
 from ...shared.pref_rows.speed_spin_row import SpeedSpinRow
@@ -28,6 +29,7 @@ _ORIGIN_INDEX_TO_ENUM = {
     3: Origin.BOTTOM_RIGHT,
 }
 _ORIGIN_ENUM_TO_INDEX = {v: k for k, v in _ORIGIN_INDEX_TO_ENUM.items()}
+_PANEL_ORIENTATIONS = tuple(PanelOrientation)
 
 # Sensible starting points surfaced when a profile carries no values;
 # they mirror the Machine model defaults (machine.py).
@@ -37,7 +39,7 @@ _DEFAULT_ACCELERATION = 1000.0
 
 
 class HardwarePage(WizardPage):
-    step_number = 7
+    step_number = 8
     title = _("Hardware")
     subtitle = _("Work area, origin, speeds and acceleration.")
 
@@ -87,17 +89,36 @@ class HardwarePage(WizardPage):
         )
         axes_group.add(self.origin_row)
 
+        self.panel_orientation_row = Adw.ComboRow(
+            title=_("Panel Orientation"),
+            subtitle=_(
+                "Rotate the flat workspace and remap output to the "
+                "machine; rotary layers require Native"
+            ),
+            model=Gtk.StringList.new([o.label for o in _PANEL_ORIENTATIONS]),
+        )
+        axes_group.add(self.panel_orientation_row)
+
         # Direction reversals.
         self.reverse_x_row = Adw.SwitchRow(
             title=_("Reverse X-Axis Direction"),
-            subtitle=_("Makes coordinate values negative"),
+            subtitle=_("Machine coordinates count down from the origin"),
         )
         axes_group.add(self.reverse_x_row)
         self.reverse_y_row = Adw.SwitchRow(
             title=_("Reverse Y-Axis Direction"),
-            subtitle=_("Makes coordinate values negative"),
+            subtitle=_("Machine coordinates count down from the origin"),
         )
         axes_group.add(self.reverse_y_row)
+        self.has_z_row = Adw.SwitchRow(
+            title=_("Has Z-Axis"),
+            subtitle=_(
+                "Enable if this machine has a Z axis (focus motor, "
+                "movable bed)"
+            ),
+        )
+        self.has_z_row.connect("notify::active", self._on_has_z_toggled)
+        axes_group.add(self.has_z_row)
         self.reverse_z_row = Adw.SwitchRow(
             title=_("Reverse Z-Axis Direction"),
             subtitle=_("Enable if +Z moves head down"),
@@ -142,14 +163,16 @@ class HardwarePage(WizardPage):
             title=_("Soft Limits"),
             description=_(
                 "Configurable safety bounds for jogging. "
-                "Leave disabled to use work surface bounds."
+                "Leave disabled to jog without limit checks."
             ),
         )
         self.content.append(self.soft_limits_group)
 
         self.soft_limits_enabled_row = Adw.SwitchRow(
-            title=_("Enable Custom Soft Limits"),
-            subtitle=_("Override work-surface bounds with custom limits"),
+            title=_("Enable Soft Limits"),
+            subtitle=_(
+                "Limit jogging to custom bounds instead of the work surface"
+            ),
         )
         self.soft_limits_enabled_row.connect(
             "notify::active", self._on_soft_limits_toggle
@@ -157,16 +180,36 @@ class HardwarePage(WizardPage):
         self.soft_limits_group.add(self.soft_limits_enabled_row)
 
         self.soft_x_min_row = self._build_soft_limit_row(
-            _("X Min"), _("Minimum X coordinate")
+            _("X Min Distance from Origin"),
+            _(
+                "Distance from the origin corner into the bed "
+                "(not a coordinate). Fixed to the physical bed, "
+                "independent of the WCS."
+            ),
         )
         self.soft_y_min_row = self._build_soft_limit_row(
-            _("Y Min"), _("Minimum Y coordinate")
+            _("Y Min Distance from Origin"),
+            _(
+                "Distance from the origin corner into the bed "
+                "(not a coordinate). Fixed to the physical bed, "
+                "independent of the WCS."
+            ),
         )
         self.soft_x_max_row = self._build_soft_limit_row(
-            _("X Max"), _("Maximum X coordinate")
+            _("X Max Distance from Origin"),
+            _(
+                "Distance from the origin corner into the bed "
+                "(not a coordinate). Fixed to the physical bed, "
+                "independent of the WCS."
+            ),
         )
         self.soft_y_max_row = self._build_soft_limit_row(
-            _("Y Max"), _("Maximum Y coordinate")
+            _("Y Max Distance from Origin"),
+            _(
+                "Distance from the origin corner into the bed "
+                "(not a coordinate). Fixed to the physical bed, "
+                "independent of the WCS."
+            ),
         )
 
         # Speeds / accel.
@@ -271,6 +314,11 @@ class HardwarePage(WizardPage):
         self.soft_x_max_row.set_sensitive(enabled)
         self.soft_y_max_row.set_sensitive(enabled)
 
+    def _on_has_z_toggled(self, row, _param) -> None:
+        has_z = row.get_active()
+        self.reverse_z_row.set_visible(has_z)
+        self.reverse_z_row.set_active(False)
+
     # ----- profile binding -----------------------------------------------
 
     def enter(self, profile: DeviceProfile) -> None:
@@ -286,12 +334,21 @@ class HardwarePage(WizardPage):
         origin = mc.origin or Origin.BOTTOM_LEFT
         self.origin_row.set_selected(_ORIGIN_ENUM_TO_INDEX.get(origin, 0))
 
+        orientation = mc.panel_orientation or PanelOrientation.NATIVE
+        self.panel_orientation_row.set_selected(
+            _PANEL_ORIENTATIONS.index(orientation)
+        )
+
         # directional reversal flags aren't on MachineConfig; they live
         # on Machine directly. We treat them as ephemeral session state
         # via wizard.aux_state, defaulting to False.
         reverse = self.wizard.aux_state.setdefault("reverse", {})
         self.reverse_x_row.set_active(reverse.get("x", False))
         self.reverse_y_row.set_active(reverse.get("y", False))
+
+        has_z = mc.has_z if mc.has_z is not None else True
+        self.has_z_row.set_active(has_z)
+        self.reverse_z_row.set_visible(has_z)
         self.reverse_z_row.set_active(reverse.get("z", False))
 
         margins = mc.work_margins or (0.0, 0.0, 0.0, 0.0)
@@ -301,14 +358,17 @@ class HardwarePage(WizardPage):
         self.margin_bottom_row.set_value_in_base_units(margins[3])
 
         soft = mc.soft_limits
+        if mc.soft_limits_enabled is not None:
+            enabled = mc.soft_limits_enabled
+        else:
+            enabled = soft is not None
+        self.soft_limits_enabled_row.set_active(enabled)
         if soft:
-            self.soft_limits_enabled_row.set_active(True)
             self.soft_x_min_row.set_value_in_base_units(soft[0])
             self.soft_y_min_row.set_value_in_base_units(soft[1])
             self.soft_x_max_row.set_value_in_base_units(soft[2])
             self.soft_y_max_row.set_value_in_base_units(soft[3])
         else:
-            self.soft_limits_enabled_row.set_active(False)
             self.soft_x_min_row.set_value_in_base_units(0.0)
             self.soft_y_min_row.set_value_in_base_units(0.0)
             self.soft_x_max_row.set_value_in_base_units(
@@ -350,6 +410,9 @@ class HardwarePage(WizardPage):
         mc.origin = _ORIGIN_INDEX_TO_ENUM.get(
             self.origin_row.get_selected(), Origin.BOTTOM_LEFT
         )
+        orientation_index = self.panel_orientation_row.get_selected()
+        if orientation_index < len(_PANEL_ORIENTATIONS):
+            mc.panel_orientation = _PANEL_ORIENTATIONS[orientation_index]
 
         # stash reversals to aux_state (defers to Machine during
         # create_machine); the orchestrator applies them post-creation.
@@ -357,6 +420,8 @@ class HardwarePage(WizardPage):
         reverse["x"] = self.reverse_x_row.get_active()
         reverse["y"] = self.reverse_y_row.get_active()
         reverse["z"] = self.reverse_z_row.get_active()
+
+        mc.has_z = self.has_z_row.get_active()
 
         margins = (
             self.margin_left_row.get_value_in_base_units(),
@@ -370,6 +435,7 @@ class HardwarePage(WizardPage):
             mc.work_margins = None
 
         if self.soft_limits_enabled_row.get_active():
+            mc.soft_limits_enabled = True
             mc.soft_limits = (
                 self.soft_x_min_row.get_value_in_base_units(),
                 self.soft_y_min_row.get_value_in_base_units(),
@@ -377,6 +443,7 @@ class HardwarePage(WizardPage):
                 self.soft_y_max_row.get_value_in_base_units(),
             )
         else:
+            mc.soft_limits_enabled = False
             mc.soft_limits = None
 
         travel = self.travel_speed_row.get_value_in_base_units()

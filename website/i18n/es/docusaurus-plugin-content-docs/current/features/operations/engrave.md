@@ -1,6 +1,8 @@
 # Grabado
 
-Las operaciones de grabado rellenan áreas con líneas de escaneo rasterizado, soportando múltiples modos para diferentes efectos de grabado. Desde fotos suaves en escala de grises hasta efectos de relieve 3D, elige el modo que mejor se adapte a tu diseño y material.
+Las operaciones de grabado rellenan áreas con líneas de escaneo rasterizado, soportando múltiples
+modos para diferentes efectos de grabado. Desde fotos suaves en escala de grises hasta efectos de
+relieve 3D, elige el modo que mejor se adapte a tu diseño y material.
 
 ## Resumen
 
@@ -16,7 +18,8 @@ Las operaciones de grabado:
 
 ### Modo de Potencia Variable
 
-El modo de Potencia Variable varía la potencia del láser continuamente basándose en el brillo de la imagen, creando un grabado suave en escala de grises con transiciones graduales.
+El modo de Potencia Variable varía la potencia del láser continuamente basándose en el brillo de la
+imagen, creando un grabado suave en escala de grises con transiciones graduales.
 
 **Mejor Para:**
 
@@ -34,7 +37,8 @@ El modo de Potencia Variable varía la potencia del láser continuamente basánd
 
 ### Modo de Potencia Constante
 
-El modo de Potencia Constante graba a plena potencia, con un umbral que determina qué píxeles se graban. Esto crea resultados limpios en blanco/negro.
+El modo de Potencia Constante graba a plena potencia, con un umbral que determina qué píxeles se
+graban. Esto crea resultados limpios en blanco/negro.
 
 **Mejor Para:**
 
@@ -52,7 +56,9 @@ El modo de Potencia Constante graba a plena potencia, con un umbral que determin
 
 ### Modo Trama
 
-El modo Trama convierte imágenes en escala de grises a patrones binarios usando algoritmos de tramado, permitiendo un grabado de fotos de alta calidad con mejor reproducción tonal que los métodos simples basados en umbral.
+El modo Trama convierte imágenes en escala de grises a patrones binarios usando algoritmos de
+tramado, permitiendo un grabado de fotos de alta calidad con mejor reproducción tonal que los
+métodos simples basados en umbral.
 
 **Mejor Para:**
 
@@ -70,7 +76,8 @@ El modo Trama convierte imágenes en escala de grises a patrones binarios usando
 
 ### Modo Múltiples Profundidades
 
-El modo Múltiples Profundidades crea efectos de relieve 3D variando la potencia del láser basándose en el brillo de la imagen, con múltiples pasadas para un tallado más profundo.
+El modo Múltiples Profundidades crea efectos de relieve 3D variando la potencia del láser basándose
+en el brillo de la imagen, con múltiples pasadas para un tallado más profundo.
 
 **Mejor Para:**
 
@@ -132,21 +139,24 @@ Selecciona el modo de grabado que mejor se adapte a tus necesidades:
 
 ### Paso 4: Configurar Ajustes
 
-![Ajustes de paso de grabado](/screenshots/step-settings-engrave-general-variable.png)
+![Ajustes de paso de grabado](/screenshots/step-settings-engrave-general-variable.webp)
 
 ## Ajustes de Grabado
 
-Los grupos **Grabado** y **Potencia** en la pestaña _Ajustes de Paso_ controlan el patrón de escaneo, el modo y la modulación de potencia, en orden de filas. La potencia y la velocidad del láser se encuentran en la página **Láser** (ver abajo).
+Los grupos **Grabado** y **Potencia** en la pestaña _Ajustes de Paso_ controlan el patrón de
+escaneo, el modo y la modulación de potencia, en orden de filas. La potencia y la velocidad del
+láser se encuentran en la página **Láser** (ver abajo).
 
 ### Modo
 
-La fila **Modo** selecciona uno de los cuatro modos de grabado. Cada modo expone diferentes ajustes, descritos a continuación.
+La fila **Modo** selecciona uno de los cuatro modos de grabado. Cada modo expone diferentes ajustes,
+descritos a continuación.
 
 ### Ajustes Específicos del Modo
 
 #### Ajustes del Modo Potencia Variable
 
-![Ajustes del modo Potencia Variable](/screenshots/step-settings-engrave-general-variable.png)
+![Ajustes del modo Potencia Variable](/screenshots/step-settings-engrave-general-variable.webp)
 
 **Potencia Mín (%):**
 
@@ -168,19 +178,23 @@ La fila **Modo** selecciona uno de los cuatro modos de grabado. Cada modo expone
 | 10% | 60% | Profundidad media, seguro   |
 | 20% | 80% | Profundo, relieve dramático |
 
-**Invertir:**
+**Invertir la imagen:**
 
-- **Apagado** (predeterminado): Blanco = superficial, Negro = profundo
-- **Encendido**: Blanco = profundo, Negro = superficial
-
-Usa invertir para litofanías (las áreas claras deben ser delgadas) o repujado (áreas elevadas).
+El negro se graba en profundidad y el blanco queda superficial. Para invertirlos, para litofanías
+(las áreas claras deben ser delgadas) o repujado (áreas elevadas), selecciona la pieza y usa
+**Tools - Invert Image**. Consulta [Edición de imágenes](../../addons/image-editing.md).
 
 **Rango de Brillo:**
 
-Controla cómo se mapean los valores de brillo de la imagen a la potencia del láser. El histograma muestra la distribución de valores de brillo en tu imagen.
+Controla cómo se mapean los valores de brillo de la imagen a la potencia del láser. El histograma
+muestra la distribución de valores de brillo en tu imagen.
 
-- **Auto Niveles** (predeterminado): Ajusta automáticamente los puntos de negro y blanco basándose en el contenido de la imagen. Los valores por debajo del punto de negro se tratan como negro, los valores por encima del punto de blanco se tratan como blanco. Esto estira el contraste de la imagen para usar todo el rango de potencia.
-- **Modo Manual**: Deshabilita Auto Niveles para configurar manualmente los puntos de negro y blanco arrastrando los marcadores en el histograma.
+- **Auto Niveles** (predeterminado): Ajusta automáticamente los puntos de negro y blanco basándose
+  en el contenido de la imagen. Los valores por debajo del punto de negro se tratan como negro, los
+  valores por encima del punto de blanco se tratan como blanco. Esto estira el contraste de la
+  imagen para usar todo el rango de potencia.
+- **Modo Manual**: Deshabilita Auto Niveles para configurar manualmente los puntos de negro y blanco
+  arrastrando los marcadores en el histograma.
 
 Esto es particularmente útil para:
 
@@ -190,7 +204,7 @@ Esto es particularmente útil para:
 
 #### Ajustes del Modo Potencia Constante
 
-![Ajustes del modo Potencia Constante](/screenshots/step-settings-engrave-general-constant_power.png)
+![Ajustes del modo Potencia Constante](/screenshots/step-settings-engrave-general-constant_power.webp)
 
 **Umbral (0-255):**
 
@@ -205,26 +219,47 @@ Esto es particularmente útil para:
 
 #### Ajustes del Modo Trama
 
-![Ajustes del modo Trama](/screenshots/step-settings-engrave-general-dither.png)
+![Ajustes del modo Trama](/screenshots/step-settings-engrave-general-dither.webp)
 
 **Algoritmo de Tramado:**
 
 Elige el algoritmo que mejor se adapte a tu imagen y material:
 
-| Algoritmo       | Calidad | Velocidad  | Mejor Para                         |
-| --------------- | ------- | ---------- | ---------------------------------- |
-| Floyd-Steinberg | Máxima  | Más lento  | Fotos, retratos, degradados suaves |
-| Bayer 2x2       | Baja    | Más rápido | Efecto de media tinta grueso       |
-| Bayer 4x4       | Media   | Rápido     | Media tinta equilibrada            |
-| Bayer 8x8       | Alta    | Media      | Detalle fino, patrones sutiles     |
+| Algoritmo                       | Calidad | Velocidad  | Mejor Para                                  |
+| ------------------------------- | ------- | ---------- | ------------------------------------------- |
+| Floyd-Steinberg                 | Máxima  | Más lento  | Fotos, retratos, degradados suaves          |
+| Bayer 2x2                       | Baja    | Más rápido | Efecto de media tinta grueso                |
+| Bayer 4x4                       | Media   | Rápido     | Media tinta equilibrada                     |
+| Bayer 8x8                       | Alta    | Media      | Detalle fino, patrones sutiles              |
+| Atkinson                        | Media   | Media      | Imágenes de alto contraste, madera          |
+| Stucki                          | Máxima  | Lento      | Retratos, tonos de piel suaves              |
+| Jarvis, Judice y Ninke          | Máxima  | Lento      | Degradados suaves, grano fino               |
+| Sierra (3 filas, 2 filas, Lite) | Alta    | Media      | Alternativas más ligeras a Stucki           |
+| Burkes                          | Alta    | Media      | Fotos, más rápido que Stucki                |
+| Papel prensa                    | Media   | Más rápido | Puntos agrupados al estilo periódico        |
+| Semitono                        | Media   | Rápido     | Puntos redondos, tamaño y ángulo ajustables |
 
-**Floyd-Steinberg** es el predeterminado y el recomendado para la mayoría de los grabados de fotos. Usa difusión de error para distribuir los errores de cuantización a los píxeles vecinos, creando resultados de aspecto natural.
+**Floyd-Steinberg** es el predeterminado y el recomendado para la mayoría de los grabados de fotos.
+Usa difusión de error para distribuir los errores de cuantización a los píxeles vecinos, creando
+resultados de aspecto natural.
 
-**El tramado Bayer** crea patrones regulares que pueden producir efectos artísticos que asemejan la impresión tradicional de media tinta.
+**El tramado Bayer** crea patrones regulares que pueden producir efectos artísticos que asemejan la
+impresión tradicional de media tinta.
+
+**Stucki, Jarvis, Sierra, Burkes y Atkinson** son algoritmos de difusión de error como
+Floyd-Steinberg que reparten el error en un entorno más amplio, lo que da un grano más uniforme en
+zonas planas como los tonos de piel. Atkinson solo difunde parte del error, lo que aumenta el
+contraste. Activa **Serpentina** para alternar la dirección de barrido en cada fila y evitar rayas
+direccionales.
+
+**Papel prensa** y **Semitono** agrupan los píxeles en puntos. Semitono dibuja puntos redondos sobre
+una cuadrícula definida por **Tamaño de celda del semitono** (la distancia entre los centros de los
+puntos) y **Ángulo del semitono**; usa un tamaño de celda de al menos varias veces el ancho del
+punto láser.
 
 #### Ajustes del Modo Múltiples Profundidades
 
-![Ajustes del modo Múltiples Profundidades](/screenshots/step-settings-engrave-general-multi_pass.png)
+![Ajustes del modo Múltiples Profundidades](/screenshots/step-settings-engrave-general-multi_pass.webp)
 
 **Número de Niveles de Profundidad:**
 
@@ -244,12 +279,11 @@ Elige el algoritmo que mejor se adapte a tu imagen y material:
 - Crea un efecto 3D tipo entramado cruzado
 - Típico: 0-45 grados
 
-**Invertir:**
+**Invertir la imagen:**
 
-- **Habilitado:** Blanco = profundo, Negro = superficial
-- **Deshabilitado:** Negro = profundo, Blanco = superficial
-
-Usa invertir para litofanías (las áreas claras deben ser delgadas) o repujado (áreas elevadas).
+El negro se graba en profundidad y el blanco queda superficial. Para invertirlos, para litofanías
+(las áreas claras deben ser delgadas) o repujado (áreas elevadas), selecciona la pieza y usa
+**Tools - Invert Image**. Consulta [Edición de imágenes](../../addons/image-editing.md).
 
 ### Patrón de Escaneo
 
@@ -270,10 +304,12 @@ Usa invertir para litofanías (las áreas claras deben ser delgadas) o repujado 
 
 **Recomendado:** 0.1mm para uso general
 
-:::tip Coincidencia de Resolución
+<!-- prettier-ignore-start -->
+:::tip[Coincidencia de Resolución]
+Para imágenes, el intervalo de línea debe coincidir o exceder la resolución de la imagen. Si tu
+imagen es de 10 píxeles/mm (254 DPI), usa un intervalo de línea de 0.1mm o menor.
 :::
-
-Para imágenes, el intervalo de línea debe coincidir o exceder la resolución de la imagen. Si tu imagen es de 10 píxeles/mm (254 DPI), usa un intervalo de línea de 0.1mm o menor.
+<!-- prettier-ignore-end -->
 
 #### Dirección de Escaneo
 
@@ -292,29 +328,45 @@ Para imágenes, el intervalo de línea debe coincidir o exceder la resolución d
 
 **Escaneo Bidireccional:**
 
-Rayforge siempre escanea de forma bidireccional (de izquierda a derecha y luego de derecha a izquierda), ya que disparar en cada pasada aproximadamente duplica la velocidad de grabado comparado con regresar sin disparar entre líneas.
+Rayforge siempre escanea de forma bidireccional (de izquierda a derecha y luego de derecha a
+izquierda), ya que disparar en cada pasada aproximadamente duplica la velocidad de grabado comparado
+con regresar sin disparar entre líneas.
 
-Pequeñas diferencias mecánicas o de retardo de disparo entre las dos direcciones pueden causar bandas visibles en algunas máquinas. Si ves esto, calibra el **Desplazamiento de Escaneo Bidireccional** de abajo para corregirlo directamente, en lugar de perder el beneficio de velocidad.
+Pequeñas diferencias mecánicas o de retardo de disparo entre las dos direcciones pueden causar
+bandas visibles en algunas máquinas. Si ves esto, calibra el **Desplazamiento de Escaneo
+Bidireccional** de abajo para corregirlo directamente, en lugar de perder el beneficio de velocidad.
 
-#### Desplazamiento de Escaneo Bidireccional
+#### Desplazamiento de Escaneo Bidireccional {#bidirectional-scan-offset}
 
-Corrige un sesgo fijo mecánico o de retardo de disparo entre las pasadas raster de izquierda a derecha y de derecha a izquierda, que de otro modo desalinea filas de escaneo alternas (visible como bandas, especialmente en grabados de fotos).
+Corrige un sesgo fijo mecánico o de retardo de disparo entre las pasadas raster de izquierda a
+derecha y de derecha a izquierda, que de otro modo desalinea filas de escaneo alternas (visible como
+bandas, especialmente en grabados de fotos).
 
 - Se configura en milímetros, positivo o negativo dependiendo de qué dirección necesita desplazarse
-- Aplica un desplazamiento constante independientemente de la velocidad; si el sesgo varía con la velocidad, calibra para tu velocidad de grabado típica
+- Un valor distinto de cero aquí siempre gana; cuando es 0, el paso recurre a la tabla
+  [Desplazamiento de Escaneo Bidireccional por Velocidad](../../machine/advanced.md#bidirectional-scan-offset-by-speed)
+  de la máquina, que interpola un desplazamiento para la velocidad de este paso
 - El valor predeterminado es 0 (sin corrección)
 
 **Calibrando el desplazamiento:**
 
-1. Graba un patrón de prueba con detalle vertical visible (por ejemplo, una cuadrícula fina) usando escaneo bidireccional
+1. Graba un patrón de prueba con detalle vertical visible (por ejemplo, una cuadrícula fina) usando
+   escaneo bidireccional
 2. Compara las filas alternas para encontrar la dirección y la cantidad de desalineación
-3. Ajusta el desplazamiento en pequeños incrementos (0.01-0.05mm) y vuelve a probar hasta que las filas alternas se alineen
+3. Ajusta el desplazamiento en pequeños incrementos (0.01-0.05mm) y vuelve a probar hasta que las
+   filas alternas se alineen
+
+Si la desalineación cambia notablemente entre tus velocidades de grabado habituales, un único
+desplazamiento no puede corregir todos los trabajos. Deja el desplazamiento del paso en 0 y
+configura en su lugar una tabla de desplazamiento dependiente de la velocidad en
+[Ajustes de Máquina - Avanzado](../../machine/advanced.md#bidirectional-scan-offset-by-speed).
 
 ## Ajustes del Láser
 
-![Ajustes del láser](/screenshots/step-settings-engrave-laser.png)
+![Ajustes del láser](/screenshots/step-settings-engrave-laser.webp)
 
-La potencia, la velocidad y la selección del cabezal láser se encuentran en la página **Láser** del diálogo de ajustes de paso.
+La potencia, la velocidad y la selección del cabezal láser se encuentran en la página **Láser** del
+diálogo de ajustes de paso.
 
 ### Potencia y Velocidad
 
@@ -331,11 +383,12 @@ La potencia, la velocidad y la selección del cabezal láser se encuentran en la
 
 ## Post-Procesamiento
 
-![Ajustes de post-procesamiento de grabado](/screenshots/step-settings-engrave-post.png)
+![Ajustes de post-procesamiento de grabado](/screenshots/step-settings-engrave-post.webp)
 
 Las operaciones de grabado soportan varias opciones de post-procesamiento:
 
-- **[Overscan](../overscan.md)** - Extiende las líneas rasterizadas para una calidad de grabado consistente
+- **[Overscan](../overscan.md)** - Extiende las líneas rasterizadas para una calidad de grabado
+  consistente
 - **[Optimización de Trayectoria](../path-optimization.md)** - Reduce la distancia de viaje
 - **[Multi-Pasada](../multi-pass.md)** - Repite el grabado para resultados más profundos
 
@@ -411,7 +464,7 @@ Ver [Overscan](../overscan.md) para detalles.
 
 **Bandas (rayas oscuras/claras):**
 
-- Calibra el [Desplazamiento de Escaneo Bidireccional](#desplazamiento-de-escaneo-bidireccional)
+- Calibra el [Desplazamiento de Escaneo Bidireccional](#bidirectional-scan-offset)
 - Revisa la tensión de las correas
 - Reduce la velocidad
 - Prueba un ángulo de escaneo diferente

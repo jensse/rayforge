@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from gettext import gettext as _
 from typing import (
     TYPE_CHECKING,
@@ -13,6 +13,7 @@ from raygeo.geo import Geometry
 from ..core.undo import HistoryManager
 from .asset import IAsset, UnknownAsset
 from .color import COLOR_PALETTE
+from .image_edit import ImageEditStep, missing_image_edit_ops
 from .item import DocItem
 from .layer import Layer
 from .source_asset import SourceAsset
@@ -145,6 +146,7 @@ class Doc(DocItem):
 
         doc.set_children(children)
         doc._active_layer_index = data.get("active_layer_index", 0)
+        doc.adopt_legacy_image_edits()
 
         return doc
 
@@ -279,6 +281,34 @@ class Doc(DocItem):
     def layers(self) -> list[Layer]:
         """Returns a list of all child items that are Layers."""
         return [child for child in self.children if isinstance(child, Layer)]
+
+    @staticmethod
+    def is_default_layer_name(name: str) -> bool:
+        """
+        Returns True for names produced by this document's auto-naming
+        scheme, such as "Layer 1".
+
+        Layers created by :meth:`Doc.__init__` are named this way. They
+        were never manually renamed, so their names may be overwritten
+        with imported layer names.
+        """
+        base = _("Layer")
+        if name == base:
+            return True
+        if not name.startswith(base):
+            return False
+        return name[len(base) :].strip().isdigit()
+
+    @property
+    def has_rotary_layer(self) -> bool:
+        """Whether any layer has rotary mode enabled.
+
+        Doc-level fact used to skip the per-layer kinematic walk in
+        :meth:`KinematicMapping.apply_to_job_ops` for flat jobs, since
+        that walk forces a copy-on-write clone of the command array for
+        every layer even when the callback does nothing.
+        """
+        return any(layer.rotary_enabled for layer in self.layers)
 
     @property
     def all_workpieces(self) -> list[WorkPiece]:
@@ -484,6 +514,28 @@ class Doc(DocItem):
         return None
 
     @property
+    def missing_image_edit_ops(self) -> set[str]:
+        """Image edit op names used by workpieces but not registered."""
+        missing: set[str] = set()
+        for wp in self.all_workpieces:
+            missing |= missing_image_edit_ops(wp.image_edits)
+        return missing
+
+    def adopt_legacy_image_edits(self) -> None:
+        """
+        Moves image edits that older files kept as step settings onto
+        the workpieces of the step's layer. Steps hand them over only
+        once, so this is safe to call after every load.
+        """
+        for layer in self.layers:
+            if not layer.workflow:
+                continue
+            for step in layer.workflow.steps:
+                edits = step.pop_legacy_image_edits()
+                if edits:
+                    _append_image_edits(layer.all_workpieces, edits)
+
+    @property
     def missing_step_types(self) -> set[str]:
         """Step type names referenced but not registered in step_registry."""
         from .step_registry import step_registry
@@ -496,3 +548,12 @@ class Doc(DocItem):
                     if step_registry.get(name) is None:
                         missing.add(step.original_step_type or step.typelabel)
         return missing
+
+
+def _append_image_edits(
+    workpieces: Iterable[WorkPiece], edits: Sequence[ImageEditStep]
+) -> None:
+    for wp in workpieces:
+        new = [e for e in edits if e not in wp.image_edits]
+        if new:
+            wp.image_edits = (*wp.image_edits, *new)

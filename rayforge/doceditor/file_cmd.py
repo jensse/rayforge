@@ -24,10 +24,11 @@ from raygeo.geo.types import Point, Rect
 from raygeo.ops.state import CoolantMode
 
 from ..context import get_context
+from ..core.doc import Doc
 from ..core.item import DocItem
 from ..core.layer import Layer
 from ..core.source_asset import SourceAsset
-from ..core.undo import ListItemCommand
+from ..core.undo import ChangePropertyCommand, ListItemCommand
 from ..core.vectorization_spec import (
     LayerImportMode,
     PassthroughSpec,
@@ -52,7 +53,6 @@ from .layout.align import PositionAtStrategy
 
 if TYPE_CHECKING:
     from ..core.asset import IAsset
-    from ..core.doc import Doc
     from ..doceditor.editor import DocEditor
     from ..machine.models.machine import Machine
     from ..shared.tasker.manager import TaskManager
@@ -124,12 +124,15 @@ class FileCmd:
     ) -> tuple[type[Importer] | None, set[ImporterFeature]]:
         """
         Finds the importer for a file and returns its class and feature set.
+
+        A generic MIME type carries no format information, so it never
+        shadows a match by file extension.
         """
         if not mime_type:
             mime_type, _ = mimetypes.guess_type(file_path)
 
         importer_cls = None
-        if mime_type:
+        if mime_type and mime_type != "application/octet-stream":
             importer_cls = importer_registry.get_by_mime_type(mime_type)
 
         if not importer_cls and file_path.suffix:
@@ -497,6 +500,97 @@ class FileCmd:
 
         return pairs
 
+    def _plan_layer_renames(
+        self,
+        items: list[DocItem],
+        mode: LayerImportMode,
+        existing_layers: list[Layer],
+    ) -> list[tuple[Layer, str]]:
+        """
+        Plan renames of default-named destination layers that receive
+        content from imported layers.
+
+        Only applies in ``MAP_TO_EXISTING`` mode: an existing layer is
+        renamed to the imported layer name if it still carries an
+        auto-generated default name.
+
+        Returns a list of (layer, new_name) pairs.
+        """
+        if mode != LayerImportMode.MAP_TO_EXISTING:
+            return []
+        renames: list[tuple[Layer, str]] = []
+        for idx, item in enumerate(items):
+            if idx >= len(existing_layers):
+                break
+            dest = existing_layers[idx]
+            if (
+                isinstance(item, Layer)
+                and Doc.is_default_layer_name(dest.name)
+                and item.name != dest.name
+            ):
+                renames.append((dest, item.name))
+        return renames
+
+    @staticmethod
+    def _layer_import_mode(
+        vectorization_spec: VectorizationSpec | None,
+    ) -> LayerImportMode:
+        """Returns the layer import mode of the given spec."""
+        mode = LayerImportMode.NEW_LAYERS
+        if isinstance(vectorization_spec, PassthroughSpec):
+            mode = vectorization_spec.layer_import_mode
+        return mode
+
+    def _commit_items(
+        self,
+        items: list[DocItem],
+        mode: LayerImportMode,
+        cmd_name: str,
+        target_layer: Layer | None = None,
+    ) -> list[Layer]:
+        """
+        Adds the imported items to the document model using the history
+        manager, resolving destinations and planning layer renames.
+
+        Returns the list of destination layers that received items.
+        """
+        pairs = self._resolve_destinations(items, mode, target_layer)
+        renames = self._plan_layer_renames(
+            items, mode, self._editor.doc.layers
+        )
+
+        with self._editor.history_manager.transaction(cmd_name) as t:
+            for owner, item in pairs:
+                t.execute(
+                    ListItemCommand(
+                        owner_obj=owner,
+                        item=item,
+                        undo_command="remove_child",
+                        redo_command="add_child",
+                    )
+                )
+            for layer, new_name in renames:
+                t.execute(
+                    ChangePropertyCommand(
+                        target=layer,
+                        property_name="name",
+                        new_value=new_name,
+                        setter_method_name="set_name",
+                        name=_("Rename layer"),
+                    )
+                )
+
+        dest_layers = []
+        seen = set()
+        for owner, item in pairs:
+            if isinstance(owner, Layer) and owner.uid not in seen:
+                dest_layers.append(owner)
+                seen.add(owner.uid)
+            elif isinstance(item, Layer) and item.uid not in seen:
+                dest_layers.append(item)
+                seen.add(item.uid)
+        return dest_layers
+
     def _commit_items_to_document(
         self,
         items: list[DocItem],
@@ -519,34 +613,8 @@ class FileCmd:
                 self._editor.doc.add_asset(asset)
 
         cmd_name = _("Import {filename}").format(filename=filename.name)
-
-        mode = LayerImportMode.NEW_LAYERS
-        if isinstance(vectorization_spec, PassthroughSpec):
-            mode = vectorization_spec.layer_import_mode
-
-        pairs = self._resolve_destinations(items, mode)
-
-        with self._editor.history_manager.transaction(cmd_name) as t:
-            for owner, item in pairs:
-                t.execute(
-                    ListItemCommand(
-                        owner_obj=owner,
-                        item=item,
-                        undo_command="remove_child",
-                        redo_command="add_child",
-                    )
-                )
-
-        dest_layers = []
-        seen = set()
-        for owner, _item in pairs:
-            if isinstance(owner, Layer) and owner.uid not in seen:
-                dest_layers.append(owner)
-                seen.add(owner.uid)
-            elif isinstance(_item, Layer) and _item.uid not in seen:
-                dest_layers.append(_item)
-                seen.add(_item.uid)
-        return dest_layers
+        mode = self._layer_import_mode(vectorization_spec)
+        return self._commit_items(items, mode, cmd_name)
 
     def _finalize_import_on_main_thread(
         self,
@@ -869,12 +937,10 @@ class FileCmd:
         machine = config.machine
         # Position at reference origin
         # The reference origin is where the user expects (0,0) to be.
-        # get_reference_position_world returns WORLD coords of the reference
-        # origin. We use world_position_from_origin to handle origin corner
-        # adjustment.
-        ref_x, ref_y = machine.get_reference_position_world()
-        space = machine.get_coordinate_space()
-        target_x, target_y = space.world_position_from_origin(
+        # The panel gives us the reference origin in world coords; we use
+        # world_position_from_origin to handle origin corner adjustment.
+        ref_x, ref_y = machine.panel.reference_position_world
+        target_x, target_y = machine.panel.world_position_from_origin(
             ref_x, ref_y, (bbox_w, bbox_h)
         )
 
@@ -1288,28 +1354,9 @@ class FileCmd:
         """
         self._position_newly_imported_items(items, position_mm)
 
-        mode = LayerImportMode.NEW_LAYERS
-        if isinstance(vectorization_spec, PassthroughSpec):
-            mode = vectorization_spec.layer_import_mode
-        pairs = self._resolve_destinations(items, mode, target_layer)
-
-        cmd_name = _("Re-Import")
-        with self._editor.history_manager.transaction(cmd_name) as t:
-            for owner, item in pairs:
-                t.execute(
-                    ListItemCommand(
-                        owner_obj=owner,
-                        item=item,
-                        undo_command="remove_child",
-                        redo_command="add_child",
-                    )
-                )
-
-        dest_layers = []
-        seen = set()
-        for owner, _item in pairs:
-            if isinstance(owner, Layer) and owner.uid not in seen:
-                dest_layers.append(owner)
-                seen.add(owner.uid)
+        mode = self._layer_import_mode(vectorization_spec)
+        dest_layers = self._commit_items(
+            items, mode, _("Re-Import"), target_layer=target_layer
+        )
         if dest_layers:
             self._editor.step.add_default_steps_for_layers(dest_layers)

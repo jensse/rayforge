@@ -6,60 +6,64 @@ platforms = ["linux-64", "osx-arm64"]
 
 [environments]
 default = { features = ["app", "test"], solve-group = "default" }
+appimage = { features = ["app"], solve-group = "default" }
 website = { features = ["website"], solve-group = "default" }
 build = { features = ["build-tools"], solve-group = "build" }
 video = { features = ["video-tools"], solve-group = "video" }
 
 [feature.app.dependencies]
-adwaita-icon-theme = "==49.0"
-glib = "==2.88.3"
-cairo = "==1.18.4"
-expat = "==2.8.1"
+adwaita-icon-theme = "==51.0"
+glib = "==2.90.0"
+cairo = "==1.18.6"
+expat = "==2.8.5"
 gettext = "==0.25.1"
 gobject-introspection = "==1.86.0"
-gtk4 = "==4.22.4"
-libheif = "==1.23.1"
-libvips = "==8.18.5"
+gtk4 = "==4.24.1"
+libheif = "==1.23.6"
+libvips = "==8.18.7"
 openslide = "==4.0.1"
 poppler = "==26.7.0"
-python = "==3.14.6"
-librsvg = "==2.62.3"
+python = "==3.15.1"
+librsvg = "==2.62.4"
 svgelements = "==1.9.6"
-scipy = "==1.18.0"
-numpy = "==2.5.1"
-pycairo = "==1.29.0"
+pluggy = "==1.7.0"
+scipy = "==1.18.1"
+numpy = "==2.5.4"
+pycairo = "==1.29.2"
 PyOpenGL = "==3.1.10"
 PyOpenGL-accelerate = "==3.1.10"
-PyGObject = "==3.56.3"
+PyGObject = "==3.58.1"
 pkg-config = "==0.29.2"
-rust = "==1.97.1"
-patchelf = "==0.18.0|==0.17.2"
+rust = "==1.99.1"
+patchelf = "==0.19.2"
 
 [feature.app.pypi-dependencies]
-raygeo = "==1.34.0"
+raygeo = "==1.67.3"
+raydriver = "==0.5.1"
 rayforge = { editable = true, path = "." }
-aiohttp = "==3.14.3"
+ruida-pa = "==0.23.0"
+aiohttp = "==3.14.5"
 asyncudp = "==0.11.0"
 blinker = "==1.9.0"
-build = "==1.5.0"
-cairosvg = "==2.9.0"
-ezdxf = "==1.4.4"
-GitPython = "==3.1.58"
-platformdirs = "==4.11.1"
-pluggy = "==1.6.0"
-pypdf = "==6.15.0"
+build = "==1.6.1"
+cairosvg = "==2.9.1"
+ezdxf = "==1.4.5"
+GitPython = "==3.2.1"
+platformdirs = "==4.13.5"
+pypdf = "==6.21.2"
 pymupdf = "==1.28.2"
 pyserial = "==3.5"
-pyvips = "==3.1.1"
+pyvips = "==3.2.0"
 PyYAML = "==6.0.3"
-semver = "==3.0.4"
-trimesh = "==5.0.0"
+semver = "==3.1.0"
+trimesh = "==5.2.0"
 vtracer = "==0.6.15"
-websockets = "==17.0.1"
+websockets = "==17.3"
+zeroconf = "==0.151.5"
 
 [feature.app.target.linux-64.dependencies]
 xorg-xproto = "==7.0.31"
-xorg-libx11 = "==1.8.13"
+xorg-libx11 = "==1.8.14"
 xorg-kbproto = "==1.0.7"
 xorg-xextproto = "==7.3.0"
 xorg-xineramaproto = "==1.2.1"
@@ -79,33 +83,34 @@ gettext = "==0.25.1"
 
 [feature.test.dependencies]
 pytest = "==9.1.1"
+appstream = "==1.1.1|==1.2.1"
 
 [feature.test.pypi-dependencies]
-pytest-asyncio = "==1.4.0"
-pytest-mock = "==3.15.1"
+pytest-asyncio = "==1.4.1"
+pytest-mock = "==3.17.0"
 pytest-cov = "==7.1.0"
-pygobject-stubs = "==2.17.0"
-flake8 = "==7.3.0"
-pyflakes = "==3.4.0"
-pyright = "==1.1.411"
-ruff = "==0.16.2"
-pre-commit = "==4.6.1"
+pygobject-stubs = "==2.20.0"
+flake8 = "==7.4.1"
+pyflakes = "==4.0.3"
+pyright = "==1.1.414"
+ruff = "==0.17.2"
+pre-commit = "==4.7.0"
 
 [feature.website.dependencies]
-nodejs = "==26.6.0"
+nodejs = "==26.12.1"
 [feature.video-tools.dependencies]
-ffmpeg = "==8.1.2"
-python = "==3.14.6"
+ffmpeg = "==9.0.2"
+python = "==3.15.1"
 
 [feature.video-tools.pypi-dependencies]
-pillow = "==12.3.0"
+pillow = "==13.0.0"
 
 [tool.pixi]
 workdir = "."
 
 [tasks]
 pre-commit-install = "pre-commit install"
-lint = { depends-on = ["ruff", "flake", "pyflakes", "pyright"] }
+lint = { depends-on = ["ruff", "flake", "pyflakes", "pyright", "validate-metainfo"] }
 update-translations = "bash scripts/update_translations.sh"
 compile-translations = "bash scripts/update_translations.sh --compile-only"
 print-untranslated = "bash scripts/print_untranslated.sh"
@@ -113,6 +118,9 @@ update-supporters = "python3 scripts/media/update_supporters.py"
 fetch-stats = "python3 scripts/fetch_download_stats.py"
 normalize-icons = "python3 scripts/normalize_icons.py"
 gen-affiliate = "python3 scripts/generate_affiliate_link.py"
+optimize-textures = "python3 scripts/optimize_material_textures.py"
+optimize-images = "python3 scripts/optimize_images.py"
+create-icon = "python3 scripts/create_icon.py"
 
 [tasks.clean]
 cmd = "bash scripts/clean.sh"
@@ -138,6 +146,9 @@ depends-on = ["format"]
 env = { VIRTUAL_ENV = ".pixi/envs/default" }
 cmd = "pyright"
 
+[tasks.validate-metainfo]
+cmd = "appstreamcli validate --no-net data/org.rayforge.rayforge.metainfo.xml"
+
 [tasks.rayforge]
 env = { GI_TYPELIB_PATH = "$(pkgconf --variable=typelibdir gobject-introspection-1.0)"}
 cmd = "scripts/with_gdk.sh python -m rayforge"
@@ -151,12 +162,15 @@ env = { GI_TYPELIB_PATH = "$(pkgconf --variable=typelibdir gobject-introspection
 cmd = "pytest -v --ignore=tests/ui_gtk"
 
 [tasks.uitest]
-env = { GI_TYPELIB_PATH = "$(pkgconf --variable=typelibdir gobject-introspection-1.0):/usr/lib/x86_64-linux-gnu/girepository-1.0"}
-cmd = "pytest -v -m ui"
+env = { GI_TYPELIB_PATH = "$(pkgconf --variable=typelibdir gobject-introspection-1.0):/usr/lib/x86_64-linux-gnu/girepository-1.0", GSK_RENDERER = "cairo" }
+cmd = "xvfb-run -a pytest -v -m ui"
 
 [tasks.screenshot]
 env = { GI_TYPELIB_PATH = "$(pkgconf --variable=typelibdir gobject-introspection-1.0)"}
 cmd = "scripts/with_gdk.sh scripts/screenshot/cli.py"
+
+[tasks.figures]
+cmd = "python -m scripts.figures"
 
 [tasks.wheel]
 cmd = "python3 -m build"
@@ -172,8 +186,20 @@ depends-on = ["compile-translations"]
 cmd = "bash scripts/build-deb.sh --source"
 depends-on = ["compile-translations"]
 
+[tasks.build-appimage]
+# Builds a self-contained AppImage from the "appimage" environment.
+cmd = "bash scripts/build-appimage.sh"
+depends-on = ["compile-translations"]
+
 [dependencies]
-libadwaita = "==1.9.2|==1.9.3"
+libadwaita = "==1.10.0"
+threadpoolctl = "==3.7.0"
+
+# Keep the conda solve from backtracking pygobject below the
+# pygobject>=3.55.0 floor required by the pygobject-stubs pypi
+# dependency ("pixi upgrade" otherwise becomes unsatisfiable).
+[constraints]
+pygobject = ">=3.55.0"
 
 [target.linux-64.dependencies]
 libglvnd = "==1.7.0"
@@ -182,6 +208,7 @@ libglvnd = "==1.7.0"
 [feature.website.tasks]
 site-gen-api = "python3 scripts/update_api_docs.py"
 site-install = { cmd = "npm install", cwd = "website" }
+site-format = { cmd = "npx prettier --write \"docs/**/*.md\" \"blog/**/*.md\" \"i18n/**/*.md\"", cwd = "website", depends-on = ["site-install"] }
 site-serve = { cmd = "npm start", cwd = "website", depends-on = ["update-api-docs"] }
 site-build = { cmd = "npm run build", cwd = "website", depends-on = ["site-gen-api"] }
 site-deploy = { cmd = "bash scripts/deploy_website.sh", depends-on = ["site-gen-api"] }

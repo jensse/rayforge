@@ -48,7 +48,6 @@ class TestRecipeKeys:
         for key in (
             "scan_angle",
             "depth_mode",
-            "invert",
             "min_power_level",
             "max_power_level",
         ):
@@ -58,7 +57,12 @@ class TestRecipeKeys:
         assert set(LaserStep.recipe_keys()).issubset(
             set(FrameStep.recipe_keys())
         )
-        for key in ("cut_side", "offset_mm"):
+        for key in (
+            "cut_side",
+            "offset_mm",
+            "round_corners",
+            "corner_radius_mm",
+        ):
             assert key in FrameStep.recipe_keys()
 
     def test_shrinkwrap_step_extends_laser(self):
@@ -107,3 +111,60 @@ class TestRecipeVarsetKeys:
         keys = [var.key for var in ShrinkWrapStep.recipe_varset()]
         for key in ShrinkWrapStep.recipe_keys():
             assert key in keys, f"Missing var for recipe key '{key}'"
+
+
+class TestRecipeVarsetBehavior:
+    """Varset rows mirror the step settings dialog behavior."""
+
+    def test_contour_step_rows_match_dialog_order(self):
+        """The contour dialog adds CutSideRow, OffsetRow, CutOrderRow,
+        RemoveInnerPathsRow, OvercutRow, RescanContentRow,
+        ThresholdRow (shown only when rescanning)."""
+        keys = [var.key for var in ContourStep.recipe_varset()]
+        expected = [
+            "cut_side",
+            "offset_mm",
+            "cut_order",
+            "remove_inner_paths",
+            "overcut",
+            "override_threshold",
+            "threshold",
+        ]
+        assert keys[-len(expected) :] == expected
+
+    def test_cut_side_has_no_none_option(self):
+        """The dialog's cut-side combo has no "None" entry, so the var
+        must not offer one either."""
+        from rayforge.core.varset import LabeledChoiceVar
+
+        var = next(
+            v for v in ContourStep.recipe_varset() if v.key == "cut_side"
+        )
+        assert isinstance(var, LabeledChoiceVar)
+        assert var.allow_none is False
+
+    def test_offset_sensitive_when_not_centerline(self):
+        """The offset row is insensitive while cut_side is CENTERLINE."""
+        var = next(
+            v for v in ContourStep.recipe_varset() if v.key == "offset_mm"
+        )
+        assert var.sensitive_when is not None
+        assert var.sensitive_when({"cut_side": "CENTERLINE"}) is False
+        assert var.sensitive_when({"cut_side": "OUTSIDE"}) is True
+
+    def test_laser_step_rows_match_dialog_order(self):
+        """The laser section order is head, power, power mode, speeds,
+        air assist, tab power, frequency, pulse width."""
+        keys = [var.key for var in LaserStep.recipe_varset()]
+        expected = [
+            "selected_head_uid",
+            "power",
+            "power_mode",
+            "cut_speed",
+            "travel_speed",
+            "air_assist",
+            "tab_power",
+            "frequency",
+            "pulse_width",
+        ]
+        assert keys == expected

@@ -1,26 +1,31 @@
 # Formats de fichier pris en charge
 
-Cette page fournit des informations détaillées sur tous les formats de fichier
-pris en charge par Rayforge, y compris les capacités, les limitations et les
-recommandations.
+Cette page fournit des informations détaillées sur tous les formats de fichier pris en charge par
+Rayforge, y compris les capacités, les limitations et les recommandations.
 
 ## Aperçu des formats
 
 ### Référence rapide
 
-| Format              | Type      | Importation      | Exportation   | Utilisation recommandée          |
-| ------------------- | --------- | ---------------- | ------------- | -------------------------------- |
-| **SVG**             | Vecteur   | ✓ Direct / Trace | ✓ Export obj. | Format de conception principal   |
-| **DXF**             | Vecteur   | ✓ Direct         | ✓ Export obj. | Échange CAO                      |
-| **PDF**             | Mixte     | ✓ Direct / Trace | –             | Documents avec contenu vectoriel |
-| **LightBurn**       | Vecteur   | ✓ Direct         | –             | Projets LightBurn                |
-| **Ruida**           | Vecteur   | ✓ Direct         | –             | Fichiers de tâches Ruida         |
-| **PNG**             | Matriciel | ✓ Trace          | –             | Photos, images                   |
-| **JPEG**            | Matriciel | ✓ Trace          | –             | Photos                           |
-| **BMP**             | Matriciel | ✓ Trace          | –             | Graphiques simples               |
-| **RFS**             | Croquis   | ✓ Direct         | ✓ Export obj. | Croquis paramétriques            |
-| **G-code**          | Commande  | –                | ✓ Principal   | Sortie machine                   |
-| **Projet Rayforge** | Projet    | ✓                | ✓             | Enregistrer/charger projets      |
+| Format              | Type      | Importation      | Exportation   | Utilisation recommandée                      |
+| ------------------- | --------- | ---------------- | ------------- | -------------------------------------------- |
+| **SVG**             | Vecteur   | ✓ Direct / Trace | ✓ Export obj. | Format de conception principal               |
+| **DXF**             | Vecteur   | ✓ Direct         | ✓ Export obj. | Échange CAO                                  |
+| **PDF**             | Mixte     | ✓ Direct / Trace | –             | Documents avec contenu vectoriel             |
+| **Illustrator**     | Vecteur   | ✓ Direct / Trace | –             | Logos issus d'Illustrator                    |
+| **EPS**             | Vecteur   | ✓ Direct / Trace | –             | Logos, fichiers d'impression                 |
+| **LightBurn**       | Vecteur   | ✓ Direct         | –             | Projets LightBurn                            |
+| **Ruida**           | Vecteur   | ✓ Direct         | –             | Fichiers de tâches Ruida                     |
+| **HPGL**            | Vecteur   | ✓ Direct         | –             | Fichiers de traceur et de plotter de découpe |
+| **PNG**             | Matriciel | ✓ Trace          | –             | Photos, images                               |
+| **JPEG**            | Matriciel | ✓ Trace          | –             | Photos                                       |
+| **BMP**             | Matriciel | ✓ Trace          | –             | Graphiques simples                           |
+| **GIF**             | Matriciel | ✓ Trace          | –             | Graphiques simples, animations               |
+| **TIFF**            | Matriciel | ✓ Trace          | –             | Numérisations, fichiers d'impression         |
+| **WebP**            | Matriciel | ✓ Trace          | –             | Images web                                   |
+| **RFS**             | Croquis   | ✓ Direct         | ✓ Export obj. | Croquis paramétriques                        |
+| **G-code**          | Commande  | –                | ✓ Principal   | Sortie machine                               |
+| **Projet Rayforge** | Projet    | ✓                | ✓             | Enregistrer/charger projets                  |
 
 ---
 
@@ -28,15 +33,17 @@ recommandations.
 
 ### SVG (Scalable Vector Graphics)
 
-**Extension :** `.svg`
-**Type MIME :** `image/svg+xml`
-**Importation :** Analyse vectorielle directe ou tracé bitmap
-**Exportation :** Export d'objet (géométrie uniquement)
+**Extension :** `.svg`, `.svgz` **Type MIME :** `image/svg+xml`, `image/svg+xml-compressed`
+**Importation :** Analyse vectorielle directe ou tracé bitmap **Exportation :** Export d'objet
+(géométrie uniquement)
+
+Le SVG compressé (`.svgz`, "SVG compressé" d'Inkscape) est décompressé lors de l'importation et se
+comporte ensuite exactement comme un fichier SVG ordinaire.
 
 **Qu'est-ce que le SVG ?**
 
-Le SVG est un format d'image vectorielle basé sur XML. C'est le **format
-préféré** pour importer des conceptions dans Rayforge.
+Le SVG est un format d'image vectorielle basé sur XML. C'est le **format préféré** pour importer des
+conceptions dans Rayforge.
 
 **Fonctionnalités prises en charge :**
 
@@ -59,8 +66,8 @@ préféré** pour importer des conceptions dans Rayforge.
 
 **Notes d'exportation :**
 
-Lors de l'exportation d'une pièce vers SVG, Rayforge exporte la géométrie sous
-forme de chemins vectoriels avec :
+Lors de l'exportation d'une pièce vers SVG, Rayforge exporte la géométrie sous forme de chemins
+vectoriels avec :
 
 - Rendu trait uniquement (sans remplissage)
 - Unités en millimètres
@@ -68,8 +75,7 @@ forme de chemins vectoriels avec :
 
 **Bonnes pratiques :**
 
-1. **Utilisez le format SVG simple** (pas Inkscape SVG ni d'autres variantes
-   spécifiques à un outil)
+1. **Utilisez le format SVG simple** (pas Inkscape SVG ni d'autres variantes spécifiques à un outil)
 2. **Convertissez le texte en chemins** avant l'exportation
 3. **Simplifiez les chemins complexes** pour réduire le nombre de nœuds
 4. **Aplatissez les groupes** lorsque c'est possible
@@ -84,15 +90,12 @@ forme de chemins vectoriels avec :
 
 ### DXF (Drawing Exchange Format)
 
-**Extension :** `.dxf`
-**Type MIME :** `application/dxf`, `image/vnd.dxf`
-**Importation :** Analyse vectorielle directe
-**Exportation :** Export d'objet (géométrie uniquement)
+**Extension :** `.dxf` **Type MIME :** `application/dxf`, `image/vnd.dxf` **Importation :** Analyse
+vectorielle directe **Exportation :** Export d'objet (géométrie uniquement)
 
 **Qu'est-ce que le DXF ?**
 
-Le DXF est un format de dessin AutoCAD, largement utilisé pour l'échange de
-données CAO.
+Le DXF est un format de dessin AutoCAD, largement utilisé pour l'échange de données CAO.
 
 **Versions prises en charge :**
 
@@ -132,16 +135,14 @@ Lors de l'exportation d'une pièce vers DXF, Rayforge exporte :
 
 ### RFS (Croquis Rayforge)
 
-**Extension :** `.rfs`
-**Type MIME :** `application/x-rayforge-sketch`
-**Importation :** Directe (pièces basées sur des croquis)
-**Exportation :** Export d'objet (pièces basées sur des croquis)
+**Extension :** `.rfs` **Type MIME :** `application/x-rayforge-sketch` **Importation :** Directe
+(pièces basées sur des croquis) **Exportation :** Export d'objet (pièces basées sur des croquis)
 
 **Qu'est-ce que le RFS ?**
 
-Le RFS est le format natif de croquis paramétrique de Rayforge. Il préserve
-tous les éléments géométriques et contraintes paramétriques, vous permettant
-d'enregistrer et de partager des croquis entièrement modifiables.
+Le RFS est le format natif de croquis paramétrique de Rayforge. Il préserve tous les éléments
+géométriques et contraintes paramétriques, vous permettant d'enregistrer et de partager des croquis
+entièrement modifiables.
 
 **Fonctionnalités :**
 
@@ -160,18 +161,15 @@ d'enregistrer et de partager des croquis entièrement modifiables.
 
 ### LightBurn (.lbrn / .lbrn2)
 
-**Extension :** `.lbrn`, `.lbrn2`
-**Type MIME :** `application/x-lightburn`
-**Importation :** Analyse vectorielle directe
-**Exportation :** Non pris en charge
+**Extension :** `.lbrn`, `.lbrn2` **Type MIME :** `application/x-lightburn` **Importation :**
+Analyse vectorielle directe **Exportation :** Non pris en charge
 
 **Qu'est-ce que LightBurn ?**
 
-LightBurn est un logiciel propriétaire de découpe laser. Ses fichiers `.lbrn`
-et `.lbrn2` contiennent de la géométrie vectorielle organisée en calques
-colorés avec des paramètres laser. Rayforge peut importer ces fichiers
-directement, offrant une voie de migration pour les utilisateurs passant de
-LightBurn à Rayforge.
+LightBurn est un logiciel propriétaire de découpe laser. Ses fichiers `.lbrn` et `.lbrn2`
+contiennent de la géométrie vectorielle organisée en calques colorés avec des paramètres laser.
+Rayforge peut importer ces fichiers directement, offrant une voie de migration pour les utilisateurs
+passant de LightBurn à Rayforge.
 
 **Fonctionnalités prises en charge :**
 
@@ -184,12 +182,10 @@ LightBurn à Rayforge.
 
 **Limitations :**
 
-- ✗ **Importation en lecture seule** — les fichiers LightBurn ne peuvent être
-  qu'importés, pas exportés
-- ✗ Les images matricielles à profondeur de bits variable peuvent être
-  simplifiées
-- ✗ Certaines fonctionnalités avancées spécifiques à LightBurn peuvent ne pas
-  être traduites
+- ✗ **Importation en lecture seule** — les fichiers LightBurn ne peuvent être qu'importés, pas
+  exportés
+- ✗ Les images matricielles à profondeur de bits variable peuvent être simplifiées
+- ✗ Certaines fonctionnalités avancées spécifiques à LightBurn peuvent ne pas être traduites
 
 **Quand l'utiliser :**
 
@@ -201,21 +197,17 @@ LightBurn à Rayforge.
 
 ### PDF (Portable Document Format)
 
-**Extension :** `.pdf`
-**Type MIME :** `application/pdf`
-**Importation :** Vecteurs directs (avec prise en charge des calques) ou
-rendu et tracé
-**Exportation :** Non pris en charge
+**Extension :** `.pdf` **Type MIME :** `application/pdf` **Importation :** Vecteurs directs (avec
+prise en charge des calques) ou rendu et tracé **Exportation :** Non pris en charge
 
 **Qu'est-ce que l'importation PDF ?**
 
-Les fichiers PDF peuvent contenir des chemins vectoriels réels, et Rayforge les
-importe directement lorsqu'ils sont disponibles — vous offrant la même
-géométrie propre que celle obtenue à partir d'un SVG. Si le PDF contient des
-calques, chaque calque peut être importé comme une pièce distincte.
+Les fichiers PDF peuvent contenir des chemins vectoriels réels, et Rayforge les importe directement
+lorsqu'ils sont disponibles — vous offrant la même géométrie propre que celle obtenue à partir d'un
+SVG. Si le PDF contient des calques, chaque calque peut être importé comme une pièce distincte.
 
-Pour les PDF sans contenu vectoriel exploitable (documents numérisés, photos),
-Rayforge a recours au rendu et au tracé.
+Pour les PDF sans contenu vectoriel exploitable (documents numérisés, photos), Rayforge a recours au
+rendu et au tracé.
 
 **Capacités :**
 
@@ -236,24 +228,73 @@ Rayforge a recours au rendu et au tracé.
 
 ---
 
+### Adobe Illustrator (.ai)
+
+**Extension :** `.ai` **Type MIME :** `application/illustrator` **Importation :** Vecteurs directs
+ou rendu et vectorisation **Exportation :** Non pris en charge
+
+Depuis la version 9, Illustrator enregistre par défaut ses fichiers avec un PDF intégré (option
+**Créer un fichier compatible PDF**). Rayforge lit ce PDF : ces fichiers s'importent donc comme un
+PDF, calques compris.
+
+Les fichiers Illustrator plus anciens, et ceux enregistrés sans compatibilité PDF, sont en
+PostScript. Rayforge les convertit avec Ghostscript lorsqu'il est installé. Sinon, la boîte de
+dialogue d'importation explique comment enregistrer à nouveau le fichier.
+
+---
+
+### EPS et PostScript (.eps / .ps)
+
+**Extension :** `.eps`, `.epsf`, `.ps` **Type MIME :** `image/x-eps`, `application/postscript`
+**Importation :** Vecteurs directs ou rendu et vectorisation, via Ghostscript **Exportation :** Non
+pris en charge
+
+Rayforge convertit les fichiers EPS et PostScript en PDF avec Ghostscript, puis les importe comme un
+PDF. La boîte englobante de l'EPS devient la taille de la page et le texte est converti en contours.
+
+**Ghostscript** est une dépendance facultative. Sous Linux, installez le paquet `ghostscript` de
+votre distribution ; sous Windows et macOS, installez-le depuis le site de Ghostscript. Sans
+Ghostscript, la boîte de dialogue d'importation affiche un message au lieu d'un aperçu. Le projet
+enregistre le PDF converti : un projet enregistré s'ouvre donc aussi sur un ordinateur sans
+Ghostscript.
+
+---
+
+### HPGL (.plt / .hpgl)
+
+**Extension :** `.plt`, `.hpgl`, `.hpg`, `.hgl` **Type MIME :** `application/vnd.hp-hpgl`
+**Importation :** Analyse vectorielle directe **Exportation :** Non pris en charge
+
+HPGL est le langage des traceurs de découpe, des plotters de découpe vinyle et des anciens logiciels
+de CAO. Rayforge lit les instructions de tracé courantes : déplacements de plume (PU, PD, PA, PR),
+cercles et arcs (CI, AA, AR) et rectangles (EA, ER, RA, RR). Chaque plume devient un calque que vous
+pouvez choisir dans la boîte de dialogue d'importation.
+
+**Limitations :**
+
+- ✗ Les étiquettes de texte (LB) sont ignorées ; convertissez le texte en chemins avant le traçage
+- ✗ La mise à l'échelle (SC) et la rotation (RO) sont ignorées ; la boîte de dialogue d'importation
+  liste les instructions ignorées
+- Les coordonnées utilisent les 40 unités traceur par millimètre habituelles
+
+---
+
 ## Formats matriciels
 
-Tous les formats matriciels sont **importés par tracé** — convertis
-automatiquement en chemins vectoriels.
+Tous les formats matriciels sont **importés par tracé** — convertis automatiquement en chemins
+vectoriels.
 
 ### PNG (Portable Network Graphics)
 
-**Extension :** `.png`
-**Type MIME :** `image/png`
-**Importation :** Tracer en vecteurs
+**Extension :** `.png` **Type MIME :** `image/png` **Importation :** Tracer en vecteurs
 **Exportation :** Non pris en charge
 
 **Caractéristiques :**
 
 - **Compression sans perte** - Aucune perte de qualité
 - **Prise en charge de la transparence** - Canal alpha préservé
-- **Idéal pour :** Logos, dessins au trait, captures d'écran, tout élément
-  nécessitant de la transparence
+- **Idéal pour :** Logos, dessins au trait, captures d'écran, tout élément nécessitant de la
+  transparence
 
 **Qualité de tracé :** (Excellente pour les images à contraste élevé)
 
@@ -267,9 +308,7 @@ automatiquement en chemins vectoriels.
 
 ### JPEG (Joint Photographic Experts Group)
 
-**Extension :** `.jpg`, `.jpeg`
-**Type MIME :** `image/jpeg`
-**Importation :** Tracer en vecteurs
+**Extension :** `.jpg`, `.jpeg` **Type MIME :** `image/jpeg` **Importation :** Tracer en vecteurs
 **Exportation :** Non pris en charge
 
 **Caractéristiques :**
@@ -291,9 +330,7 @@ automatiquement en chemins vectoriels.
 
 ### BMP (Bitmap)
 
-**Extension :** `.bmp`
-**Type MIME :** `image/bmp`
-**Importation :** Tracer en vecteurs
+**Extension :** `.bmp` **Type MIME :** `image/bmp` **Importation :** Tracer en vecteurs
 **Exportation :** Non pris en charge
 
 **Caractéristiques :**
@@ -306,9 +343,22 @@ automatiquement en chemins vectoriels.
 
 **Bonnes pratiques :**
 
-- Convertissez en PNG pour une taille de fichier réduite (aucune différence
-  de qualité)
+- Convertissez en PNG pour une taille de fichier réduite (aucune différence de qualité)
 - À utiliser uniquement si le logiciel source ne peut pas exporter en PNG/SVG
+
+---
+
+### GIF, TIFF et WebP
+
+**Extension :** `.gif`, `.tif`, `.tiff`, `.webp` **Type MIME :** `image/gif`, `image/tiff`,
+`image/webp` **Importation :** Vectorisation **Exportation :** Non pris en charge
+
+Ces formats sont vectorisés de la même manière que le PNG.
+
+- Les **GIF animés** et les **TIFF multipages** n'importent que leur première image ou page
+- Les fichiers **TIFF** enregistrent généralement leur résolution d'impression, qui détermine la
+  taille physique
+- Les images sans résolution sont importées à 96 DPI
 
 ---
 

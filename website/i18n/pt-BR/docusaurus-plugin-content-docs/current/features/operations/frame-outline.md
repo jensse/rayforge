@@ -1,6 +1,7 @@
 # Contorno de Moldura
 
-O Contorno de Moldura cria um caminho de corte retangular simples ao redor de todo o seu design. É a maneira mais rápida de adicionar uma borda limpa ou cortar seu trabalho livre da chapa de material.
+O Contorno de Moldura cria um caminho de corte retangular simples ao redor de todo o seu design. É a
+maneira mais rápida de adicionar uma borda limpa ou cortar seu trabalho livre da chapa de material.
 
 ## Visão Geral
 
@@ -49,11 +50,13 @@ Configure os parâmetros da moldura:
 
 ## Configurações Principais
 
-O diálogo de configurações de etapa tem três abas: **Configurações de Etapa**, **Laser** e **Pós-Processamento**. As configurações são descritas em ordem de aba abaixo.
+O diálogo de configurações de etapa tem quatro abas: **Configurações de Etapa**, **Laser**,
+**Pós-Processamento** e **Peças de trabalho**. As configurações são descritas em ordem de aba
+abaixo.
 
 ### Geometria
 
-![Configurações de etapa de Contorno de Moldura](/screenshots/step-settings-frame-outline-general.png)
+![Configurações de etapa de Contorno de Moldura](/screenshots/step-settings-frame-outline-general.webp)
 
 O grupo **Geometria** na aba _Configurações de Etapa_ controla a forma da moldura.
 
@@ -80,11 +83,25 @@ Controla onde o laser corta relativo ao caminho da moldura:
 - **2-5mm:** Pequena margem para aparência limpa
 - **10mm+:** Borda grande para montagem ou manuseio
 
+#### Cantos Arredondados
+
+Ative **Cantos Arredondados** para substituir os cantos afiados de 90° da moldura por arcos
+arredondados e, em seguida, defina o **Raio do Canto** em mm. O raio é reduzido automaticamente
+quando é grande demais para caber na moldura.
+
+- **0mm:** Cantos afiados (padrão)
+- **3-10mm:** Cantos mais suaves e fáceis de manusear
+- **Maior:** Moldura muito arredondada, limitada à metade do lado mais curto da moldura
+
+Cantos arredondados são úteis para materiais que lascam ou racham em ângulos agudos, e evitam a
+necessidade de pós-processar a moldura ou desenhar à mão um contorno arredondado.
+
 ### Configurações do Laser
 
-![Configurações do laser](/screenshots/step-settings-frame-outline-laser.png)
+![Configurações do laser](/screenshots/step-settings-frame-outline-laser.webp)
 
-Potência, velocidade e seleção da cabeça do laser ficam na página **Laser** do diálogo de configurações de etapa.
+Potência, velocidade e seleção da cabeça do laser ficam na página **Laser** do diálogo de
+configurações de etapa.
 
 #### Potência e Velocidade
 
@@ -98,7 +115,20 @@ Potência, velocidade e seleção da cabeça do laser ficam na página **Laser**
 - Quão rápido o laser se move
 - Mais lento para materiais mais espessos
 
-Para cortar a moldura mais de uma vez, adicione um pós-processador de [Multi-Passagem](../multi-pass.md).
+#### Modo de Potência
+
+A configuração de Modo de Potência controla como a potência do laser é emitida durante os
+movimentos:
+
+- **Dinâmico (M4)** ajusta a potência à velocidade de movimento (padrão)
+- **Constante (M3)** mantém a potência fixa independentemente da velocidade
+
+A potência dinâmica reduz a potência quando a cabeça desacelera em um canto, o que pode deixar
+cantos subgravados em algumas máquinas. Mude para **Constante (M3)** se os cantos da moldura
+queimarem de forma muito fraca.
+
+Para cortar a moldura mais de uma vez, adicione um pós-processador de
+[Multi-Passagem](../multi-pass.md).
 
 #### Compensação de Kerf
 
@@ -110,7 +140,7 @@ O contorno de moldura suporta compensação de kerf:
 
 ## Pós-Processamento
 
-![Configurações de pós-processamento de Contorno de Moldura](/screenshots/step-settings-frame-outline-post.png)
+![Configurações de pós-processamento de Contorno de Moldura](/screenshots/step-settings-frame-outline-post.webp)
 
 Operações de Contorno de Moldura suportam várias opções de pós-processamento:
 
@@ -118,7 +148,8 @@ Operações de Contorno de Moldura suportam várias opções de pós-processamen
 - **[Cortar para Estoque](../crop-to-stock.md)** - Limita cortes ao limite do material
 - **[Otimização de Caminho](../path-optimization.md)** - Reduz distância de deslocamento
 - **[Multi-Passagem](../multi-pass.md)** - Repete cortes para materiais espessos
-- **[Entrada/Saída](../lead-in-out.md)** - Adiciona movimentos de aproximação e saída sem potência para extremidades de corte mais limpas
+- **[Entrada/Saída](../lead-in-out.md)** - Adiciona movimentos de aproximação e saída sem potência
+  para extremidades de corte mais limpas
 
 ## Casos de Uso
 

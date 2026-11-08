@@ -4,17 +4,22 @@ from pathlib import Path
 
 import pytest
 import yaml
+from raygeo.ops.axis import Axis
 
+import rayforge
 from rayforge.machine.device.manager import DeviceProfileManager
 from rayforge.machine.device.profile import (
     CURRENT_API_VERSION,
     DIALECT_FILENAME,
     MANIFEST_FILENAME,
     DeviceProfile,
+    MachineConfig,
     export_machine_to_dir,
 )
 from rayforge.machine.models.laser import LaserHead, LaserType
-from rayforge.machine.models.machine import Origin
+from rayforge.machine.models.machine import JogDirection, Origin
+from rayforge.machine.models.machine_panel import PanelOrientation
+from rayforge.shared.markdown import Details, parse
 from rayforge.shared.tasker.manager import TaskManager
 from rayforge.shared.units.system import UnitSystem
 
@@ -46,7 +51,7 @@ GRBL_DIALECT_YAML = {
     "air_assist_off": "M9",
     "home_all": "$H",
     "home_axis": "$H{axis_letter}",
-    "move_to": "$J=G90 G21 F{speed} X{x} Y{y}",
+    "move_to": "$J=G90 G21 F{speed} X{x} Y{y}{z_cmd}",
     "jog": "$J=G91 G21 F{speed}",
     "clear_alarm": "$X",
     "set_wcs_offset": "G10 L2 P{p_num} X{x} Y{y} Z{z}",
@@ -71,6 +76,7 @@ def _make_device(
     subdir: str = "test-device",
     machine_extra=None,
     dialect_overrides=None,
+    device_extra=None,
 ) -> Path:
     device_dir = tmp_path / subdir
     machine = {
@@ -81,7 +87,7 @@ def _make_device(
         device_dir / "device.yaml",
         {
             "api_version": CURRENT_API_VERSION,
-            "device": {"name": name},
+            "device": {"name": name, **(device_extra or {})},
             "machine": machine,
         },
     )
@@ -113,11 +119,13 @@ class TestDeviceProfileLoad:
                     "vendor": "OMTech",
                     "model": "K40-40W",
                     "description": "40W CO2 laser",
+                    "notes": "# Setup\n\nRead the manual.",
                 },
                 "machine": {
                     "driver": "GrblSerialDriver",
                     "axis_extents": [300, 200],
                     "origin": "top_left",
+                    "panel_orientation": "rotated_right",
                     "supports_arcs": True,
                     "supports_curves": False,
                     "max_travel_speed": 3000,
@@ -132,9 +140,22 @@ class TestDeviceProfileLoad:
         assert pkg.meta.vendor == "OMTech"
         assert pkg.meta.model == "K40-40W"
         assert pkg.meta.description == "40W CO2 laser"
+        assert pkg.meta.notes == "# Setup\n\nRead the manual."
         assert pkg.machine_config.axis_extents == (300, 200)
         assert pkg.machine_config.origin == Origin("top_left")
+        assert (
+            pkg.machine_config.panel_orientation
+            == PanelOrientation.ROTATED_RIGHT
+        )
         assert pkg.machine_config.supports_arcs is True
+
+    def test_load_rejects_non_string_notes(self, tmp_path):
+        device_dir = _make_device(
+            tmp_path,
+            device_extra={"notes": ["not", "markdown"]},
+        )
+        with pytest.raises(TypeError, match="device.notes"):
+            DeviceProfile.from_path(device_dir)
 
     def test_load_with_custom_dialect(self, tmp_path):
         device_dir = _make_device(
@@ -200,11 +221,11 @@ class TestDeviceProfileLoad:
             {
                 "api_version": 1,
                 "device": {"name": "Ruida Device"},
-                "machine": {"driver": "RuidaDriver"},
+                "machine": {"driver": "RuidaRPAAdapter"},
             },
         )
         pkg = DeviceProfile.from_path(device_dir)
-        assert pkg.machine_config.driver == "RuidaDriver"
+        assert pkg.machine_config.driver == "RuidaRPAAdapter"
         assert pkg.dialect_config == {}
 
     def test_dialect_optional_when_driver_absent(self, tmp_path):
@@ -245,6 +266,16 @@ class TestDeviceProfileLoad:
             machine_extra={"origin": "middle_center"},
         )
         with pytest.raises(ValueError, match="Invalid origin"):
+            DeviceProfile.from_path(device_dir)
+
+    def test_invalid_panel_orientation_raises(self, tmp_path):
+        device_dir = _make_device(
+            tmp_path,
+            name="Bad Panel Orientation",
+            subdir="bad-panel-orientation",
+            machine_extra={"panel_orientation": "mirrored"},
+        )
+        with pytest.raises(ValueError, match="Invalid panel_orientation"):
             DeviceProfile.from_path(device_dir)
 
     def test_invalid_axis_extents_raises(self, tmp_path):
@@ -584,6 +615,7 @@ class TestExportToZip:
             tmp_path,
             name="Roundtrip",
             machine_extra={"axis_extents": [400, 300]},
+            device_extra={"notes": "Profile setup notes."},
         )
         mgr = DeviceProfileManager([tmp_path])
         mgr.discover()
@@ -599,7 +631,91 @@ class TestExportToZip:
         pkg2 = mgr2.install_from_zip(zip_path)
 
         assert pkg2.meta.name == "Roundtrip"
+        assert pkg2.meta.notes == "Profile setup notes."
         assert pkg2.machine_config.axis_extents == (400, 300)
+
+    def test_soft_limits_disabled_loads(self, tmp_path):
+        _make_device(
+            tmp_path,
+            name="Toggle",
+            machine_extra={"soft_limits_enabled": False},
+        )
+        mgr = DeviceProfileManager([tmp_path])
+        mgr.discover()
+        pkg = mgr.get("Toggle")
+        assert pkg is not None
+        assert pkg.machine_config.soft_limits_enabled is False
+
+
+FALCON_BOUNDS_LINE = (
+    "; Bounds: X{job.extents[0]} Y{job.extents[1]} "
+    "to X{job.extents[2]} Y{job.extents[3]}"
+)
+
+
+def test_falcon_profiles_emit_framing_bounds_comment():
+    devices_dir = Path(rayforge.__file__).parent / "resources" / "devices"
+    falcon_dirs = sorted(
+        p
+        for p in devices_dir.iterdir()
+        if p.is_dir() and p.name.startswith("creality-falcon")
+    )
+    assert len(falcon_dirs) >= 4
+    for profile_dir in falcon_dirs:
+        profile = DeviceProfile.from_path(profile_dir)
+        assert FALCON_BOUNDS_LINE in profile.dialect_config["preamble"], (
+            profile_dir.name
+        )
+
+
+def test_grbl_profiles_ship_move_to_park_template():
+    """Every Grbl-driver profile declares the machine-space park move
+    so the park-after-homing setting works out of the box (issue
+    #619)."""
+    devices_dir = Path(rayforge.__file__).parent / "resources" / "devices"
+    grbl_dirs = sorted(
+        p
+        for p in devices_dir.iterdir()
+        if p.is_dir()
+        and (p / "dialect.yaml").exists()
+        and "driver: Grbl" in (p / "device.yaml").read_text()
+    )
+    assert len(grbl_dirs) >= 20
+    for profile_dir in grbl_dirs:
+        profile = DeviceProfile.from_path(profile_dir)
+        assert profile.dialect_config.get("move_to_park"), profile_dir.name
+
+
+def test_foxalien_vasto_profile_uses_negative_machine_space():
+    """The Vasto controller reports negative machine coordinates, so the
+    shipped profile must preconfigure the reversed-axes setup (#613)."""
+    devices_dir = Path(rayforge.__file__).parent / "resources" / "devices"
+    profile = DeviceProfile.from_path(devices_dir / "foxalien-vasto")
+
+    assert profile.machine_config.origin is Origin.TOP_RIGHT
+    assert profile.machine_config.reverse_x_axis is True
+    assert profile.machine_config.reverse_y_axis is True
+    assert profile.dialect_config["focus_laser_on"] == "G1 F1 M3 S{power:.0f}"
+
+
+def test_falcon_a1_pro_profile_has_camera_setup_details():
+    devices_dir = Path(rayforge.__file__).parent / "resources" / "devices"
+    profile = DeviceProfile.from_path(devices_dir / "creality-falcon-a1-pro")
+
+    details = [
+        block
+        for block in parse(profile.meta.notes or "").blocks
+        if isinstance(block, Details)
+    ]
+    assert [block.title for block in details] == [
+        "Linux: Find the USB-network address",
+        "Windows: Find the USB-network address",
+        "macOS: Use Wi-Fi instead of USB",
+        "Wi-Fi: Use the laser's LAN address",
+    ]
+    assert "http://<laser-ip>:8080/media/getCapturePhoto" in (
+        profile.meta.notes or ""
+    )
 
 
 class TestExportMachine:
@@ -615,6 +731,8 @@ class TestExportMachine:
         machine.driver_config = {}
         machine.axis_extents = (300.0, 200.0)
         machine.origin = Origin.BOTTOM_LEFT
+        machine.panel = MagicMock()
+        machine.panel.orientation = PanelOrientation.NATIVE
         machine.supports_arcs = True
         machine.supports_curves = False
         machine.max_travel_speed = 5000
@@ -631,6 +749,14 @@ class TestExportMachine:
         machine.rotary_modules = {}
         machine.hookmacros = {}
         machine.nogo_zones = {}
+        machine.source_profile_id = None
+        machine.usb_vid = None
+        machine.usb_pid = None
+        machine.has_z_axis = False
+        machine.reverse_x_axis = False
+        machine.reverse_y_axis = False
+        machine.reverse_z_axis = False
+        machine.park_position_after_homing = None
         machine.dialect = GcodeDialect.from_dict({"label": name})
         for k, v in overrides.items():
             setattr(machine, k, v)
@@ -639,12 +765,13 @@ class TestExportMachine:
     def _make_mock_ruida_machine(self, name):
         return self._make_mock_machine(
             name,
-            driver_name="RuidaDriver",
+            driver_name="RuidaRPAAdapter",
             dialect=None,
         )
 
     def test_export_machine_basic(self, tmp_path):
         machine = self._make_mock_machine("Test Export")
+        machine.panel.orientation = PanelOrientation.ROTATED_LEFT
 
         dest = tmp_path / "output"
         mgr = DeviceProfileManager(install_dir=tmp_path / "inst")
@@ -658,16 +785,103 @@ class TestExportMachine:
                 data = yaml.safe_load(f)
             assert data["device"]["name"] == "Test Export"
             assert data["machine"]["driver"] == "GrblSerialDriver"
+            assert data["machine"]["panel_orientation"] == "rotated_left"
 
     def test_export_machine_to_dir(self, tmp_path):
-        machine = self._make_mock_machine("Dir Export")
+        machine = self._make_mock_machine(
+            "Dir Export",
+            device_notes="Profile-owned setup notes.",
+            user_notes="Do not export private notes.",
+        )
 
         dest_dir = tmp_path / "pkg"
         pkg = export_machine_to_dir(machine, dest_dir)
 
         assert pkg.meta.name == "Dir Export"
+        assert pkg.meta.notes == "Profile-owned setup notes."
+        with open(dest_dir / MANIFEST_FILENAME) as f:
+            manifest = yaml.safe_load(f)
+        assert "user_notes" not in manifest["device"]
+        assert "user_notes" not in manifest["machine"]
         assert (dest_dir / MANIFEST_FILENAME).exists()
         assert (dest_dir / DIALECT_FILENAME).exists()
+
+    def test_export_machine_includes_axis_reversal(self, tmp_path):
+        machine = self._make_mock_machine(
+            "Reversed Axes",
+            reverse_x_axis=True,
+            reverse_y_axis=True,
+        )
+        dest_dir = tmp_path / "reversed"
+        pkg = export_machine_to_dir(machine, dest_dir)
+
+        assert pkg.machine_config.reverse_x_axis is True
+        assert pkg.machine_config.reverse_y_axis is True
+        assert pkg.machine_config.reverse_z_axis is None
+        with open(dest_dir / MANIFEST_FILENAME) as f:
+            manifest = yaml.safe_load(f)
+        assert "reverse_z_axis" not in manifest["machine"]
+
+    def test_export_machine_includes_usb_ids(self, tmp_path):
+        """The observed USB identity is exported as device.usb_ids and
+        survives a re-import as parsed vid/pid pairs."""
+        machine = self._make_mock_machine(
+            "USB Export", usb_vid=0x1A86, usb_pid=0x7523
+        )
+
+        dest_dir = tmp_path / "pkg"
+        export_machine_to_dir(machine, dest_dir)
+
+        with open(dest_dir / MANIFEST_FILENAME) as f:
+            data = yaml.safe_load(f)
+        assert data["device"]["usb_ids"] == ["1a86:7523"]
+
+        pkg = DeviceProfile.from_path(dest_dir)
+        assert pkg.meta.usb_ids == [(0x1A86, 0x7523)]
+
+    def test_export_zip_roundtrip_preserves_usb_ids(self, tmp_path):
+        machine = self._make_mock_machine(
+            "USB Zip", usb_vid=0xABCD, usb_pid=None
+        )
+        mgr = DeviceProfileManager(install_dir=tmp_path / "inst")
+        zip_path = mgr.export_machine(machine, tmp_path / "out")
+
+        install_dir = tmp_path / "installed"
+        install_dir.mkdir()
+        mgr2 = DeviceProfileManager(install_dir=install_dir)
+        pkg = mgr2.install_from_zip(zip_path)
+        assert pkg.meta.usb_ids == [(0xABCD, None)]
+
+    def test_export_falls_back_to_source_profile_usb_ids(self, tmp_path):
+        """Without an observed vid/pid, the source profile's declared
+        ids are carried over."""
+        curated = tmp_path / "curated"
+        curated.mkdir()
+        (curated / "device.yaml").write_text(
+            """\
+api_version: 1
+device:
+  name: Curated
+  vendor: Frobnicate
+  id: curated-1
+  usb_ids:
+    - abcd:1234
+machine:
+  driver: RuidaRPAAdapter
+"""
+        )
+        mgr = DeviceProfileManager(source_dirs=[tmp_path])
+        mgr.discover()
+
+        machine = self._make_mock_ruida_machine("From Curated")
+        machine.source_profile_id = "curated-1"
+        zip_path = mgr.export_machine(machine, tmp_path / "out")
+
+        install_dir = tmp_path / "installed"
+        install_dir.mkdir()
+        mgr2 = DeviceProfileManager(install_dir=install_dir)
+        pkg = mgr2.install_from_zip(zip_path)
+        assert pkg.meta.usb_ids == [(0xABCD, 0x1234)]
 
     def test_export_ruida_machine_no_dialect(self, tmp_path):
         machine = self._make_mock_ruida_machine("Ruida Export")
@@ -682,16 +896,154 @@ class TestExportMachine:
 
 class TestCreateMachine:
     @pytest.mark.asyncio
+    async def test_create_machine_applies_soft_limits_toggle(
+        self, tmp_path, lite_context, task_mgr
+    ):
+        """A profile with the soft limits toggle off must produce a
+        machine that does not clamp or flag jogs (issue #574)."""
+        device_dir = _make_device(
+            tmp_path,
+            name="No Soft Limits",
+            machine_extra={"soft_limits_enabled": False},
+        )
+        pkg = DeviceProfile.from_path(device_dir)
+        m = pkg.create_machine(lite_context)
+        await _wait_for_tasks(task_mgr)
+
+        assert m.soft_limits_enabled is False
+        assert m.would_jog_exceed_limits(Axis.X, 9999.0) is False
+
+    @pytest.mark.asyncio
+    async def test_create_machine_applies_axis_reversal(
+        self, tmp_path, lite_context, task_mgr
+    ):
+        """Profiles must be able to ship negative machine space, where
+        the axes count down from the origin corner (issue #613)."""
+        device_dir = _make_device(
+            tmp_path,
+            name="Negative Space",
+            machine_extra={
+                "axis_extents": [400, 400],
+                "origin": "top_right",
+                "reverse_x_axis": True,
+                "reverse_y_axis": True,
+            },
+        )
+        pkg = DeviceProfile.from_path(device_dir)
+        m = pkg.create_machine(lite_context)
+        await _wait_for_tasks(task_mgr)
+
+        assert m.origin is Origin.TOP_RIGHT
+        assert m.reverse_x_axis is True
+        assert m.reverse_y_axis is True
+        assert m.get_soft_limits() == (-400.0, -400.0, 0.0, 0.0)
+
+    @pytest.mark.asyncio
+    async def test_create_machine_reversed_axes_jog_direction(
+        self, tmp_path, lite_context, task_mgr
+    ):
+        """With reversed axes on a bottom-left origin, machine
+        coordinates count negative from the head park corner, so
+        visual east and north jog toward negative deltas (issue
+        #619)."""
+        device_dir = _make_device(
+            tmp_path,
+            name="Reversed Axes",
+            machine_extra={"reverse_x_axis": True, "reverse_y_axis": True},
+        )
+        pkg = DeviceProfile.from_path(device_dir)
+        m = pkg.create_machine(lite_context)
+        await _wait_for_tasks(task_mgr)
+
+        assert m.reverse_x_axis is True
+        assert m.reverse_y_axis is True
+        assert m.get_soft_limits() == (-200.0, -200.0, 0.0, 0.0)
+        assert m.panel.calculate_jog(JogDirection.EAST, 10.0) == {
+            Axis.X: -10.0
+        }
+        assert m.panel.calculate_jog(JogDirection.NORTH, 10.0) == {
+            Axis.Y: -10.0
+        }
+
+    @pytest.mark.asyncio
+    async def test_create_machine_applies_park_position(
+        self, tmp_path, lite_context, task_mgr
+    ):
+        """The park position reaches the created machine and is
+        exported back into profile data (issue #619)."""
+        device_dir = _make_device(
+            tmp_path,
+            name="Park Position",
+            machine_extra={"park_position_after_homing": [10.0, 5.0]},
+        )
+        pkg = DeviceProfile.from_path(device_dir)
+        m = pkg.create_machine(lite_context)
+        await _wait_for_tasks(task_mgr)
+
+        assert m.park_position_after_homing == (10.0, 5.0)
+        assert MachineConfig.from_machine(m).park_position_after_homing == (
+            10.0,
+            5.0,
+        )
+
+    @pytest.mark.asyncio
     async def test_create_machine_gcode_has_dialect(
         self, tmp_path, lite_context, task_mgr
     ):
-        device_dir = _make_device(tmp_path, name="GRBL Test")
+        device_dir = _make_device(
+            tmp_path,
+            name="GRBL Test",
+            machine_extra={"panel_orientation": "rotated_right"},
+        )
         pkg = DeviceProfile.from_path(device_dir)
         m = pkg.create_machine(lite_context)
         await _wait_for_tasks(task_mgr)
 
         assert m.dialect_uid is not None
         assert m.dialect is not None
+        assert m.panel.orientation is PanelOrientation.ROTATED_RIGHT
+
+    @pytest.mark.asyncio
+    async def test_create_machine_keeps_camera_alignment_with_orientation(
+        self, tmp_path, lite_context, task_mgr
+    ):
+        """Profile camera alignments are stored in the profile's panel
+        orientation, so create_machine must apply the orientation
+        without re-projecting the calibrations."""
+        device_dir = _make_device(
+            tmp_path,
+            name="Oriented Cameras",
+            machine_extra={
+                "panel_orientation": "rotated_right",
+                "cameras": [
+                    {
+                        "name": "Bed Cam",
+                        "device_id": "bed-cam",
+                        "image_to_world": [
+                            {"image": "0, 0", "world": "0, 0"},
+                            {"image": "640, 0", "world": "120, 0"},
+                            {"image": "640, 480", "world": "120, 200"},
+                            {"image": "0, 480", "world": "0, 200"},
+                        ],
+                    }
+                ],
+            },
+        )
+        pkg = DeviceProfile.from_path(device_dir)
+        m = pkg.create_machine(lite_context)
+        await _wait_for_tasks(task_mgr)
+
+        assert m.panel.orientation is PanelOrientation.ROTATED_RIGHT
+        assert len(m.cameras) == 1
+        calibration = m.cameras[0].image_to_world
+        assert calibration is not None
+        _image_points, world_points = calibration
+        assert world_points == [
+            (0.0, 0.0),
+            (120.0, 0.0),
+            (120.0, 200.0),
+            (0.0, 200.0),
+        ]
 
     @pytest.mark.asyncio
     async def test_create_machine_ruida_no_dialect(
@@ -703,7 +1055,7 @@ class TestCreateMachine:
             {
                 "api_version": 1,
                 "device": {"name": "Ruida Test"},
-                "machine": {"driver": "RuidaDriver"},
+                "machine": {"driver": "RuidaRPAAdapter"},
             },
         )
         pkg = DeviceProfile.from_path(device_dir)
@@ -712,7 +1064,7 @@ class TestCreateMachine:
 
         assert m.dialect_uid is None
         assert m.dialect is None
-        assert m.driver_name == "RuidaDriver"
+        assert m.driver_name == "RuidaRPAAdapter"
 
     @pytest.mark.asyncio
     async def test_co2_profile_loads_pwm_fields(
@@ -773,3 +1125,60 @@ class TestCreateMachine:
         head = m.heads[0]
         assert isinstance(head, LaserHead)
         assert head.laser_type == LaserType.DIODE
+
+    @pytest.mark.asyncio
+    async def test_profile_loads_physical_power_fields(
+        self, tmp_path, lite_context, task_mgr
+    ):
+        """wavelength_nm and max_power_watts round-trip through the
+        device profile into the live LaserHead."""
+        device_dir = _make_device(
+            tmp_path,
+            name="Physical Power Test",
+            subdir="phys-power",
+            machine_extra={
+                "heads": [
+                    {
+                        "max_power": 1000,
+                        "laser_type": "co2",
+                        "wavelength_nm": 10600,
+                        "max_power_watts": 80,
+                    }
+                ],
+            },
+        )
+        pkg = DeviceProfile.from_path(device_dir)
+        m = pkg.create_machine(lite_context)
+        await _wait_for_tasks(task_mgr)
+
+        head = m.heads[0]
+        assert isinstance(head, LaserHead)
+        assert head.wavelength_nm == 10600
+        assert head.max_power_watts == 80
+        assert head.effective_wavelength_nm() == 10600
+        assert head.effective_max_power_watts() == 80
+
+    @pytest.mark.asyncio
+    async def test_profile_without_physical_fields_uses_defaults(
+        self, tmp_path, lite_context, task_mgr
+    ):
+        """A diode profile with no wavelength/power fields falls back
+        to the LaserType defaults."""
+        device_dir = _make_device(
+            tmp_path,
+            name="Legacy Diode",
+            subdir="legacy-diode",
+            machine_extra={
+                "heads": [{"max_power": 1000}],
+            },
+        )
+        pkg = DeviceProfile.from_path(device_dir)
+        m = pkg.create_machine(lite_context)
+        await _wait_for_tasks(task_mgr)
+
+        head = m.heads[0]
+        assert isinstance(head, LaserHead)
+        assert head.wavelength_nm == 0.0
+        assert head.max_power_watts == 0.0
+        assert head.effective_wavelength_nm() == 455.0
+        assert head.effective_max_power_watts() == 40.0

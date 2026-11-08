@@ -1,19 +1,17 @@
 # Configurações do Laser
 
-A página Laser nas Configurações da Máquina configura sua(s) cabeça(s) de
-laser e suas propriedades.
+A página Laser nas Configurações da Máquina configura sua(s) cabeça(s) de laser e suas propriedades.
 
-![Configurações do Laser](/screenshots/machine-settings-laser.png)
+![Configurações do Laser](/screenshots/machine-settings-laser.webp)
 
 ## Cabeças de Laser
 
-O Rayforge suporta máquinas com múltiplas cabeças de laser. Cada cabeça de
-laser tem sua própria configuração.
+O Rayforge suporta máquinas com múltiplas cabeças de laser. Cada cabeça de laser tem sua própria
+configuração.
 
 ### Adicionando uma Cabeça de Laser
 
-Clique no botão **Adicionar Laser** para criar uma nova configuração de
-cabeça de laser.
+Clique no botão **Adicionar Laser** para criar uma nova configuração de cabeça de laser.
 
 ### Propriedades da Cabeça de Laser
 
@@ -24,14 +22,14 @@ Cada cabeça de laser tem as seguintes configurações:
 Um nome descritivo para esta cabeça de laser.
 
 Exemplos:
+
 - "Diodo 10W"
 - "Tubo CO2"
 - "Laser Infravermelho"
 
 #### Número da Ferramenta
 
-O índice da ferramenta para esta cabeça de laser. Usado no G-code com o
-comando T.
+O índice da ferramenta para esta cabeça de laser. Usado no G-code com o comando T.
 
 - Máquinas de cabeça única: Use 0
 - Máquinas multi-cabeça: Atribua números únicos (0, 1, 2, etc.)
@@ -48,35 +46,36 @@ Este valor deve corresponder à configuração $30 do seu firmware.
 
 #### Potência de Enquadramento
 
-O nível de potência usado para operações de enquadramento (delinear sem
+O nível de potência usado para operações de enquadramento (delineando o limite do trabalho sem
 cortar).
 
-- Defina como 0 para desabilitar enquadramento
+- Defina como 0 para traçar o contorno com o feixe desligado, útil para máquinas com um laser de
+  alinhamento auxiliar
 - Ajuste com base no seu laser e material
 
 #### Velocidade de Enquadramento
 
-A velocidade na qual a cabeça do laser se move durante o enquadramento. Isso é
-definido por cabeça de laser, portanto, se sua máquina tiver vários lasers com
-características diferentes, você poderá escolher uma velocidade apropriada para
-cada um. Velocidades mais lentas tornam o caminho do enquadramento mais fácil
-de ser seguido visualmente.
+A velocidade na qual a cabeça do laser se move durante o enquadramento. Isso é definido por cabeça
+de laser, portanto, se sua máquina tiver vários lasers com características diferentes, você poderá
+escolher uma velocidade apropriada para cada um. Velocidades mais lentas tornam o caminho do
+enquadramento mais fácil de ser seguido visualmente.
 
 #### Potência de Foco
 
-O nível de potência usado quando o modo foco está ativado. O modo foco liga o
-laser em baixa potência para atuar como "ponteiro laser" para posicionamento.
+O nível de potência usado quando o modo foco está ativado. O modo foco liga o laser em baixa
+potência para atuar como "ponteiro laser" para posicionamento.
 
 - Defina como 0 para desabilitar o recurso de modo foco
 - Use para alinhamento visual e posicionamento
 
-:::tip Usando o Modo Foco
-Clique no botão foco (ícone de laser) na barra de ferramentas para alternar o
-modo foco. O laser ligará neste nível de potência, ajudando você a ver
-exatamente onde o laser está posicionado. Consulte
-[Posicionamento de Peça de Trabalho](../features/workpiece-positioning.md) para
-mais informações.
+<!-- prettier-ignore-start -->
+:::tip[Usando o Modo Foco]
+Clique no botão foco (ícone de laser) na barra de ferramentas para
+alternar o modo foco. O laser ligará neste nível de potência, ajudando você a ver exatamente onde o
+laser está posicionado. Consulte
+[Posicionamento de Peça de Trabalho](../features/workpiece-positioning.md) para mais informações.
 :::
+<!-- prettier-ignore-end -->
 
 #### Tamanho do Ponto
 
@@ -86,38 +85,33 @@ O tamanho físico do seu feixe de laser focalizado em milímetros.
 - A maioria dos lasers tem um ponto circular (ex: 0,1 x 0,1)
 - Afeta cálculos de qualidade de gravação
 
-:::tip Medindo o Tamanho do Ponto
+<!-- prettier-ignore-start -->
+:::tip[Medindo o Tamanho do Ponto]
 Para medir o tamanho do seu ponto:
+
 1. Dispare um pulso curto com baixa potência em um material de teste
 2. Meça a marca resultante com paquímetro
 3. Use a média de múltiplas medições
 :::
+<!-- prettier-ignore-end -->
 
-#### Cor de Corte
+#### Cor
 
-A cor usada para exibir operações de corte para este laser na tela e na
-visualização 3D. Isso ajuda você a distinguir visualmente qual laser realizará
-cada operação de corte ao trabalhar com múltiplas cabeças de laser.
+A cor usada para exibir as operações deste laser (cortes e gravação) na tela e na visualização 3D.
+Isso ajuda você a distinguir visualmente qual laser realizará cada operação ao trabalhar com
+múltiplas cabeças de laser.
 
 - Clique na amostra de cor para abrir um seletor de cores
 - Escolha uma cor que contraste bem com a visualização do seu material
 - Cores padrão são atribuídas automaticamente
 
-#### Cor de Raster
-
-A cor usada para exibir operações de raster/gravação para este laser na tela e
-na visualização 3D.
-
-- Clique na amostra de cor para abrir um seletor de cores
-- Útil para diferenciar operações de raster de cortes
-- Cada laser pode ter sua própria cor de raster distinta
-
-:::tip Fluxos de Trabalho Multi-Laser
-Ao usar múltiplas cabeças de laser, atribuir cores diferentes a cada laser
-facilita ver quais operações serão realizadas por qual laser. Por exemplo, use
-vermelho para seu laser de corte principal e azul para um laser de gravação
-secundário.
+<!-- prettier-ignore-start -->
+:::tip[Fluxos de Trabalho Multi-Laser]
+Ao usar múltiplas cabeças de laser, atribuir cores diferentes
+a cada laser facilita ver quais operações serão realizadas por qual laser. Por exemplo, use vermelho
+para seu laser de corte principal e azul para um laser de gravação secundário.
 :::
+<!-- prettier-ignore-end -->
 
 #### Tipo de Laser
 
@@ -127,39 +121,130 @@ Escolha o tipo de cabeça de laser no menu suspenso:
 - **CO2**: Lasers de tubo CO2
 - **Fibra**: Lasers de fibra
 
-Quando CO2 ou Fibra é selecionado, **configurações PWM** adicionais ficam
-disponíveis (veja abaixo). Para lasers de diodo, a seção PWM fica oculta,
-pois não se aplica.
+Quando CO2 ou Fibra é selecionado, **configurações PWM** adicionais ficam disponíveis (veja abaixo).
+Para lasers de diodo, a seção PWM fica oculta, pois não se aplica.
+
+O tipo de laser também define um **comprimento de onda** padrão (usado pelo modelo de queimadura
+física) quando nenhum valor explícito é inserido abaixo.
+
+#### Comprimento de Onda (nm)
+
+O comprimento de onda de emissão do seu laser, em nanômetros. Alimenta o
+[modelo de queimadura física](../ui/3d-preview.md#physical-burn-model) na pré-visualização 3D: junto
+com os dados de [absorção](../application-settings/materials.md#absorption) do material, determina
+quanta energia do laser o material absorve.
+
+Quando definido como 0, o Rayforge usa o comprimento de onda típico para o tipo de laser selecionado
+(ex.: 445 nm para diodo, 1064 nm para fibra, 10600 nm para CO2).
+
+#### Potência Óptica Máxima (W)
+
+A potência de saída óptica do seu laser na potência máxima, em watts. Esta é a saída de luz real,
+não a entrada elétrica. Junto com o tamanho do ponto e a velocidade de varredura, determina a
+fluência (J/cm²) usada pelo [modelo de queimadura física](../ui/3d-preview.md#physical-burn-model).
+
+Quando definido como 0, um padrão intermediário de mesa é usado.
 
 #### Configurações PWM
 
-Quando um tipo de laser CO2 ou Fibra é selecionado, os seguintes controles
-PWM aparecem:
+Quando um tipo de laser CO2 ou Fibra é selecionado, os seguintes controles PWM aparecem:
 
-- **Frequência PWM**: A frequência PWM padrão em Hz para esta cabeça de laser.
-  Valores típicos variam de 500 Hz a vários kHz, dependendo do seu controlador
-  e fonte de alimentação.
-- **Frequência PWM máxima**: O limite superior para a configuração de frequência.
-  Isso evita inserir valores que seu hardware não suporta.
-- **Largura de pulso**: A largura de pulso padrão em microssegundos. Controla
-  quanto tempo cada pulso fica ligado durante um ciclo.
+- **Frequência PWM**: A frequência PWM padrão em Hz para esta cabeça de laser. Valores típicos
+  variam de 500 Hz a vários kHz, dependendo do seu controlador e fonte de alimentação.
+- **Frequência PWM máxima**: O limite superior para a configuração de frequência. Isso evita inserir
+  valores que seu hardware não suporta.
+- **Largura de pulso**: A largura de pulso padrão em microssegundos. Controla quanto tempo cada
+  pulso fica ligado durante um ciclo.
 - **Largura de pulso mín/máx**: Limites para a configuração de largura de pulso.
 
-Esses padrões são repassados para suas etapas de operação, onde podem ser
-substituídos por etapa, se necessário.
+Esses padrões são repassados para suas etapas de operação, onde podem ser substituídos por etapa, se
+necessário.
+
+#### Deslocamento do Ponteiro
+
+Se a sua máquina tem um ponteiro laser separado (um pequeno laser de ponto vermelho) montado a uma
+distância fixa do feixe de corte, você pode informar essa distância ao Rayforge para que ele a
+compense.
+
+- **Usar deslocamento do ponteiro**: ativa a compensação. Desativado por padrão.
+- **Deslocamento do ponteiro X / Y**: a distância em milímetros do ponto do feixe de corte ao ponto
+  do ponteiro, ao longo dos eixos X e Y da máquina.
+
+Ao ativá-lo, três coisas mudam:
+
+1. **Definir zero na posição atual** (e os botões Zerar X / Zerar Y) coloca a origem de trabalho
+   onde o _ponto do ponteiro_ marca o material, não onde está o feixe de corte (invisível).
+2. A tela mostra um ponto amarelo do ponteiro ao lado do ponto vermelho do feixe, marcando onde o
+   ponto do ponteiro está no seu material.
+3. Uma chave de **alinhamento do ponteiro** fica disponível no popover de movimentação (veja
+   abaixo).
+
+#### Alinhamento do Ponteiro
+
+O alinhamento do ponteiro é uma chave de sessão no popover de movimentação (o ícone de bússola ao
+lado da leitura de posição). Enquanto ativado, todas as operações absolutas de mira — Mover para, os
+atalhos de canto, ir à origem do SCT, Clicar para mover, Mover cabeça para cá e enquadrar — são
+deslocadas para que o _ponto do ponteiro_ fique na posição mirada. Na tela, sempre há exatamente um
+ponto preenchido: o ponto do ponteiro é desenhado preenchido enquanto o alinhamento está ativado (o
+ponto do feixe é então um anel oco), e oco enquanto desativado (o ponto do feixe é preenchido).
+
+O fluxo de trabalho típico:
+
+1. Movimente a máquina até o ponto do ponteiro marcar seu ponto de referência no material.
+2. **Defina o zero de trabalho** ali — com o deslocamento do ponteiro ativado, a origem fica
+   exatamente onde o ponteiro apontou.
+3. Ative o **alinhamento do ponteiro** no popover de movimentação.
+4. Enquadre e mova com o ponto do ponteiro: tudo o que você mirar é marcado pelo ponteiro.
+5. Ao pressionar **Enviar**, aparece um aviso: um trabalho normal grava com o feixe nas posições do
+   SCT. Você pode executar uma **Simulação com ponteiro** (o trabalho é executado com o deslocamento
+   do ponteiro aplicado, de modo que o ponto do ponteiro traga o trajeto enquanto o feixe corre
+   deslocado — ele continua disparando na potência do trabalho), desativar o alinhamento e gravar,
+   ou cancelar.
+
+Duas coisas nunca são deslocadas: o **jog** (um movimento relativo não precisa de compensação) e os
+**trabalhos** — o corte sempre acontece com o feixe nas posições do SCT, então sua saída G-code é
+idêntica com o alinhamento ativado ou não. Junto com o zeramento pelo ponto do ponteiro, tudo fica
+consistente: a origem fica em `feixe + deslocamento`, a mira desloca cada alvo em `-deslocamento` e
+a gravação não é deslocada.
+
+O alinhamento do ponteiro é uma configuração de sessão: não é salvo no perfil da máquina e é
+redefinido ao trocar de máquina.
+
+<!-- prettier-ignore-start -->
+:::tip[Medir o Deslocamento]
+1. Movimente a máquina até o ponto do ponteiro marcar um ponto visível no
+   material.
+2. Ative o modo foco e movimente até o *feixe de corte* queimar uma marca
+   exatamente no mesmo ponto (ou mova cuidadosamente o feixe até lá com a
+   potência de foco).
+3. O deslocamento é a posição do ponteiro menos a do feixe. Por exemplo, se o
+   ponteiro marcou X=100 e você precisou movimentar o feixe até X=88 para
+   acertar o mesmo ponto, informe X = 12.0 — o ponto do ponteiro fica 12 mm à
+   frente do feixe.
+
+Se um corte de teste sair deslocado, inverta o sinal do eixo correspondente.
+:::
+<!-- prettier-ignore-end -->
+
+<!-- prettier-ignore-start -->
+:::note[Modo Rotativo]
+Quando o acessório rotativo está ativo, o eixo Y é substituído pelo rolo
+rotativo, de modo que a componente Y do deslocamento do ponteiro não se aplica
+de forma significativa. Defina-a como 0 para trabalhos rotativos.
+:::
+<!-- prettier-ignore-end -->
 
 #### Modelo 3D
 
-Cada cabeça de laser pode ter um modelo 3D atribuído a ela. Este modelo é
-renderizado na [visualização 3D](../ui/3d-preview.md) e segue o caminho da
-ferramenta durante a simulação.
+Cada cabeça de laser pode ter um modelo 3D atribuído a ela. Este modelo é renderizado na
+[visualização 3D](../ui/3d-preview.md) e segue o caminho da ferramenta durante a simulação.
 
-Clique na linha de seleção de modelo para navegar pelos modelos disponíveis.
-Uma vez selecionado um modelo, você pode ajustar sua escala, rotação (X/Y/Z) e
-distância focal para corresponder à sua cabeça de laser física.
+Clique na linha de seleção de modelo para navegar pelos modelos disponíveis. Uma vez selecionado um
+modelo, você pode ajustar sua escala, rotação (X/Y/Z) e distância focal para corresponder à sua
+cabeça de laser física.
 
 ## Veja Também
 
 - [Configurações do Dispositivo](device) - Configurações de modo laser GRBL
-- [Posicionamento de Peça de Trabalho](../features/workpiece-positioning.md) -
-  Usando modo foco e outros métodos de posicionamento
+- [Posicionamento de Peça de Trabalho](../features/workpiece-positioning.md) - Usando modo foco e
+  outros métodos de posicionamento

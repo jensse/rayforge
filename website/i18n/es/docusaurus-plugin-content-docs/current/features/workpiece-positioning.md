@@ -1,8 +1,7 @@
 # Guía de Posicionamiento de Piezas de Trabajo
 
-Esta guía cubre todos los métodos disponibles en Rayforge para posicionar
-con precisión su pieza de trabajo y alinear sus diseños antes de cortar o
-grabar.
+Esta guía cubre todos los métodos disponibles en Rayforge para posicionar con precisión su pieza de
+trabajo y alinear sus diseños antes de cortar o grabar.
 
 ## Resumen
 
@@ -10,8 +9,7 @@ El posicionamiento preciso de la pieza de trabajo es esencial para:
 
 - **Prevenir desperdicios**: Evitar cortar en la ubicación incorrecta
 - **Alineación precisa**: Posicionar diseños en materiales preimpresos
-- **Resultados repetibles**: Ejecutar el mismo trabajo múltiples veces de
-  manera consistente
+- **Resultados repetibles**: Ejecutar el mismo trabajo múltiples veces de manera consistente
 - **Trabajos de múltiples piezas**: Alinear múltiples piezas en una sola hoja
 
 Rayforge proporciona varias herramientas complementarias para el posicionamiento:
@@ -22,29 +20,29 @@ Rayforge proporciona varias herramientas complementarias para el posicionamiento
 | **Enmarcado**               | Previsualizar límites        | Verificar que el diseño cabe en el material      |
 | **Cero SCF**                | Establecer origen            | Posicionamiento repetible                        |
 | **Superposición de Cámara** | Colocación visual del diseño | Alineación precisa en características existentes |
+| **Punto de Referencia**     | Elegir el punto de anclaje   | Alinear bocetos paramétricos                     |
 
 ---
 
 ## Modo Enfoque (Puntero Láser)
 
-El modo enfoque enciende el láser a un nivel de potencia bajo, actuando como
-un "puntero láser" para ayudarle a ver exactamente dónde está posicionado el
-cabezal del láser.
+El modo enfoque enciende el láser a un nivel de potencia bajo, actuando como un "puntero láser" para
+ayudarle a ver exactamente dónde está posicionado el cabezal del láser.
 
 ### Activar el Modo Enfoque
 
 1. **Conectar a su máquina**
-2. **Hacer clic en el botón Enfoque** en la barra de herramientas (icono de
-   láser)
+2. **Hacer clic en el botón Enfoque** en la barra de herramientas (icono de láser)
 3. El láser se enciende al nivel de potencia de enfoque configurado
 4. **Mover el cabezal del láser** para ver la posición del haz en su material
 5. **Hacer clic en el botón Enfoque nuevamente** para apagar cuando termine
 
-:::warning Seguridad
-Incluso a baja potencia, el láser puede dañar los ojos. Nunca mire
-directamente al haz ni lo apunte a superficies reflectantes. Use protección
-ocular adecuada.
+<!-- prettier-ignore-start -->
+:::warning[Seguridad]
+Incluso a baja potencia, el láser puede dañar los ojos. Nunca mire directamente
+al haz ni lo apunte a superficies reflectantes. Use protección ocular adecuada.
 :::
+<!-- prettier-ignore-end -->
 
 ### Configurar la Potencia de Enfoque
 
@@ -56,29 +54,78 @@ La potencia de enfoque determina qué tan brillante aparece el punto láser:
    - Valores típicos: 1-5% para la mayoría de materiales
    - Establezca en 0 para desactivar la función
 
-:::tip Encontrar la Potencia Correcta
-Comience con 1% y aumente gradualmente. El punto debe ser visible pero no
-dejar ninguna marca en su material. Los materiales más oscuros pueden
-requerir mayor potencia para ver el punto claramente.
+<!-- prettier-ignore-start -->
+:::tip[Encontrar la Potencia Correcta]
+Comience con 1% y aumente gradualmente. El punto debe ser
+visible pero no dejar ninguna marca en su material. Los materiales más oscuros pueden requerir mayor
+potencia para ver el punto claramente.
 :::
+<!-- prettier-ignore-end -->
 
 ### Cuándo Usar el Modo Enfoque
 
-- **Verificaciones rápidas de alineación**: Ver si el láser está
-  aproximadamente donde espera
-- **Encontrar bordes del material**: Mover a las esquinas para verificar la
-  colocación del material
-- **Establecer origen SCF**: Posicionar láser en el punto cero deseado antes
-  de establecer SCF
-- **Verificar posición de inicio**: Comprobar que el referenciado funcionó
-  correctamente
+- **Verificaciones rápidas de alineación**: Ver si el láser está aproximadamente donde espera
+- **Encontrar bordes del material**: Mover a las esquinas para verificar la colocación del material
+- **Establecer origen SCF**: Posicionar láser en el punto cero deseado antes de establecer SCF
+- **Verificar posición de inicio**: Comprobar que el referenciado funcionó correctamente
+
+---
+
+## Puntero Láser con Desplazamiento
+
+Algunas máquinas tienen un láser puntero dedicado (un pequeño láser de punto rojo) montado a una
+distancia fija del haz de corte. Cuando alineas el material usando el punto del puntero, el haz de
+corte en realidad aterrizaría desplazado de ese punto — a menos que Rayforge lo compense.
+
+La opción de láser [Desplazamiento del Puntero](../machine/laser.md) te permite introducir esa
+distancia y activar o desactivar la compensación. Con ella activada:
+
+- **Establecer cero en la posición actual** (y Cero X / Cero Y) coloca el origen de trabajo en la
+  posición del punto del puntero.
+- El lienzo muestra un punto amarillo del puntero junto al punto rojo del haz, marcando dónde está
+  el punto del puntero en tu material.
+- Un interruptor de **alineación del puntero** aparece en el popover de movimiento (el icono de
+  brújula junto a la lectura de posición).
+
+### Alineación del Puntero
+
+Mientras la **alineación del puntero** está activada, cada operación absoluta de apuntado — Mover a,
+los atajos de esquina, ir al origen del SCF, Clic para mover, Mover cabeza aquí y enmarcar — hace
+aterrizar el _punto del puntero_ en la posición apuntada, de modo que puedes posicionar el material
+completamente por el punto visible. La entrada de coordenadas del popover se rellena con la posición
+del punto del puntero. En el lienzo siempre hay exactamente un punto relleno: el punto del puntero
+se dibuja relleno mientras la alineación está activada (el punto del haz es entonces un anillo
+hueco), y hueco mientras está desactivada (el punto del haz está relleno).
+
+El flujo de trabajo combina limpiamente con el zerado por el punto del puntero: el origen queda
+donde el puntero marcó, el apuntado desplaza cada objetivo por el desplazamiento, y la grabación no
+se desplaza — así alinear con el punto y cortar con el haz terminan siendo consistentes.
+
+Al pulsar **Enviar** con la alineación activada, aparece una advertencia en cada envío (no hay
+opción de "no volver a preguntar"). Puedes elegir:
+
+- **Simulación con puntero**: el trabajo se ejecuta con el desplazamiento del puntero aplicado, de
+  modo que el punto del puntero traza la trayectoria mientras el haz corre desplazado. El láser
+  sigue disparando a potencia de trabajo — asegúrate de que el haz desplazado no pueda tocar nada
+  que no deba.
+- **Desactivar y grabar**: la alineación se desactiva y el trabajo se graba normalmente con el haz
+  en las posiciones del SCF.
+- **Cancelar**.
+
+Los movimientos de jog y los trabajos nunca se desplazan con el interruptor: el jog es relativo, y
+la salida G-code es idéntica tanto si la alineación está activada como desactivada. El interruptor
+es solo de sesión — no se guarda en el perfil de la máquina y se restablece al cambiar de máquina.
+
+El desplazamiento del puntero es especialmente útil para material más grande que la cama láser
+(trabajo de paso continuo), donde alineas repetidamente el diseño con una marca de referencia en el
+material en movimiento.
 
 ---
 
 ## Enmarcado
 
-El enmarcado traza el rectángulo delimitador de su trabajo a potencia baja
-(o cero), mostrando exactamente dónde se cortará o grabará su diseño.
+El enmarcado traza el rectángulo delimitador de su trabajo a potencia baja (o cero), mostrando
+exactamente dónde se cortará o grabará su diseño.
 
 ### Cómo Enmarcar
 
@@ -89,31 +136,29 @@ El enmarcado traza el rectángulo delimitador de su trabajo a potencia baja
 
 ### Configuración de Enmarcado
 
-Configurar el comportamiento de enmarcado en **Configuración → Máquina →
-Láser**:
+Configurar el comportamiento de enmarcado en **Configuración → Máquina → Láser**:
 
-- **Velocidad de Enmarcado**: Qué tan rápido se mueve el cabezal durante el
-  enmarcado (más lento = más fácil de ver)
+- **Velocidad de Enmarcado**: Qué tan rápido se mueve el cabezal durante el enmarcado (más lento =
+  más fácil de ver)
 - **Potencia de Enmarcado**: Potencia del láser durante el enmarcado
   - Establezca en 0 para enmarcado en aire (láser apagado, solo movimiento)
   - Establezca en 1-5% para un rastro visible en el material
 
-:::tip Enmarcado en Aire vs. Baja Potencia
-
-- **Enmarcado en aire (0% potencia)**: Seguro para cualquier material, pero
-  solo ve el movimiento del cabezal
-- **Enmarcado de baja potencia**: Deja una marca visible débil, útil para
-  alineación precisa en materiales oscuros
-  :::
+<!-- prettier-ignore-start -->
+:::tip[Enmarcado en Aire vs. Baja Potencia]
+- **Enmarcado en aire (0% potencia)**: Seguro para cualquier material, pero solo ve el movimiento
+  del cabezal
+- **Enmarcado de baja potencia**: Deja una marca visible débil, útil para alineación precisa en
+  materiales oscuros
+:::
+<!-- prettier-ignore-end -->
 
 ### Cuándo Enmarcar
 
 - **Antes de cada trabajo**: Verificación rápida de que el diseño cabe
-- **Después de cambios de posición**: Confirmar que la nueva colocación es
-  correcta
+- **Después de cambios de posición**: Confirmar que la nueva colocación es correcta
 - **Materiales costosos**: Verificar dos veces antes de comprometerse
-- **Trabajos de múltiples piezas**: Verificar que todas las piezas caben en
-  el material
+- **Trabajos de múltiples piezas**: Verificar que todas las piezas caben en el material
 
 Ver [Enmarcar su Trabajo](framing-your-job) para más detalles.
 
@@ -121,19 +166,15 @@ Ver [Enmarcar su Trabajo](framing-your-job) para más detalles.
 
 ## Establecer Cero SCF (Sistema de Coordenadas de Trabajo)
 
-Los Sistemas de Coordenadas de Trabajo (SCF) le permiten definir "puntos
-cero" personalizados para sus trabajos. Esto facilita alinear trabajos a la
-posición de su material.
+Los Sistemas de Coordenadas de Trabajo (SCF) le permiten definir "puntos cero" personalizados para
+sus trabajos. Esto facilita alinear trabajos a la posición de su material.
 
 ### Configuración Rápida de SCF
 
-1. **Mover el cabezal del láser** a la esquina de su material (o punto de
-   origen deseado)
+1. **Mover el cabezal del láser** a la esquina de su material (o punto de origen deseado)
 2. **Abrir el Panel de Control** (`Ctrl+L`)
-3. **Seleccionar un SCF** (G54 es el sistema de coordenadas de trabajo por
-   defecto)
-4. **Hacer clic en Cero X y Cero Y** para establecer la posición actual como
-   origen
+3. **Seleccionar un SCF** (G54 es el sistema de coordenadas de trabajo por defecto)
+4. **Hacer clic en Cero X y Cero Y** para establecer la posición actual como origen
 5. El punto (0,0) de su diseño ahora se alineará con esta posición
 
 ### Entender los Sistemas de Coordenadas
@@ -146,69 +187,97 @@ Rayforge usa varios sistemas de coordenadas:
 | **G54**     | Sistema de coordenadas de trabajo 1 (por defecto)    |
 | **G55-G59** | Sistemas de coordenadas de trabajo adicionales       |
 
-:::tip Múltiples Áreas de Trabajo
-Use diferentes ranuras SCF para diferentes posiciones de fijación. Por
-ejemplo:
+<!-- prettier-ignore-start -->
+:::tip[Múltiples Áreas de Trabajo]
+Use diferentes ranuras SCF para diferentes posiciones de fijación.
+Por ejemplo:
 
 - G54 para el lado izquierdo de su cama
 - G55 para el lado derecho
 - G56 para un accesorio rotatorio
-  :::
+:::
+<!-- prettier-ignore-end -->
 
 ### Cuándo Establecer Cero SCF
 
 - **Nueva colocación de material**: Alinear origen a la esquina del material
-- **Trabajo con fijaciones**: Establecer origen al punto de referencia de la
-  fijación
+- **Trabajo con fijaciones**: Establecer origen al punto de referencia de la fijación
 - **Trabajos repetibles**: Mismo trabajo, diferentes posiciones
-- **Tandas de producción**: Posicionamiento consistente a través de múltiples
-  piezas
+- **Tandas de producción**: Posicionamiento consistente a través de múltiples piezas
 
-Ver [Sistemas de Coordenadas de Trabajo](../general-info/coordinate-systems.md)
-para documentación completa.
+Ver [Sistemas de Coordenadas de Trabajo](../general-info/coordinate-systems.md) para documentación
+completa.
+
+---
+
+## Punto de Referencia
+
+Por defecto, los campos **Posición X** y **Posición Y** del panel de propiedades se refieren a la
+esquina inferior izquierda del rectángulo delimitador de la pieza. Para bocetos paramétricos esta no
+suele ser la referencia más útil: cuando un parámetro cambia el tamaño del boceto, una posición
+basada en la esquina hace que el diseño parezca desplazarse respecto a todo lo demás.
+
+El desplegable **Posición relativa a** del panel de propiedades permite elegir a qué punto se
+refieren los campos de posición:
+
+| Opción                  | Se refiere a                                                  |
+| ----------------------- | ------------------------------------------------------------- |
+| **Esquina**             | La esquina inferior izquierda del rectángulo (predeterminado) |
+| **Centro**              | El centro del rectángulo delimitador                          |
+| **Punto de referencia** | El origen lógico de la geometría, p. ej. el origen del boceto |
+
+![El desplegable «Posición relativa a» en el panel de propiedades](/screenshots/main-item-properties.webp)
+
+El punto de referencia elegido es también el punto que permanece fijo al redimensionar la pieza y al
+regenerar un boceto con parámetros modificados. La opción **Punto de referencia** solo está
+disponible para piezas cuya fuente define uno, como los bocetos, donde es el origen del boceto.
+
+<!-- prettier-ignore-start -->
+:::tip[Alinear bocetos paramétricos]
+Para mantener un grabado registrado dentro de un contorno de corte: vincule ambos bocetos al
+origen del boceto, configure ambas piezas en **Punto de referencia** y asigne la misma posición
+X/Y a ambas. Los bocetos permanecen alineados sin importar cómo cambien los parámetros.
+:::
+<!-- prettier-ignore-end -->
 
 ---
 
 ## Posicionamiento Basado en Cámara
 
-La superposición de cámara muestra una vista en vivo de su material con su
-diseño superpuesto, permitiendo alineación visual precisa.
+La superposición de cámara muestra una vista en vivo de su material con su diseño superpuesto,
+permitiendo alineación visual precisa.
 
 ### Configurar la Cámara
 
 1. **Conectar una cámara USB** sobre su área de trabajo
 2. Vaya a **Configuración → Cámara** y agregue su dispositivo de cámara
 3. **Activar la cámara** para ver la superposición en su lienzo
-4. **Alinear la cámara** usando el procedimiento de alineación (requerido
-   para posicionamiento preciso)
+4. **Alinear la cámara** usando el procedimiento de alineación (requerido para posicionamiento
+   preciso)
 
 ### Alineación de Cámara
 
-La alineación de cámara mapea los píxeles de la cámara a coordenadas del
-mundo real:
+La alineación de cámara mapea los píxeles de la cámara a coordenadas del mundo real:
 
 1. Abrir **Cámara → Alinear Cámara**
-2. Colocar marcadores de alineación en posiciones conocidas (al menos 4
-   puntos)
+2. Colocar marcadores de alineación en posiciones conocidas (al menos 4 puntos)
 3. Ingresar las coordenadas X/Y del mundo real para cada punto
 4. Hacer clic en **Aplicar** para calcular la transformación
 
-:::tip Precisión de Alineación
-
+<!-- prettier-ignore-start -->
+:::tip[Precisión de Alineación]
 - Use puntos distribuidos en toda su área de trabajo
 - Mida las coordenadas del mundo cuidadosamente con una regla
-- Use posiciones de máquina (mover a coordenadas conocidas) para mayor
-  precisión
-  :::
+- Use posiciones de máquina (mover a coordenadas conocidas) para mayor precisión
+:::
+<!-- prettier-ignore-end -->
 
 ### Posicionamiento con Superposición de Cámara
 
 1. **Activar la superposición de cámara** para ver su material
 2. **Importar su diseño**
-3. **Arrastrar el diseño** para alinear con características visibles en la
-   cámara
-4. **Ajuste fino** usando las teclas de flecha para colocación perfecta al
-   píxel
+3. **Arrastrar el diseño** para alinear con características visibles en la cámara
+4. **Ajuste fino** usando las teclas de flecha para colocación perfecta al píxel
 5. **Enmarcar para verificar** antes de ejecutar el trabajo
 
 ### Cuándo Usar Posicionamiento con Cámara
@@ -245,6 +314,32 @@ Para colocación precisa en materiales preimpresos o marcados:
 4. **Importar y posicionar diseño** visualmente en la imagen de la cámara
 5. **Desactivar cámara** y enmarcar para verificar
 6. **Ejecutar el trabajo**
+
+### Flujo de Trabajo de Paso Continuo
+
+Para material más largo que la cama láser (alimentado a través de la máquina en segmentos), el
+**desplazamiento del puntero** elimina el cálculo manual:
+
+1. **Corta el segmento 1** de tu diseño normalmente.
+2. **Alimenta el material hacia adelante** a través del paso continuo para que el siguiente segmento
+   quede sobre la cama.
+3. **Mueve la máquina** hasta que el punto del puntero marque un punto de referencia en el material
+   (por ejemplo, una esquina de un elemento ya cortado).
+4. **Establece el cero del SCF** (o Cero X / Cero Y) — con el desplazamiento del puntero activado,
+   el origen queda exactamente donde apuntó el puntero.
+5. **Posiciona el siguiente segmento** del diseño relativo a ese origen en el lienzo.
+6. **Enmarca para verificar**, luego **ejecuta el trabajo**.
+7. Repite desde el paso 2 para cada segmento restante.
+
+### Flujo de Trabajo de Bocetos Paramétricos
+
+Para trabajos que combinan un boceto de corte con un boceto de grabado paramétrico:
+
+1. **Vincule ambos bocetos** al origen del boceto (p. ej. centre la geometría en el origen)
+2. **Coloque ambas piezas** en el lienzo y configure **Posición relativa a → Punto de referencia**
+3. **Introduzca la misma posición X/Y** para ambas piezas
+4. **Ajuste los parámetros** según sea necesario: los bocetos permanecen registrados entre sí
+5. **Enmarque el trabajo** para verificar la colocación
 
 ### Flujo de Trabajo de Producción
 
@@ -286,20 +381,14 @@ Para ejecutar el mismo trabajo en diferentes ubicaciones:
 - **Volver a ejecutar alineación de cámara** con más puntos de referencia
 - **Verificar montaje de cámara** - puede haberse movido
 - **Verificar coordenadas del mundo** fueron medidas con precisión
-- **Ver solución de problemas de cámara** en documentación de Integración de
-  Cámara
+- **Ver solución de problemas de cámara** en documentación de Integración de Cámara
 
 ---
 
 ## Temas Relacionados
 
-- [Enmarcar su Trabajo](framing-your-job) - Documentación detallada de
-  enmarcado
-- [Sistemas de Coordenadas de Trabajo](../general-info/coordinate-systems.md) -
-  Referencia SCF
-- [Integración de Cámara](../machine/camera.md) - Configuración y alineación de
-  cámara
-- [Panel de Control](../ui/bottom-panel.md) - Controles de movimiento y gestión
-  SCF
-- [Guía de Inicio Rápido](../getting-started/quick-start.md) - Flujo de trabajo
-  básico
+- [Enmarcar su Trabajo](framing-your-job) - Documentación detallada de enmarcado
+- [Sistemas de Coordenadas de Trabajo](../general-info/coordinate-systems.md) - Referencia SCF
+- [Integración de Cámara](../machine/camera.md) - Configuración y alineación de cámara
+- [Panel de Control](../ui/bottom-panel.md) - Controles de movimiento y gestión SCF
+- [Guía de Inicio Rápido](../getting-started/quick-start.md) - Flujo de trabajo básico

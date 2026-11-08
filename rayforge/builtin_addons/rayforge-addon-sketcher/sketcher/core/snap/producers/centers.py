@@ -22,7 +22,6 @@ class CentersProducer(SnapLineProducer):
         drag_context: DragContext,
         threshold: float,
     ) -> Iterator[SnapLine]:
-        x, y = drag_position
         for entity in registry.entities:
             if drag_context.is_entity_dragged(entity.id):
                 continue
@@ -38,22 +37,24 @@ class CentersProducer(SnapLineProducer):
             center = self._get_center(entity, registry)
             if center is None:
                 continue
+            if drag_context.coincides_with_dragged(
+                center[0], center[1], registry
+            ):
+                continue
 
             cx, cy = center
-            if abs(cx - x) <= threshold:
-                yield SnapLine(
-                    is_horizontal=False,
-                    coordinate=cx,
-                    line_type=SnapLineType.CENTER,
-                    source=entity,
-                )
-            if abs(cy - y) <= threshold:
-                yield SnapLine(
-                    is_horizontal=True,
-                    coordinate=cy,
-                    line_type=SnapLineType.CENTER,
-                    source=entity,
-                )
+            yield SnapLine(
+                is_horizontal=False,
+                coordinate=cx,
+                line_type=SnapLineType.CENTER,
+                source=entity,
+            )
+            yield SnapLine(
+                is_horizontal=True,
+                coordinate=cy,
+                line_type=SnapLineType.CENTER,
+                source=entity,
+            )
 
     def produce_points(
         self,
@@ -77,6 +78,10 @@ class CentersProducer(SnapLineProducer):
 
             center = self._get_center(entity, registry)
             if center is None:
+                continue
+            if drag_context.coincides_with_dragged(
+                center[0], center[1], registry
+            ):
                 continue
 
             cx, cy = center

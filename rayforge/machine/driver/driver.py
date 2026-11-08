@@ -1,25 +1,27 @@
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum, auto
 from gettext import gettext as _
 from typing import (
     TYPE_CHECKING,
     Any,
+    ClassVar,
     Optional,
 )
 
 from blinker import Signal
+from raygeo.ops import Ops
 from raygeo.ops.axis import Axis
+from raygeo.ops.state import PowerMode
 
 from ...context import RayforgeContext
 from ...core.varset import IntVar, VarSet
 from ...shared.units.system import UnitSystem
+from ..discovery.spec import DiscoverySpec
 
 if TYPE_CHECKING:
-    from raygeo.ops import Ops
-
     from ...core.doc import Doc
     from ...pipeline.encoder.base import EncodedOutput, OpsEncoder
     from ..device.profile import DeviceProfile
@@ -84,6 +86,19 @@ DRIVER_MATURITY_LABELS = {
 }
 
 
+class ZHomingMode(Enum):
+    """How the Z axis finds its reference position when homed."""
+
+    SWITCH = "switch"
+    PROBE = "probe"
+
+
+Z_HOMING_MODE_LABELS = {
+    ZHomingMode.SWITCH: _("Home Switch"),
+    ZHomingMode.PROBE: _("Probe"),
+}
+
+
 class DeviceStatus(Enum):
     UNKNOWN = auto()
     IDLE = auto()
@@ -134,6 +149,8 @@ class DeviceError:
 
 
 Pos = tuple[float | None, ...]  # x, y, z[, a] in mm
+
+MOVE_TO_SPEED_MM_MIN = 1500  # Fixed speed for absolute move commands
 
 
 @dataclass
@@ -186,6 +203,60 @@ def pwm_varset(params: PWMParams) -> VarSet:
     )
 
 
+FRAME_LAYER_UID = "rayforge-frame"
+FRAME_WORKPIECE_UID = "rayforge-frame-workpiece"
+
+# A frame corner in command space: (x, y, extra_axes). The extra-axes
+# dict carries rotary degrees for rotary frames; it is None for flat
+# frames.
+FrameCorner = tuple[float, float, dict[Axis, float] | None]
+
+
+def build_frame_ops(
+    corners: Sequence[FrameCorner],
+    speed_mm_per_min: float,
+    head_uid: str | None,
+    repeat_count: int = 1,
+    corner_pause_s: float = 0.0,
+    power_fraction: float = 0.0,
+) -> Ops:
+    """Build a frame trace as a well-formed job opstream.
+
+    The frame is emitted as a structured job (job → layer → workpiece)
+    so controllers that require valid layer structure can encode it.
+    The state ops live inside the workpiece because layer-scoped
+    settings require an active layer. The trace repeats per
+    *repeat_count* without duplicating the structural markers.
+    """
+    frame_ops = Ops()
+    frame_ops.job_start()
+    frame_ops.layer_start(FRAME_LAYER_UID)
+    frame_ops.workpiece_start(FRAME_WORKPIECE_UID)
+    if head_uid is not None:
+        frame_ops.set_head(head_uid)
+    # Zero frame power is valid: the frame traces the outline with
+    # the beam off (e.g. for machines with an auxiliary alignment
+    # laser). The encoder omits the laser-on command at 0% power.
+    frame_ops.set_power(power_fraction)
+    # Framing traces at fixed speed steps and on some controllers
+    # a stationary M4 emits no beam at all, so always frame with
+    # constant power (M3).
+    frame_ops.set_power_mode(PowerMode.CONSTANT)
+    frame_ops.set_feed_rate(speed_mm_per_min)
+    for _repeat in range(max(1, repeat_count)):
+        prev = corners[0]
+        for corner in corners[1:]:
+            frame_ops.move_to(prev[0], prev[1], extra=prev[2])
+            frame_ops.line_to(corner[0], corner[1], extra=corner[2])
+            if corner_pause_s > 0:
+                frame_ops.dwell(corner_pause_s * 1000)
+            prev = corner
+    frame_ops.workpiece_end(FRAME_WORKPIECE_UID)
+    frame_ops.layer_end(FRAME_LAYER_UID)
+    frame_ops.job_end()
+    return frame_ops
+
+
 class Driver(ABC):
     """
     Abstract base class for all drivers.
@@ -220,6 +291,50 @@ class Driver(ABC):
     # When True, the driver can query the device to detect its
     # native unit system (metric vs imperial).
     supports_unit_detection: bool = False
+    # When True, the driver can raster the multi-depth ("Multiple
+    # Depths") depth mode, which requires emitting per-level tool
+    # passes. Drivers without it exclude the mode from raster steps.
+    supports_multi_depth_raster: ClassVar[bool] = True
+    # Everything the driver declares about discoverability: what its
+    # devices look like on the wire and on the network, composed of
+    # per-channel recognizers. When set, the driver participates in
+    # automatic device discovery (see
+    # rayforge.machine.discovery). Serial-only drivers declare only
+    # the serial recognizer; network drivers only the mDNS one.
+    DISCOVERY: ClassVar[DiscoverySpec | None] = None
+    # The Z homing modes the driver can perform. The first entry is
+    # the default for machines that have not chosen a mode.
+    z_homing_modes: ClassVar[tuple[ZHomingMode, ...]] = (ZHomingMode.SWITCH,)
+
+    @classmethod
+    def resolve_z_homing_mode(cls, mode: ZHomingMode | None) -> ZHomingMode:
+        """
+        Returns the Z homing mode to use for a machine's chosen mode.
+
+        Falls back to the driver's default when no mode was chosen or
+        the driver does not support the chosen one.
+        """
+        if mode is not None and mode in cls.z_homing_modes:
+            return mode
+        return cls.z_homing_modes[0]
+
+    def get_z_homing_mode(self) -> ZHomingMode:
+        """Returns the Z homing mode configured for this machine."""
+        return self.resolve_z_homing_mode(self._machine.z_homing_mode)
+
+    @classmethod
+    def supports_travel_speed(cls, dialect: "GcodeDialect | None") -> bool:
+        """
+        Whether the driver can emit travel moves at a configurable speed.
+
+        Non-G-code drivers (e.g. binary protocols) always carry the
+        travel speed in their command stream. G-code drivers depend on
+        the dialect: the speed can only be emitted if the dialect's
+        rapid-move template accepts an F parameter.
+        """
+        if not cls.uses_gcode:
+            return True
+        return bool(dialect and dialect.can_g0_with_speed)
 
     @property
     @abstractmethod
@@ -300,6 +415,31 @@ class Driver(ABC):
             return mm_per_min
         return round(mm_per_min * scale, 4)
 
+    def _format_move_to(
+        self,
+        pos_x: float,
+        pos_y: float,
+        pos_z: float | None = None,
+        speed: float | None = None,
+    ) -> str:
+        """
+        Format an absolute positioning move for emission.
+
+        Values are given in mm and converted to the machine's unit
+        system. When a Z target is given it is carried in the same
+        move via the dialect's travel_move template. The speed is
+        given in mm/min and falls back to MOVE_TO_SPEED_MM_MIN.
+        """
+        if speed is None:
+            speed = MOVE_TO_SPEED_MM_MIN
+        z = self._to_machine_length(pos_z) if pos_z is not None else None
+        return self.dialect.format_move_to(
+            x=self._to_machine_length(pos_x),
+            y=self._to_machine_length(pos_y),
+            speed=self._to_machine_speed(speed),
+            z=z,
+        )
+
     def _from_machine_length(self, value: float) -> float:
         """
         Convert a length in the machine's native units back to millimeters.
@@ -354,11 +494,48 @@ class Driver(ABC):
                 str(e),
                 _("Error during setup. You may need to edit device settings."),
             )
+        except Exception as e:
+            logger.exception("Unexpected error during driver setup")
+            self.state.error = DeviceError(
+                -999,
+                str(e),
+                _(
+                    "Unexpected error during setup. You may need to edit "
+                    "device settings."
+                ),
+            )
         self.did_setup = True
 
     async def cleanup(self):
         self.did_setup = False
         self.state.error = None
+
+    def update_settings(self, **kwargs: Any) -> bool:
+        """
+        Informs a live driver that its setup arguments changed. Called
+        in place of a teardown/rebuild whenever the machine's driver
+        class is unchanged.
+
+        Drivers that can absorb the change without dropping a running
+        connection return True to stay alive; the new arguments are
+        expected to be stored on the instance and take effect for
+        subsequent operations or the next connection attempt. The
+        default requests a rebuild, which tears down and re-creates the
+        driver with the new arguments. Rebuild requests are debounced
+        by the machine controller.
+        """
+        return False
+
+    def refresh_dialect(self) -> None:
+        """
+        Informs a live driver that a dialect definition changed.
+
+        Drivers that keep a resolved copy of the dialect's interactive
+        command templates re-read them so manual commands use the
+        edited templates without waiting for a reconnect or job. The
+        default is a no-op for drivers that resolve the dialect per
+        command.
+        """
 
     @classmethod
     @abstractmethod
@@ -495,6 +672,54 @@ class Driver(ABC):
             machine_code: The raw machine code to execute.
         """
 
+    async def frame(
+        self,
+        corners: Sequence[FrameCorner],
+        speed_mm_per_min: float,
+        doc: "Doc",
+        repeat_count: int = 1,
+        corner_pause_s: float = 0.0,
+        power_fraction: float = 0.0,
+        on_command_done: Callable[[int], None | Awaitable[None]] | None = None,
+    ) -> None:
+        """
+        Trace the given frame outline.
+
+        The corners are given in command space, in trace order, with the
+        outline closed (the first corner repeated last). Each corner is
+        an ``(x, y, extra_axes)`` tuple; the extra-axes dict carries
+        rotary degrees for rotary frames and is None for flat frames.
+
+        The default implementation encodes a well-formed job opstream
+        (job → layer → workpiece markers with the head state ops, then
+        the trace) and executes it like a minimal job, which is how
+        G-code controllers frame. Drivers whose controllers frame better
+        with protocol-native commands override this; e.g. the Ruida
+        driver frames with beam-off absolute moves.
+
+        Args:
+            corners: Absolute positions to trace, in order.
+            speed_mm_per_min: Trace speed in mm/min.
+            doc: The document context for the encoder.
+            repeat_count: How often to trace the outline.
+            corner_pause_s: Pause to make at each corner, in seconds.
+            power_fraction: Laser power to trace with (0..1). Zero
+                traces with the beam off.
+            on_command_done: Optional sync or async callback called when
+                each command is done. Called with the op index.
+        """
+        head = self._machine.get_default_laser_head()
+        ops = build_frame_ops(
+            corners,
+            speed_mm_per_min,
+            head_uid=head.uid if head is not None else None,
+            repeat_count=repeat_count,
+            corner_pause_s=corner_pause_s,
+            power_fraction=power_fraction,
+        )
+        encoded = self.get_encoder().encode(ops, self._machine, doc)
+        await self.run(encoded, doc, ops, on_command_done=on_command_done)
+
     @abstractmethod
     async def set_hold(self, hold: bool = True) -> None:
         """
@@ -503,9 +728,13 @@ class Driver(ABC):
         """
 
     @abstractmethod
-    async def cancel(self) -> None:
+    async def cancel(self, emergency: bool = False) -> None:
         """
         Sends a command to cancel the currently executing program.
+
+        When *emergency* is True, the cancellation is the result of an
+        unexpected error rather than a user-initiated stop, and drivers
+        should additionally send their dialect's failsafe command.
         """
 
     def can_home(self, axis: Optional["Axis"] = None) -> bool:
@@ -534,9 +763,18 @@ class Driver(ABC):
         """
 
     @abstractmethod
-    async def move_to(self, pos_x: float, pos_y: float) -> None:
+    async def move_to(
+        self,
+        pos_x: float,
+        pos_y: float,
+        pos_z: float | None = None,
+        speed: float | None = None,
+    ) -> None:
         """
-        Moves to the given position. Values are given mm.
+        Moves to the given position. Values are given mm. When pos_z is
+        given, it is targeted as an absolute Z position in the same move.
+        The speed is given in mm/min and falls back to a driver default
+        when None.
         """
 
     @abstractmethod
@@ -615,11 +853,14 @@ class Driver(ABC):
 
     @abstractmethod
     async def set_wcs_offset(
-        self, wcs_slot: str, x: float, y: float, z: float
+        self, wcs_slot: str, x: float, y: float, z: float | None
     ) -> None:
         """
         Sends a command to the controller to define the offset for a
         specific WCS slot (e.g. "G54").
+
+        When *z* is ``None`` (a no-Z machine), the Z component is
+        omitted from the emitted command.
         """
 
     @abstractmethod
@@ -646,13 +887,14 @@ class Driver(ABC):
         """
         Selects the active Work Coordinate System on the controller.
 
-        For G-code based controllers (GRBL, Smoothie), this is typically
-        done via G-code commands during job execution. Drivers that require
-        immediate selection should override this method.
+        The default sends the WCS name as a raw command, which is the
+        G-code selection (e.g. "G54") for GRBL and Smoothie. Drivers whose
+        WCS names are not commands should override this method.
 
         Args:
             wcs: The WCS slot to select (e.g., "G54", "REF0", "MACHINE")
         """
+        await self.run_raw(wcs)
 
     @abstractmethod
     async def run_probe_cycle(

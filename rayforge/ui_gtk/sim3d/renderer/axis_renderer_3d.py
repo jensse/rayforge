@@ -22,9 +22,23 @@ from .text_renderer import TextRenderer
 
 logger = logging.getLogger(__name__)
 
+# Depth layering along Z (grid = bed plane, z=0):
+#   background/bed plane  -0.002  (below the grid)
+#   grid lines            +0.001  (on the bed, above the background)
+#   WCS marker            +0.002  (above the grid; dynamically lifted by
+#                                 stock_top_z for no-Z machines so it
+#                                 sits on the work plane)
+#   extent frame          +0.003  (on top)
+BACKGROUND_Z = -0.002
+GRID_Z = 0.001
+WCS_MARKER_Z = 0.002
+EXTENT_FRAME_Z = 0.003
+
 
 class AxisRenderer3D(BaseRenderer):
     """Renders a 3D grid with axes, background, and labels on the XY plane."""
+
+    visibility_key = "show_grid"
 
     def __init__(
         self,
@@ -73,7 +87,7 @@ class AxisRenderer3D(BaseRenderer):
             width=self.width_mm,
             height=self.height_mm,
             color=self.background_color,
-            z_offset=-0.002,
+            z_offset=BACKGROUND_Z,
         )
         self._add_child_renderer(self.background_renderer)
 
@@ -170,8 +184,16 @@ class AxisRenderer3D(BaseRenderer):
         """No per-frame state to prepare."""
 
     def _init_grid_and_axes(self):
-        """Creates VAOs/VBOs for the grid and axis lines."""
-        grid_z_pos = -0.001
+        """Creates VAOs/VBOs for the grid and axis lines.
+
+        Depth layering along Z (grid = bed plane, z=0):
+        grid lines at +0.001 sit on the bed, the WCS marker at
+        +0.002 is above the grid (and dynamically lifted by
+        ``stock_top_z`` for no-Z machines), and the extent frame
+        at +0.003 sits on top. The background/bed plane stays below
+        at -0.002.
+        """
+        grid_z_pos = GRID_Z
         w, h = self.width_mm, self.height_mm
 
         # Grid vertices
@@ -186,7 +208,7 @@ class AxisRenderer3D(BaseRenderer):
 
         # WCS Marker vertices (a cross)
         marker_size = self.grid_size_mm * 0.5
-        marker_z_pos = 0.001  # Slightly above the axes
+        marker_z_pos = WCS_MARKER_Z  # Above the grid lines
         wcs_marker_verts = [
             -marker_size,
             0.0,
@@ -254,7 +276,7 @@ class AxisRenderer3D(BaseRenderer):
 
     def _update_extent_frame_buffer(self):
         """Creates or updates the VAO/VBO for the extent frame."""
-        extent_z_pos = 0.002
+        extent_z_pos = EXTENT_FRAME_Z
         x, y = self.extent_x_mm, self.extent_y_mm
         w, h = self.extent_width_mm, self.extent_height_mm
 
@@ -328,9 +350,6 @@ class AxisRenderer3D(BaseRenderer):
         ):
             return
 
-        if not ctx.camera.show_grid:
-            return
-
         line_shader = shaders.main
         text_shader = shaders.text
         if line_shader is None or text_shader is None:
@@ -362,9 +381,17 @@ class AxisRenderer3D(BaseRenderer):
         line_shader.set_int("uExecutedVertexCount", -1)
         line_shader.set_float("uAlphaPending", 0.2)
 
-        # Draw background plane
+        # Draw background plane (translucent bed tint; writes no depth so
+        # the stock can sit over it).
         GL.glDepthMask(GL.GL_FALSE)
         self.background_renderer.render(ctx, shaders)
+
+        # The plan lines (grid, axes, markers, extent frame) WRITE depth so
+        # they stay visible over coplanar stock top faces: the stock is
+        # drawn afterwards with a polygon offset pushing it away from the
+        # camera, and the plan at z=+GRID_Z wins the depth test. Without
+        # the depth write the stock simply overwrites them.
+        GL.glDepthMask(GL.GL_TRUE)
 
         # Draw grid
         line_shader.set_mat4("uMVP", grid_mvp)
@@ -381,8 +408,10 @@ class AxisRenderer3D(BaseRenderer):
         GL.glDrawArrays(GL.GL_LINES, 0, self.axes_vertex_count)
 
         # 3. Draw the WCS origin marker
+        z_lift = ctx.kinematics.z_lift
         wcs_translation_matrix = np.identity(4, dtype=np.float32)
         wcs_translation_matrix[:3, 3] = world_offset_vec[:3]
+        wcs_translation_matrix[2, 3] += z_lift
         wcs_marker_mvp = text_mvp @ wcs_translation_matrix
 
         line_shader.set_mat4("uMVP", wcs_marker_mvp)
@@ -409,6 +438,7 @@ class AxisRenderer3D(BaseRenderer):
         """Helper method to render text labels along the axes."""
         if not self.text_renderer:
             return
+        self.text_renderer.begin_batch()
         model_matrix = ctx.viewport.model_matrix
         label_height_mm = 2.5
         x_axis_label_y_offset = label_height_mm * 1.2
@@ -505,3 +535,5 @@ class AxisRenderer3D(BaseRenderer):
                 color=self.label_color,
                 align=y_label_align,
             )
+
+        self.text_renderer.end_batch()

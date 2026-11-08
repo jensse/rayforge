@@ -33,8 +33,8 @@
 
 **Linux：**
 
-首先，将您的用户添加到 `dialout` 组（在大多数基于 Debian 的发行版上，
-Snap 和非 Snap 安装都需要此操作）：
+首先，将您的用户添加到 `dialout`
+组（在大多数基于 Debian 的发行版上，Snap 和非 Snap 安装都需要此操作）：
 
 ```bash
 sudo usermod -a -G dialout $USER
@@ -51,6 +51,7 @@ sudo snap connect rayforge:serial-port
 详见 [Snap 权限](snap-permissions)。
 
 **Windows：**
+
 1. 打开设备管理器（Win+X，然后选择设备管理器）
 2. 在"端口 (COM 和 LPT)"下查找您的设备
 3. 如果看到黄色警告图标，更新或重新安装驱动程序
@@ -58,6 +59,7 @@ sudo snap connect rayforge:serial-port
 5. 如果设备根本未列出，USB 电缆或驱动程序可能有故障
 
 **macOS：**
+
 1. 检查系统信息 → USB 以验证设备是否被识别
 2. 如果您的控制器使用此芯片组，安装 CH340/CH341 驱动程序
 3. 检查 `/dev/tty.usbserial*` 或 `/dev/cu.usbserial*` 设备
@@ -68,9 +70,9 @@ sudo snap connect rayforge:serial-port
 
 **在 Linux 上：**
 
-您的用户需要在 `dialout` 组（或某些发行版上的 `uucp`）中。
-对于**基于 Debian 的发行版上的 Snap 和非 Snap 安装**，都需要此操作
-以避免 AppArmor DENIED 消息：
+您的用户需要在 `dialout` 组（或某些发行版上的
+`uucp`）中。对于**基于 Debian 的发行版上的 Snap 和非 Snap 安装**，都需要此操作以避免 AppArmor
+DENIED 消息：
 
 ```bash
 # 将自己添加到 dialout 组
@@ -93,6 +95,7 @@ sudo snap connect rayforge:serial-port
 **在 Windows 上：**
 
 关闭可能正在使用串口的任何其他应用程序，包括：
+
 - Rayforge 的先前实例
 - 串口监视工具
 - 其他激光软件
@@ -118,10 +121,22 @@ sudo snap connect rayforge:serial-port
 6. 在 Windows 上，记下设备管理器中的 COM 端口
 7. 避免在 Linux 上选择名为 `/dev/ttyS*` 的端口 - 这些是硬件串口，不是 USB
 
-:::warning 硬件串口
-如果您在 Linux 上选择 `/dev/ttyS*` 端口，Rayforge 会警告您，因为这些通常不是基于 USB 的 GRBL 设备。USB 串口使用 `/dev/ttyUSB*` 或 `/dev/ttyACM*`。
+<!-- prettier-ignore-start -->
+:::warning[硬件串口]
+如果您在 Linux 上选择 `/dev/ttyS*`
+端口，Rayforge 会警告您，因为这些通常不是基于 USB 的 GRBL 设备。USB 串口使用 `/dev/ttyUSB*` 或
+`/dev/ttyACM*`。
 :::
+<!-- prettier-ignore-end -->
 
+<!-- prettier-ignore-start -->
+:::tip[机器在重新连接后更换端口]
+如果您的机器的端口在重启或重新连接后发生变化（例如从
+`/dev/ttyUSB0` 变为 `/dev/ttyUSB1`），请按 USB 身份绑定它：在串口字段中输入设备的 VID:PID（例如
+`0403:6001`）而不是端口路径。自动重连随即会跟随机器前往其新端口。请参阅
+[串口绑定](../machine/general.md#串口绑定)。
+:::
+<!-- prettier-ignore-end -->
 
 ### 波特率不正确
 
@@ -157,6 +172,7 @@ sudo dmesg -w
 ```
 
 查找以下消息：
+
 - "USB disconnect" - 表示物理/电缆问题
 - "device descriptor read error" - 通常是电源或电缆问题
 
@@ -186,13 +202,13 @@ sudo dmesg -w
 
 Rayforge 显示不同的连接状态：
 
-| 状态         | 含义                         | 操作                             |
-| ------------ | ---------------------------- | -------------------------------- |
-| **已断开**   | 未连接到任何设备             | 配置端口并连接                   |
-| **连接中**   | 正在尝试建立连接             | 等待，或如果卡住则检查配置       |
-| **已连接**   | 成功连接并接收状态           | 可以使用                         |
-| **错误**     | 连接失败并出现错误           | 检查错误消息以获取详细信息       |
-| **休眠**     | 重新连接尝试前等待           | 先前连接失败，5 秒后重试         |
+| 状态       | 含义               | 操作                       |
+| ---------- | ------------------ | -------------------------- |
+| **已断开** | 未连接到任何设备   | 配置端口并连接             |
+| **连接中** | 正在尝试建立连接   | 等待，或如果卡住则检查配置 |
+| **已连接** | 成功连接并接收状态 | 可以使用                   |
+| **错误**   | 连接失败并出现错误 | 检查错误消息以获取详细信息 |
+| **休眠**   | 重新连接尝试前等待 | 先前连接失败，5 秒后重试   |
 
 ---
 
@@ -229,6 +245,7 @@ rayforge --loglevel DEBUG
 ```
 
 检查日志中的：
+
 - 连接尝试和失败
 - 串口数据传输（TX）和接收（RX）
 - 带堆栈跟踪的错误消息
@@ -240,6 +257,7 @@ rayforge --loglevel DEBUG
 ### 手动检查端口可用性
 
 **Linux：**
+
 ```bash
 # 列出所有 USB 串口设备
 ls -l /dev/ttyUSB* /dev/ttyACM*
@@ -255,6 +273,7 @@ sudo minicom -D /dev/ttyUSB0 -b 115200
 ```
 
 **Windows：**
+
 ```powershell
 # 在 PowerShell 中列出 COM 端口
 [System.IO.Ports.SerialPort]::getportnames()
@@ -277,11 +296,11 @@ Rayforge 设计用于兼容 GRBL 的固件。确保您的控制器运行：
 
 常见芯片组及其驱动程序：
 
-| 芯片组           | Linux      | Windows                  | macOS       |
-| ---------------- | ---------- | ------------------------ | ----------- |
-| **CH340/CH341**  | 内核驱动   | [CH341SER 驱动](http://www.wch.cn/downloads/) | 需要驱动   |
-| **FTDI FT232**   | 内核驱动   | 内置（Windows 10+）      | 内置        |
-| **CP2102 (SiLabs)** | 内核驱动 | 内置（Windows 10+）      | 内置        |
+| 芯片组              | Linux    | Windows                                       | macOS    |
+| ------------------- | -------- | --------------------------------------------- | -------- |
+| **CH340/CH341**     | 内核驱动 | [CH341SER 驱动](http://www.wch.cn/downloads/) | 需要驱动 |
+| **FTDI FT232**      | 内核驱动 | 内置（Windows 10+）                           | 内置     |
+| **CP2102 (SiLabs)** | 内核驱动 | 内置（Windows 10+）                           | 内置     |
 
 ---
 

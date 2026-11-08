@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from raygeo.geo import Geometry, Matrix
 
+from ..context import get_context
 from ..core.stock import StockItem
 from ..core.stock_asset import StockAsset
 from ..core.undo import ChangePropertyCommand, Command
@@ -34,7 +35,10 @@ class _AddStockCommand(Command):
     ):
         super().__init__(name=_("Add Stock"))
         self.doc = doc
+        ctx = get_context()
         self.asset = StockAsset(name=name, geometry=geometry)
+        self.asset.material_uid = ctx.material_mgr.get_default_material().uid
+        self.asset.thickness = ctx.config.default_stock_thickness_mm
         self.item = StockItem(stock_asset_uid=self.asset.uid, name=name)
         w, h = self.asset.get_natural_size()
         self.item.matrix = Matrix.scale(w, h)
@@ -88,7 +92,10 @@ class ConvertToStockCommand(Command):
         if geometry is None:
             geometry = Geometry()
 
+        ctx = get_context()
         self.asset = StockAsset(name=workpiece.name, geometry=geometry)
+        self.asset.material_uid = ctx.material_mgr.get_default_material().uid
+        self.asset.thickness = ctx.config.default_stock_thickness_mm
         self.stock_item = StockItem(
             stock_asset_uid=self.asset.uid, name=workpiece.name
         )
@@ -133,13 +140,12 @@ class StockCmd:
         machine = self._editor.context.config.machine
         if machine:
             __, __, wa_w, wa_h = machine.work_area
-            ref_x, ref_y = machine.get_reference_position_world()
+            ref_x, ref_y = machine.panel.reference_position_world
             stock_x = ref_x
             stock_y = ref_y
             stock_w = wa_w * 0.8
             stock_h = wa_h * 0.8
-            space = machine.get_coordinate_space()
-            stock_x, stock_y = space.world_position_from_origin(
+            stock_x, stock_y = machine.panel.world_position_from_origin(
                 ref_x, ref_y, (stock_w, stock_h)
             )
             logger.debug(
@@ -247,6 +253,26 @@ class StockCmd:
         )
         self._editor.doc.history_manager.execute(command)
         stock_item.updated.send(stock_item)
+
+    def set_stock_color(self, stock_item: StockItem, new_color: str | None):
+        """
+        Sets the per-instance color override of a stock item with an
+        undoable command.
+
+        ``None`` reverts to the material's default color (inherit);
+        ``""`` explicitly marks the item as having no color.
+        """
+        if new_color == stock_item.color:
+            return
+
+        command = ChangePropertyCommand(
+            target=stock_item,
+            property_name="color",
+            new_value=new_color,
+            setter_method_name="set_color",
+            name=_("Change stock color"),
+        )
+        self._editor.doc.history_manager.execute(command)
 
     def convert_to_stock(self, workpiece: WorkPiece) -> StockItem:
         """

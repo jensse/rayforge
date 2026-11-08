@@ -3,17 +3,76 @@ A renderer for visualizing toolpath operations (Ops) in 3D.
 """
 
 import logging
+from dataclasses import dataclass
 
 import numpy as np
 from OpenGL import GL
 
 from ....simulator.scene3d import VertexLayer
 from ...shared.color_lut_provider import ColorLutProvider
-from ..gl_utils import ShaderSet, set_line_width
+from ..gl_utils import (
+    LINE_DEPTH_WINDOW_BIAS,
+    ShaderSet,
+    set_line_width,
+)
 from ..render_context import RenderContext
 from .base import BaseRenderer
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class OpsUploadPayload:
+    """Pre-built vertex arrays ready for GL upload.
+
+    Constructed off the main thread by ``prepare_vertex_layer`` so the
+    main thread only performs the actual ``glBufferData`` uploads.
+    """
+
+    powered_vertices: np.ndarray
+    powered_attrib: np.ndarray
+    travel_vertices: np.ndarray
+
+
+def prepare_vertex_layer(
+    vl: VertexLayer, show_travel_moves: bool
+) -> OpsUploadPayload:
+    """Decompresses and concatenates a vertex layer without touching GL.
+
+    Runs in a worker thread; the returned payload is uploaded with GL
+    calls on the main thread.
+    """
+    powered_verts = vl.powered_verts.to_numpy()
+    powered_attrib = vl.powered_attrib.to_numpy()
+    travel_verts = vl.travel_verts.to_numpy()
+    zero_power_verts = vl.zero_power_verts.to_numpy()
+
+    if show_travel_moves:
+        pv_final = np.concatenate((powered_verts, zero_power_verts))
+        zero_count = zero_power_verts.size // 3
+        zero_attrib = np.zeros(zero_count * 4, dtype=np.float32)
+        zero_attrib[3::4] = 1.0
+        attrib = np.concatenate((powered_attrib.ravel(), zero_attrib))
+        tv_final = travel_verts
+    else:
+        pv_final = powered_verts
+        attrib = powered_attrib
+        tv_final = np.array([], dtype=np.float32)
+
+    logger.debug(
+        f"[UPLOAD] is_rotary={vl.is_rotary} "
+        f"powered={powered_verts.size // 3} "
+        f"zero_power={zero_power_verts.size // 3} "
+        f"total={pv_final.size // 3} "
+        f"travel={tv_final.size // 3} "
+        f"show_travel={show_travel_moves}"
+    )
+
+    return OpsUploadPayload(
+        powered_vertices=np.ascontiguousarray(pv_final, dtype=np.float32),
+        powered_attrib=np.ascontiguousarray(attrib, dtype=np.float32),
+        travel_vertices=np.ascontiguousarray(tv_final, dtype=np.float32),
+    )
 
 
 class OpsRenderer(BaseRenderer):
@@ -82,31 +141,18 @@ class OpsRenderer(BaseRenderer):
     def update_from_vertex_layer(
         self, vl: VertexLayer, show_travel_moves: bool
     ):
-        """Uploads a compiled vertex layer into the renderer's buffers."""
-        if show_travel_moves:
-            pv_final = np.concatenate((vl.powered_verts, vl.zero_power_verts))
-            zero_count = vl.zero_power_verts.size // 3
-            zero_attrib = np.zeros(zero_count * 4, dtype=np.float32)
-            zero_attrib[3::4] = 1.0
-            attrib = np.concatenate((vl.powered_attrib.ravel(), zero_attrib))
-            tv_final = vl.travel_verts
-        else:
-            pv_final = vl.powered_verts
-            attrib = vl.powered_attrib
-            tv_final = np.array([], dtype=np.float32)
+        """Uploads a compiled vertex layer into the renderer's buffers.
 
-        powered_count = vl.powered_verts.size // 3
-        zero_count = vl.zero_power_verts.size // 3
-        logger.debug(
-            f"[UPLOAD] is_rotary={vl.is_rotary} "
-            f"powered={powered_count} "
-            f"zero_power={zero_count} "
-            f"total={pv_final.size // 3} "
-            f"travel={tv_final.size // 3} "
-            f"show_travel={show_travel_moves}"
+        Prepares and uploads synchronously.  The chunked upload path
+        prepares the payload in a worker thread and only calls
+        ``update_from_vertex_data`` from the main thread.
+        """
+        payload = prepare_vertex_layer(vl, show_travel_moves)
+        self.update_from_vertex_data(
+            payload.powered_vertices,
+            payload.powered_attrib,
+            payload.travel_vertices,
         )
-
-        self.update_from_vertex_data(pv_final, attrib, tv_final)
 
     def update_from_vertex_data(
         self,
@@ -187,7 +233,7 @@ class OpsRenderer(BaseRenderer):
         self._partial_travel_end = np.zeros(3, dtype=np.float32)
         op_player = ctx.playback.op_player
         if op_player:
-            p, frac = self._playback_progress(op_player)
+            p, frac = op_player.playback_progress()
             (
                 exec_powered,
                 self._partial_powered_id,
@@ -208,18 +254,6 @@ class OpsRenderer(BaseRenderer):
             )
         self._exec_powered = exec_powered
         self._exec_travel = exec_travel
-
-    @staticmethod
-    def _playback_progress(op_player):
-        """Return ``(in_progress_command, fraction)`` from the player.
-
-        Falls back to the next command with no fraction for minimal
-        player stubs used in tests.
-        """
-        prog = getattr(op_player, "playback_progress", None)
-        if prog is not None:
-            return prog()
-        return op_player.current_index + 1, 0.0
 
     @staticmethod
     def _fractional_exec_count(
@@ -250,8 +284,10 @@ class OpsRenderer(BaseRenderer):
         exec_f = base + frac * span
         zero = np.zeros(3, dtype=np.float32)
         if total == 0:
-            # No position data uploaded: fall back to the raw count.
-            return int(exec_f), -1, zero
+            # No vertices uploaded for this pass, so there is nothing
+            # to reveal; return 0 (never a non-zero executed count,
+            # which would crash the draw with "executed > vertex_count").
+            return 0, -1, zero
         if exec_f >= total:
             return total, -1, zero
         if exec_f <= 0:
@@ -282,7 +318,7 @@ class OpsRenderer(BaseRenderer):
         ctx.playback.executed_vertex_count = self._exec_powered
         ctx.playback.executed_travel_vertex_count = self._exec_travel
 
-        shader = shaders.main
+        shader = shaders.main_lines or shaders.main
         if shader is None:
             return
 
@@ -291,7 +327,7 @@ class OpsRenderer(BaseRenderer):
             return
 
         colors = ctx.camera.color_set
-        show_travel_moves = ctx.camera.show_travel_moves
+        show_travel_moves = ctx.visibility.show_travel_moves
         line_width = ctx.camera.line_width
         executed_vertex_count = ctx.playback.executed_vertex_count
         executed_travel_vertex_count = (
@@ -308,12 +344,15 @@ class OpsRenderer(BaseRenderer):
         shader.use()
         GL.glEnable(GL.GL_BLEND)
         GL.glBlendFunc(GL.GL_SRC_ALPHA, GL.GL_ONE_MINUS_SRC_ALPHA)
-        # The toolpath draws on top of the raster texture; never cull it
-        # by the surface depth (which would split lines on a cylinder's
-        # curved face).  Depth writes stay off so the trail/ring drawn
-        # afterwards is unaffected.
         GL.glDepthMask(GL.GL_FALSE)
-        GL.glDepthFunc(GL.GL_ALWAYS)
+        GL.glDepthFunc(GL.GL_LEQUAL)
+        # The toolpath draws on top of the raster texture; bias its
+        # window-space depth a few LSBs toward the camera so it always
+        # wins against the coplanar surface (which would split lines on
+        # a cylinder's curved face) while the laser head model still
+        # occludes it.  Depth writes stay off so the trail/ring drawn
+        # afterwards is unaffected.
+        shader.set_float("uFragDepthBias", LINE_DEPTH_WINDOW_BIAS)
         shader.set_mat4("uMVP", mvp)
         shader.set_float("uHasNormals", 0.0)
 

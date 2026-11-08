@@ -16,7 +16,7 @@ from gi.repository import Gdk, Graphene, Gtk
 from raygeo.geo import Matrix
 
 from ...core.color import ColorRGBA
-from ..shared.keyboard import is_primary_keyval
+from ..shared.keyboard import is_primary_keyval, is_primary_modifier
 from . import transform
 from .cursor import get_cursor_for_region
 from .element import CanvasElement
@@ -205,8 +205,33 @@ class Canvas(Gtk.DrawingArea):
         self.add_controller(self._key_controller)
         self._shift_pressed: bool = False
         self._ctrl_pressed: bool = False
+
+        self._focus_controller = Gtk.EventControllerFocus()
+        self._focus_controller.connect("leave", self._on_focus_leave)
+        self.add_controller(self._focus_controller)
         self.set_focusable(True)
         self.grab_focus()
+
+    def _sync_modifier_state(self, state: Gdk.ModifierType | None) -> None:
+        """
+        Re-derives the latched modifier flags from the live event
+        state. Key releases are routinely missed (focus loss, dialogs,
+        releases outside the canvas), so the key-based latch alone can
+        get stuck; every event carries the authoritative mask.
+        """
+        if state is None:
+            return
+        self._shift_pressed = bool(state & Gdk.ModifierType.SHIFT_MASK)
+        self._ctrl_pressed = bool(state & Gdk.ModifierType.CONTROL_MASK)
+
+    def _on_focus_leave(self, controller: Gtk.EventControllerFocus) -> None:
+        """
+        Clears latched modifier state when the canvas loses keyboard
+        focus: a Shift release while unfocused is never delivered, and
+        the stale flag would change what the next click selects.
+        """
+        self._shift_pressed = False
+        self._ctrl_pressed = False
 
     def do_size_allocate(self, width: int, height: int, baseline: int):
         """GTK handler for when the widget's size changes."""
@@ -577,6 +602,8 @@ class Canvas(Gtk.DrawingArea):
         Handles mouse movement, updating hover state and cursor icon.
         This is the single source of truth for cursor updates.
         """
+        self._sync_modifier_state(gesture.get_current_event_state())
+
         # Store raw pixel coordinates for selection frame rendering
         self._last_mouse_x = x
         self._last_mouse_y = y
@@ -734,6 +761,16 @@ class Canvas(Gtk.DrawingArea):
             ok, start_x, start_y = self._drag_gesture.get_start_point()
             if not ok:
                 return
+            if not self._edit_dragging:
+                # Apply a threshold to distinguish clicks from real
+                # drags. This prevents sub-pixel jitter (e.g. between
+                # the two clicks of a double-click) from triggering
+                # tool drag logic.
+                dist_sq = offset_x**2 + offset_y**2
+                if dist_sq < (DRAG_THRESHOLD**2):
+                    return
+                self._edit_dragging = True
+                self.edit_drag_begin.send(self)
             current_x, current_y = start_x + offset_x, start_y + offset_y
             start_world_x, start_world_y = self._get_world_coords(
                 start_x, start_y
@@ -743,9 +780,6 @@ class Canvas(Gtk.DrawingArea):
             )
             world_dx = current_world_x - start_world_x
             world_dy = current_world_y - start_world_y
-            if not self._edit_dragging:
-                self._edit_dragging = True
-                self.edit_drag_begin.send(self)
             logger.debug(
                 f"on_mouse_drag: calling handle_edit_drag with "
                 f"dx={world_dx}, dy={world_dy}"
@@ -1263,15 +1297,6 @@ class Canvas(Gtk.DrawingArea):
         if len(selected) > 0:
             self._selection_mode = SelectionMode.RESIZE
 
-    def _get_element_world_corners(self, elem: CanvasElement) -> list[Point]:
-        """
-        Calculates the four corners of an element in world coordinates.
-        """
-        world_transform = elem.get_world_transform()
-        w, h = elem.width, elem.height
-        local_corners = [(0, 0), (w, 0), (w, h), (0, h)]
-        return [world_transform.transform_point(p) for p in local_corners]
-
     def _update_framing_selection(self):
         """
         Updates element selection based on the rubber-band frame.
@@ -1298,7 +1323,13 @@ class Canvas(Gtk.DrawingArea):
 
         for elem in self.root.get_all_children_recursive():
             if elem.selectable:
-                elem_corners = self._get_element_world_corners(elem)
+                x, y, w, h = elem.get_world_bounding_box()
+                elem_corners = [
+                    (x, y),
+                    (x + w, y),
+                    (x + w, y + h),
+                    (x, y + h),
+                ]
                 intersects = obb_intersects_aabb(elem_corners, selection_rect)
 
                 # Select if it intersects or was part of the initial set
@@ -1326,6 +1357,8 @@ class Canvas(Gtk.DrawingArea):
         elif is_primary_keyval(keyval):
             self._ctrl_pressed = True
             # Allow propagation for accelerators
+        elif self._edit_context_handles_key(keyval, state):
+            return True
         elif keyval in (Gdk.KEY_Delete, Gdk.KEY_BackSpace):
             if self.edit_context and self.edit_context.handle_edit_key(keyval):
                 return True
@@ -1336,6 +1369,13 @@ class Canvas(Gtk.DrawingArea):
                 self._finalize_selection_state()
             return True
         return False
+
+    def _edit_context_handles_key(
+        self, keyval: int, state: Gdk.ModifierType
+    ) -> bool:
+        if not self.edit_context or is_primary_modifier(state):
+            return False
+        return self.edit_context.handle_edit_key(keyval)
 
     def on_key_released(
         self, controller, keyval: int, keycode: int, state: Gdk.ModifierType

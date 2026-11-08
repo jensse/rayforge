@@ -1,12 +1,12 @@
 import logging
 from gettext import gettext as _
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
-from gi.repository import Adw, GLib, Gtk
+from gi.repository import Adw, Gio, GLib, Gtk
 
 from ...context import get_context
-from ...core.config import OpsColorMode, StartupBehavior
+from ...core.config import OpsColorMode, RightPanelMode, StartupBehavior
 from ...shared.units.definitions import (
     get_base_unit_for_quantity,
     get_units_for_quantity,
@@ -14,6 +14,7 @@ from ...shared.units.definitions import (
 from ...shared.util.localized import SUPPORTED_LANGUAGES
 from ...ui_gtk.doceditor import file_dialogs
 from ...usage import get_usage_tracker
+from ..shared.gtk import report_dialog_error
 from ..shared.pref_rows.base import SpinRow
 from ..shared.preferences_page import TrackedPreferencesPage
 
@@ -27,6 +28,7 @@ def _get_language_label(code: str) -> str:
         "de": _("German"),
         "es": _("Spanish"),
         "fr": _("French"),
+        "hi": _("Hindi"),
         "pt": _("Portuguese"),
         "uk": _("Ukrainian"),
         "zh_CN": _("Chinese (Simplified)"),
@@ -66,6 +68,14 @@ class GeneralPreferencesPage(TrackedPreferencesPage):
     OPS_COLOR_MODE_LABELS: ClassVar[list[str]] = [
         _("Laser Color"),
         _("Layer Color"),
+    ]
+
+    # Ordered right panel display modes shown in the combo row
+    RIGHT_PANEL_MODES: ClassVar[list[RightPanelMode]] = [
+        RightPanelMode.HIDDEN,
+        RightPanelMode.ACTIVE_LAYER,
+        RightPanelMode.NON_EMPTY_LAYERS,
+        RightPanelMode.ALL_LAYERS,
     ]
 
     # Language options: None (system default) + supported languages
@@ -139,6 +149,29 @@ class GeneralPreferencesPage(TrackedPreferencesPage):
             "notify::selected", self.on_ops_color_mode_changed
         )
         app_settings_group.add(self.ops_color_mode_row)
+
+        self.right_panel_mode_row = Adw.ComboRow(
+            model=Gtk.StringList.new(
+                [mode.label() for mode in self.RIGHT_PANEL_MODES]
+            )
+        )
+        self.right_panel_mode_row.set_title(_("Right Panel"))
+        self.right_panel_mode_row.set_subtitle(
+            _("Choose what the right panel displays")
+        )
+        try:
+            selected_index = self.RIGHT_PANEL_MODES.index(
+                config.right_panel_mode
+            )
+        except ValueError:
+            selected_index = self.RIGHT_PANEL_MODES.index(
+                RightPanelMode.NON_EMPTY_LAYERS
+            )
+        self.right_panel_mode_row.set_selected(selected_index)
+        self.right_panel_mode_row.connect(
+            "notify::selected", self.on_right_panel_mode_changed
+        )
+        app_settings_group.add(self.right_panel_mode_row)
 
         # Units Preferences
         units_group = Adw.PreferencesGroup()
@@ -285,6 +318,18 @@ class GeneralPreferencesPage(TrackedPreferencesPage):
         )
         startup_group.add(self.check_updates_row)
 
+        self.watch_sources_row = Adw.SwitchRow(
+            title=_("Watch imported files"),
+            subtitle=_(
+                "Offer to reload imported files when they change on disk"
+            ),
+        )
+        self.watch_sources_row.set_active(config.watch_source_files)
+        self.watch_sources_row.connect(
+            "notify::active", self.on_watch_sources_changed
+        )
+        startup_group.add(self.watch_sources_row)
+
         # Startup behavior selector
         self.startup_behavior_row = Adw.ComboRow(
             title=_("Startup behavior"),
@@ -342,15 +387,16 @@ class GeneralPreferencesPage(TrackedPreferencesPage):
         privacy_group.set_title(_("Privacy"))
         privacy_group.set_description(
             _(
-                "Help us improve Rayforge by allowing anonymous usage "
-                "reporting. No personal data is collected."
+                "Anonymous usage data helps decide what to build "
+                "next. It never includes project content or "
+                "personal data."
             )
         )
         self.add(privacy_group)
 
         self.usage_consent_row = Adw.SwitchRow(
             title=_("Report Anonymous Usage"),
-            subtitle=_("Help improve Rayforge"),
+            subtitle=_("Help decide what to build next"),
         )
         self.usage_consent_row.set_active(config.has_consented_tracking)
         self.usage_consent_row.connect(
@@ -429,7 +475,14 @@ class GeneralPreferencesPage(TrackedPreferencesPage):
                     parent = window.get_transient_for()
                     if parent is not None:
                         app = parent.get_application()
-                if app is not None:
+                if app is None:
+                    # On macOS the window deliberately has no transient
+                    # parent (see patched_dialog_window); fall back to
+                    # the running application itself.
+                    default_app: Any = Gio.Application.get_default()
+                    if default_app is not None:
+                        default_app.request_restart()
+                else:
                     app.request_restart()
 
         dialog.connect("response", _on_response)
@@ -440,6 +493,12 @@ class GeneralPreferencesPage(TrackedPreferencesPage):
         selected_index = combo_row.get_selected()
         mode_string = self.OPS_COLOR_MODE_MAP[selected_index]
         get_context().config.set_ops_color_mode(OpsColorMode(mode_string))
+
+    def on_right_panel_mode_changed(self, combo_row, _):
+        """Called when the user selects a new right panel mode."""
+        selected_index = combo_row.get_selected()
+        mode = self.RIGHT_PANEL_MODES[selected_index]
+        get_context().config.set_right_panel_mode(mode)
 
     def on_length_unit_changed(self, combo_row, _):
         """Called when the user selects a new length unit."""
@@ -505,7 +564,14 @@ class GeneralPreferencesPage(TrackedPreferencesPage):
             self.startup_project_row.set_text(str(file_path))
             get_context().config.set_startup_project_path(file_path)
         except GLib.Error as e:
-            logger.error(f"Error selecting file: {e.message}")
+            if report_dialog_error("Selecting startup project", e):
+                window = self.get_ancestor(Adw.PreferencesWindow)
+                if window:
+                    window.add_toast(
+                        Adw.Toast(
+                            title=_("Error: {msg}").format(msg=e.message)
+                        )
+                    )
 
     def on_usage_consent_changed(self, switch_row, _):
         """Called when the user toggles usage reporting."""
@@ -527,3 +593,8 @@ class GeneralPreferencesPage(TrackedPreferencesPage):
         """Called when the user toggles the update check setting."""
         enabled = switch_row.get_active()
         get_context().config.set_check_for_app_updates(enabled)
+
+    def on_watch_sources_changed(self, switch_row, _):
+        """Called when the user toggles watching imported files."""
+        enabled = switch_row.get_active()
+        get_context().config.set_watch_source_files(enabled)

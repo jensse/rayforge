@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from raygeo.geo.types import Point as GeoPoint
 
 from ..registry import EntityRegistry
+from ..types import EntityID
 from .spatial import SnapLineIndex
 from .types import (
     DragContext,
@@ -38,13 +39,24 @@ class SnapLineProducer:
 class SnapEngine:
     DEFAULT_THRESHOLD = 5.0
 
+    # Once a primary snap point is engaged it stays engaged until the
+    # cursor or geometry clearly leaves it: candidates are re-acquired
+    # within this multiple of the threshold. Without it, a candidate
+    # wobbling on the threshold boundary toggles its indicator on and
+    # off every frame (dragging an edge past another edge flashes its
+    # highlight).
+    PRIMARY_EXIT_FACTOR: float = 1.5
+
     def __init__(self, threshold: float = DEFAULT_THRESHOLD) -> None:
         self._producers: list[SnapLineProducer] = []
         self._threshold: float = threshold
         self._index: SnapLineIndex = SnapLineIndex()
-        self._cached_points: list[SnapPoint] = []
         self._last_query_pos: GeoPoint | None = None
         self._enabled: bool = True
+        self._cached_fingerprint: tuple | None = None
+        self._cached_full_fingerprint: tuple | None = None
+        self._cached_drag_context_key: tuple | None = None
+        self._last_primary: SnapPoint | None = None
 
     @property
     def enabled(self) -> bool:
@@ -72,30 +84,95 @@ class SnapEngine:
     def clear_producers(self) -> None:
         self._producers.clear()
 
+    @staticmethod
+    def _geometry_fingerprint(
+        registry: EntityRegistry,
+        skip_point_ids: set[EntityID] | None = None,
+    ) -> tuple:
+        """
+        Cheap identity of the geometry the snap index was built from.
+
+        Structural changes bump the registry version, but solving,
+        drags and array syncs also move points IN PLACE without any
+        version signal; only the positions themselves detect that.
+        The O(n) fingerprint is compared on every query so the
+        expensive producer run only happens when geometry changed.
+        Positions are quantized to 6 decimals: the solver leaves
+        residual noise of roughly 1e-9 on every solve, which must not
+        count as a geometry change.
+
+        Points listed in skip_point_ids are ignored. Producers exclude
+        dragged geometry from their output, so moving dragged points
+        cannot make the index stale and must not trigger a rebuild.
+        """
+        return (
+            registry._entity_version,
+            tuple(
+                (round(p.x, 6), round(p.y, 6))
+                for p in registry.points
+                if skip_point_ids is None or p.id not in skip_point_ids
+            ),
+        )
+
     def rebuild_index(
         self,
         registry: EntityRegistry,
         drag_position: GeoPoint,
         drag_context: DragContext,
     ) -> None:
+        fingerprint = self._geometry_fingerprint(
+            registry, drag_context.dragged_point_ids
+        )
+        drag_key = (
+            frozenset(drag_context.dragged_point_ids),
+            frozenset(drag_context.dragged_entity_ids),
+        )
+        if (
+            fingerprint == self._cached_fingerprint
+            and drag_key == self._cached_drag_context_key
+        ):
+            return
+
         self._index.clear()
-        self._cached_points.clear()
 
         for producer in self._producers:
             try:
                 self._index.add_all(
                     producer.produce(
-                        registry, drag_position, drag_context, self._threshold
+                        registry,
+                        drag_position,
+                        drag_context,
+                        self._threshold,
                     )
                 )
-                for snap_point in producer.produce_points(
-                    registry, drag_position, drag_context, self._threshold
-                ):
-                    self._cached_points.append(snap_point)
             except Exception as e:  # noqa: BLE001 - addon producer boundary
                 logger.warning(f"SnapLineProducer error: {e}")
 
         self._last_query_pos = drag_position
+        self._cached_fingerprint = fingerprint
+        self._cached_full_fingerprint = self._geometry_fingerprint(registry)
+        self._cached_drag_context_key = drag_key
+
+    def _get_snap_points(
+        self,
+        registry: EntityRegistry,
+        drag_position: GeoPoint,
+        drag_context: DragContext,
+        radius: float | None = None,
+    ) -> list[SnapPoint]:
+        points: list[SnapPoint] = []
+        if radius is None:
+            radius = self._threshold
+        for producer in self._producers:
+            try:
+                points.extend(
+                    producer.produce_points(
+                        registry, drag_position, drag_context, radius
+                    )
+                )
+            except Exception as e:  # noqa: BLE001 - addon producer boundary
+                logger.warning(f"SnapLineProducer error: {e}")
+        return points
 
     def query(
         self,
@@ -111,13 +188,29 @@ class SnapEngine:
 
         self.rebuild_index(registry, position, drag_context)
 
+        # The result is computed against the current registry even when
+        # the index rebuild early-returned (producers read live point
+        # positions), so staleness for is_snap_result_current is
+        # anchored to the last query, not the last rebuild.
+        self._cached_full_fingerprint = self._geometry_fingerprint(registry)
+
         x, y = position
 
-        point_result = self._find_nearest_snap_point(x, y)
+        exit_radius = self._threshold
+        if self._last_primary is not None:
+            exit_radius = self._threshold * self.PRIMARY_EXIT_FACTOR
+
+        snap_points = self._get_snap_points(
+            registry, position, drag_context, exit_radius
+        )
+        point_result = self._find_nearest_snap_point(x, y, snap_points)
         if point_result is not None:
             snap_point, dist = point_result
             crossing_lines = self._find_crossing_lines(x, y, snap_point)
+            self._last_primary = snap_point
             return SnapResult.from_snap_point(snap_point, dist, crossing_lines)
+
+        self._last_primary = None
 
         best_h, best_v = self._find_best_lines_for_both_axes(x, y)
         if best_h is not None or best_v is not None:
@@ -140,6 +233,24 @@ class SnapEngine:
             )
 
         return SnapResult.no_snap(position)
+
+    def is_snap_result_current(self, registry: EntityRegistry) -> bool:
+        """
+        True if the registry geometry is unchanged since the last
+        query. During a drag, the solve and the array sync move
+        geometry AFTER the snap query but BEFORE the frame is drawn:
+        a result computed against the older geometry draws snap lines
+        detached from any geometry, which flash up during fast drags.
+        Callers must not render such a stale result.
+
+        Unlike the index fingerprint, this deliberately includes
+        dragged points: the stored result contains a snapped position
+        computed against the pre-solve geometry, so dragged movement
+        counts as staleness here.
+        """
+        return self._cached_full_fingerprint == self._geometry_fingerprint(
+            registry
+        )
 
     def _find_best_lines_for_both_axes(
         self, x: float, y: float
@@ -168,13 +279,13 @@ class SnapEngine:
         return (best_h, best_v)
 
     def _find_nearest_snap_point(
-        self, x: float, y: float
+        self, x: float, y: float, snap_points: list[SnapPoint]
     ) -> tuple[SnapPoint, float] | None:
         best_point: SnapPoint | None = None
         best_dist: float = self._threshold
         best_priority: int = -1
 
-        for sp in self._cached_points:
+        for sp in snap_points:
             dx = x - sp.x
             dy = y - sp.y
             dist = (dx * dx + dy * dy) ** 0.5
@@ -192,6 +303,37 @@ class SnapEngine:
 
         if best_point is not None:
             return (best_point, best_dist)
+
+        if self._last_primary is not None:
+            reacquired = self._reacquire_last_primary(x, y, snap_points)
+            if reacquired is not None:
+                return reacquired
+            self._last_primary = None
+        return None
+
+    def _reacquire_last_primary(
+        self, x: float, y: float, snap_points: list[SnapPoint]
+    ) -> tuple[SnapPoint, float] | None:
+        """Re-engages the previous primary snap point while it stays
+        within the exit radius (threshold * PRIMARY_EXIT_FACTOR).
+
+        Producers were queried with that larger radius, so a candidate
+        wobbling around the plain threshold keeps its indicator
+        instead of toggling on and off every frame."""
+        last = self._last_primary
+        if last is None:
+            return None
+        exit_radius = self._threshold * self.PRIMARY_EXIT_FACTOR
+        for sp in snap_points:
+            if sp.line_type != last.line_type:
+                continue
+            if sp.source is not last.source:
+                continue
+            dx = x - sp.x
+            dy = y - sp.y
+            dist = (dx * dx + dy * dy) ** 0.5
+            if dist <= exit_radius:
+                return (sp, dist)
         return None
 
     def _find_crossing_lines(
@@ -232,7 +374,18 @@ class SnapEngine:
         if drag_context is None:
             drag_context = DragContext()
 
-        if self._last_query_pos != position:
-            self.rebuild_index(registry, position, drag_context)
+        self.rebuild_index(registry, position, drag_context)
 
         return self._get_all_lines()
+
+    def invalidate_index(self) -> None:
+        """Drops the cached snap line index so the next query rebuilds
+        it from scratch.
+
+        Callers that temporarily distort engine state for their own
+        queries (the debug overlay queries with an unbounded
+        threshold) must call this afterwards; otherwise the polluted
+        index would feed real queries until the geometry changes."""
+        self._cached_fingerprint = None
+        self._cached_full_fingerprint = None
+        self._cached_drag_context_key = None

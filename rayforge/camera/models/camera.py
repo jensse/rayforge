@@ -1,5 +1,7 @@
 import json
 import logging
+import math
+import uuid
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any
@@ -7,18 +9,48 @@ from typing import Any
 import numpy as np
 from blinker import Signal
 
+from ..source import source_config_to_dict
+from .source_type import CameraSourceType
+
 logger = logging.getLogger(__name__)
 Pos = tuple[float, float]
 PointList = Sequence[Pos]
+
+OUTSIDE_VIEW_MAX_MARGIN_MM = 100.0
+
+
+def _as_utc(dt: datetime | None) -> datetime | None:
+    """Interpret a possibly naive datetime as UTC.
+
+    Older stored calibration/alignment dates were written without a
+    timezone offset. The model stores fresh timestamps as UTC-aware, so
+    naive values are assumed to be UTC as well, making the two
+    comparable.
+    """
+    if dt is None or dt.tzinfo is not None:
+        return dt
+    return dt.replace(tzinfo=timezone.utc)
 
 
 class Camera:
     """A pure data model representing the configuration of a camera."""
 
-    def __init__(self, name: str, device_id: str):
+    def __init__(
+        self,
+        name: str,
+        device_id: str | None = None,
+        *,
+        camera_id: str | None = None,
+        source_type: CameraSourceType = CameraSourceType.LOCAL_DEVICE,
+        source_config: dict[str, Any] | None = None,
+    ):
+        self._id: str = camera_id or str(uuid.uuid4())
         self._name: str = name
-        self._device_id: str = device_id
         self._enabled: bool = False
+        self._source_type = CameraSourceType(source_type)
+        self._source_config: dict[str, Any] = dict(source_config or {})
+        if device_id is not None and "device_id" not in self._source_config:
+            self._source_config["device_id"] = device_id
         # None indicates auto white balance, float for manual Kelvin
         self._white_balance: float | None = None
         self._contrast: float = 50.0
@@ -30,6 +62,12 @@ class Camera:
         self._denoise: float = 0.0
 
         self._prefer_yuyv: bool = False
+
+        # Optional camera view around the workspace, drawn on the work
+        # surface only outside the workspace rectangle.
+        self._outside_view_enabled: bool = False
+        self._outside_view_margin_mm: float = 30.0
+        self._outside_view_transparency: float = 0.65
 
         self._resolution: tuple[int, int] | None = None
 
@@ -63,6 +101,10 @@ class Camera:
         self.extra: dict[str, Any] = {}
 
     @property
+    def id(self) -> str:
+        return self._id
+
+    @property
     def name(self) -> str:
         return self._name
 
@@ -75,18 +117,74 @@ class Camera:
         self.changed.send(self)
 
     @property
+    def source_type(self) -> CameraSourceType:
+        return self._source_type
+
+    @source_type.setter
+    def source_type(self, value: CameraSourceType | str):
+        normalized = CameraSourceType(value)
+        if self._source_type == normalized:
+            return
+        logger.debug(
+            "Camera source_type changed from '%s' to '%s'",
+            self._source_type,
+            normalized,
+        )
+        self._source_type = normalized
+        self.changed.send(self)
+        self.settings_changed.send(self)
+
+    @property
+    def source_config(self) -> dict[str, Any]:
+        return dict(self._source_config)
+
+    @source_config.setter
+    def source_config(self, value: dict[str, Any]):
+        if not isinstance(value, dict):
+            raise TypeError("source_config must be a dict.")
+        if self._source_config == value:
+            return
+        self._source_config = dict(value)
+        self.changed.send(self)
+        self.settings_changed.send(self)
+
+    def update_source_config(self, **kwargs: Any) -> None:
+        updated = dict(self._source_config)
+        updated.update(kwargs)
+        self.source_config = updated
+
+    @property
     def device_id(self) -> str:
-        return self._device_id
+        return str(self._source_config.get("device_id", ""))
 
     @device_id.setter
     def device_id(self, value: str):
-        if self._device_id == value:
+        if self.device_id == value:
             return
         logger.debug(
-            f"Camera device_id changed from '{self._device_id}' to '{value}'"
+            "Camera device_id changed from '%s' to '%s'",
+            self.device_id,
+            value,
         )
-        self._device_id = value
+        updated = dict(self._source_config)
+        updated["device_id"] = value
+        self._source_config = updated
         self.changed.send(self)
+        self.settings_changed.send(self)
+
+    @property
+    def source_uri(self) -> str:
+        return str(self._source_config.get("uri", ""))
+
+    @source_uri.setter
+    def source_uri(self, value: str):
+        if self.source_uri == value:
+            return
+        updated = dict(self._source_config)
+        updated["uri"] = value
+        self._source_config = updated
+        self.changed.send(self)
+        self.settings_changed.send(self)
 
     @property
     def enabled(self) -> bool:
@@ -231,6 +329,79 @@ class Camera:
         self.settings_changed.send(self)
 
     @property
+    def outside_view_enabled(self) -> bool:
+        """Whether to show the camera image around the workspace."""
+        return self._outside_view_enabled
+
+    @outside_view_enabled.setter
+    def outside_view_enabled(self, value: bool):
+        if not isinstance(value, bool):
+            raise TypeError("outside_view_enabled must be a boolean.")
+        if self._outside_view_enabled == value:
+            return
+        logger.debug(
+            f"Camera outside_view_enabled changed from "
+            f"{self._outside_view_enabled} to {value}"
+        )
+        self._outside_view_enabled = value
+        self.changed.send(self)
+
+    @property
+    def outside_view_margin_mm(self) -> float:
+        """Margin shown on each side of the workspace, in mm."""
+        return self._outside_view_margin_mm
+
+    @outside_view_margin_mm.setter
+    def outside_view_margin_mm(self, value: float):
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise TypeError("Outside view margin must be a number.")
+        if not math.isfinite(value):
+            raise ValueError("Outside view margin must be finite.")
+        if not (0.0 <= value <= OUTSIDE_VIEW_MAX_MARGIN_MM):
+            logger.warning(
+                f"Outside view margin {value} is outside range "
+                f"(0.0-{OUTSIDE_VIEW_MAX_MARGIN_MM}). "
+                "Clamping to nearest bound."
+            )
+            value = max(0.0, min(value, OUTSIDE_VIEW_MAX_MARGIN_MM))
+        value = float(value)
+        if self._outside_view_margin_mm == value:
+            return
+        logger.debug(
+            f"Camera outside_view_margin_mm changed from "
+            f"{self._outside_view_margin_mm} to {value}"
+        )
+        self._outside_view_margin_mm = value
+        self.changed.send(self)
+
+    @property
+    def outside_view_transparency(self) -> float:
+        """Visibility of the outside view; higher is more visible."""
+        return self._outside_view_transparency
+
+    @outside_view_transparency.setter
+    def outside_view_transparency(self, value: float):
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise TypeError("Outside view transparency must be a number.")
+        if not math.isfinite(value):
+            raise ValueError("Outside view transparency must be finite.")
+        if not (0.0 <= value <= 1.0):
+            logger.warning(
+                f"Outside view transparency {value} is outside range "
+                "(0.0-1.0). Clamping to nearest bound."
+            )
+            value = max(0.0, min(value, 1.0))
+        value = float(value)
+        if self._outside_view_transparency == value:
+            return
+        logger.debug(
+            f"Camera outside_view_transparency changed from "
+            f"{self._outside_view_transparency} to {value}"
+        )
+        self._outside_view_transparency = value
+        self.changed.send(self)
+
+    @property
     def resolution(self) -> tuple[int, int] | None:
         return self._resolution
 
@@ -265,7 +436,10 @@ class Camera:
 
     @distortion_k1.setter
     def distortion_k1(self, value: float):
-        self._distortion_k1 = float(value)
+        value = float(value)
+        if self._distortion_k1 == value:
+            return
+        self._distortion_k1 = value
         self._calibration_date = datetime.now(tz=timezone.utc)
         self.changed.send(self)
         self.settings_changed.send(self)
@@ -276,7 +450,10 @@ class Camera:
 
     @distortion_k2.setter
     def distortion_k2(self, value: float):
-        self._distortion_k2 = float(value)
+        value = float(value)
+        if self._distortion_k2 == value:
+            return
+        self._distortion_k2 = value
         self._calibration_date = datetime.now(tz=timezone.utc)
         self.changed.send(self)
         self.settings_changed.send(self)
@@ -287,7 +464,10 @@ class Camera:
 
     @distortion_p1.setter
     def distortion_p1(self, value: float):
-        self._distortion_p1 = float(value)
+        value = float(value)
+        if self._distortion_p1 == value:
+            return
+        self._distortion_p1 = value
         self._calibration_date = datetime.now(tz=timezone.utc)
         self.changed.send(self)
         self.settings_changed.send(self)
@@ -298,7 +478,10 @@ class Camera:
 
     @distortion_p2.setter
     def distortion_p2(self, value: float):
-        self._distortion_p2 = float(value)
+        value = float(value)
+        if self._distortion_p2 == value:
+            return
+        self._distortion_p2 = value
         self._calibration_date = datetime.now(tz=timezone.utc)
         self.changed.send(self)
         self.settings_changed.send(self)
@@ -309,7 +492,10 @@ class Camera:
 
     @distortion_k3.setter
     def distortion_k3(self, value: float):
-        self._distortion_k3 = float(value)
+        value = float(value)
+        if self._distortion_k3 == value:
+            return
+        self._distortion_k3 = value
         self._calibration_date = datetime.now(tz=timezone.utc)
         self.changed.send(self)
         self.settings_changed.send(self)
@@ -474,7 +660,7 @@ class Camera:
         self._distortion_k3 = float(dist[4]) if len(dist) > 4 else 0.0
 
         self._calibration_rms = result.rms_error
-        self._calibration_date = result.calibration_date
+        self._calibration_date = _as_utc(result.calibration_date)
         self._calibration_image_size = result.image_size
         self._calibration_frames_used = result.num_frames_used
 
@@ -520,23 +706,41 @@ class Camera:
     def alignment_valid(self) -> bool:
         if not self.has_alignment:
             return False
-        if self._calibration_date is None:
+        calibration = _as_utc(self._calibration_date)
+        alignment = _as_utc(self._alignment_date)
+        if calibration is None:
             return True
-        if self._alignment_date is None:
+        if alignment is None:
             return False
-        return self._alignment_date >= self._calibration_date
+        return alignment >= calibration
+
+    @property
+    def supports_hardware_controls(self) -> bool:
+        return self.source_type is CameraSourceType.LOCAL_DEVICE
+
+    def source_display_value(self) -> str:
+        if self.source_type is CameraSourceType.LOCAL_DEVICE:
+            return self.device_id
+        return self.source_uri
 
     def to_dict(self) -> dict[str, Any]:
         data = {
+            "id": self.id,
             "name": self.name,
-            "device_id": self.device_id,
             "enabled": self.enabled,
+            "source_type": self.source_type.value,
+            "source_config": source_config_to_dict(
+                self.source_type, self.source_config
+            ),
             "white_balance": self.white_balance,
             "contrast": self.contrast,
             "brightness": self.brightness,
             "transparency": self.transparency,
             "denoise": self.denoise,
             "prefer_yuyv": self.prefer_yuyv,
+            "outside_view_enabled": self.outside_view_enabled,
+            "outside_view_margin_mm": self.outside_view_margin_mm,
+            "outside_view_transparency": self.outside_view_transparency,
             "distortion_k1": self.distortion_k1,
             "distortion_k2": self.distortion_k2,
             "distortion_p1": self.distortion_p1,
@@ -546,6 +750,12 @@ class Camera:
                 list(self.resolution) if self.resolution is not None else None
             ),
         }
+        if self.source_type is CameraSourceType.LOCAL_DEVICE:
+            # Keep the legacy field for a temporary compatibility window so
+            # users can return to an older Rayforge version after trying this
+            # schema. Remove it after the migration has been established for
+            # a few months.
+            data["device_id"] = self.device_id
         if self.image_to_world is not None:
             image_points, world_points = self.image_to_world
             data["image_to_world"] = [
@@ -588,15 +798,21 @@ class Camera:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Camera":
         known_keys = {
+            "id",
             "name",
             "device_id",
             "enabled",
+            "source_type",
+            "source_config",
             "white_balance",
             "contrast",
             "brightness",
             "transparency",
             "denoise",
             "prefer_yuyv",
+            "outside_view_enabled",
+            "outside_view_margin_mm",
+            "outside_view_transparency",
             "image_to_world",
             "distortion_k1",
             "distortion_k2",
@@ -615,8 +831,24 @@ class Camera:
             "alignment_date",
         }
         extra = {k: v for k, v in data.items() if k not in known_keys}
-
-        camera = cls(data["name"], data["device_id"])
+        source_config = dict(data.get("source_config") or {})
+        legacy_device_id = data.get("device_id")
+        if legacy_device_id and "device_id" not in source_config:
+            source_config["device_id"] = legacy_device_id
+        source_config = source_config_to_dict(
+            CameraSourceType(
+                data.get("source_type", CameraSourceType.LOCAL_DEVICE)
+            ),
+            source_config,
+        )
+        source_type = data.get("source_type", CameraSourceType.LOCAL_DEVICE)
+        camera = cls(
+            data["name"],
+            legacy_device_id,
+            camera_id=data.get("id"),
+            source_type=source_type,
+            source_config=source_config,
+        )
         camera.enabled = data.get("enabled", camera.enabled)
         camera.white_balance = data.get("white_balance", None)
         camera.contrast = data.get("contrast", camera.contrast)
@@ -624,6 +856,15 @@ class Camera:
         camera.transparency = data.get("transparency", camera.transparency)
         camera.denoise = data.get("denoise", 0.0)
         camera.prefer_yuyv = data.get("prefer_yuyv", False)
+        camera.outside_view_enabled = data.get(
+            "outside_view_enabled", camera.outside_view_enabled
+        )
+        camera.outside_view_margin_mm = data.get(
+            "outside_view_margin_mm", camera.outside_view_margin_mm
+        )
+        camera.outside_view_transparency = data.get(
+            "outside_view_transparency", camera.outside_view_transparency
+        )
 
         camera.distortion_k1 = data.get("distortion_k1", 0.0)
         camera.distortion_k2 = data.get("distortion_k2", 0.0)
@@ -653,8 +894,8 @@ class Camera:
             camera.image_to_world = None
 
         if data.get("alignment_date"):
-            camera._alignment_date = datetime.fromisoformat(
-                data["alignment_date"]
+            camera._alignment_date = _as_utc(
+                datetime.fromisoformat(data["alignment_date"])
             )
         elif camera._image_to_world is not None:
             camera._alignment_date = datetime.now(tz=timezone.utc)
@@ -665,8 +906,8 @@ class Camera:
         camera._camera_matrix_cy = data.get("camera_matrix_cy")
         camera._calibration_rms = data.get("calibration_rms")
         if data.get("calibration_date"):
-            camera._calibration_date = datetime.fromisoformat(
-                data["calibration_date"]
+            camera._calibration_date = _as_utc(
+                datetime.fromisoformat(data["calibration_date"])
             )
         elif any(
             v != 0.0

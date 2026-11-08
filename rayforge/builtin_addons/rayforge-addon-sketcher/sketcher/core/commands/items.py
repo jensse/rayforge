@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
-from ..entities import Arc, Ellipse, TextBoxEntity
+from ..constraints import EqualDistanceConstraint
+from ..entities import Arc
 from .base import SketchChangeCommand
 
 if TYPE_CHECKING:
@@ -45,7 +47,7 @@ class AddItemsCommand(SketchChangeCommand):
             if old_id != p.id:
                 id_map[old_id] = p.id
             new_points.append(p)
-        registry.points.extend(new_points)
+        registry.add_points(new_points)
 
         new_entities = []
         for e in self.entities:
@@ -60,7 +62,12 @@ class AddItemsCommand(SketchChangeCommand):
         # Update point references within the entity
         for e in new_entities:
             for attr, value in vars(e).items():
-                if isinstance(value, int) and value in id_map:
+                # Note: bool is an int subclass; never remap flags.
+                if (
+                    isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and value in id_map
+                ):
                     setattr(e, attr, id_map[value])
                 # Handle lists of IDs, like in TextBoxEntity
                 elif isinstance(value, list) and attr.endswith("_ids"):
@@ -71,7 +78,12 @@ class AddItemsCommand(SketchChangeCommand):
         # Update point and entity references within constraints
         for c in self.constraints:
             for attr, value in vars(c).items():
-                if isinstance(value, int) and value in id_map:
+                # Note: bool is an int subclass; never remap flags.
+                if (
+                    isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and value in id_map
+                ):
                     setattr(c, attr, id_map[value])
                 elif isinstance(value, list):
                     # Handle lists of IDs, like in EqualLengthConstraint
@@ -87,7 +99,7 @@ class AddItemsCommand(SketchChangeCommand):
         point_ids = {p.id for p in self.points}
         entity_ids = {e.id for e in self.entities}
 
-        registry.points = [p for p in registry.points if p.id not in point_ids]
+        registry.remove_points(point_ids)
         registry.entities = [
             e for e in registry.entities if e.id not in entity_ids
         ]
@@ -143,11 +155,7 @@ class RemoveItemsCommand(SketchChangeCommand):
             # A. Unity Logic for compound objects like TextBoxEntity
             all_entities = list(sketch.registry.entities)
             for e in all_entities:
-                helper_ids = None
-                if isinstance(e, TextBoxEntity):
-                    helper_ids = e.construction_line_ids
-                elif isinstance(e, Ellipse):
-                    helper_ids = e.helper_line_ids
+                helper_ids = e.get_helper_ids()
 
                 if helper_ids:
                     is_part_of_delete_set = (
@@ -198,8 +206,6 @@ class RemoveItemsCommand(SketchChangeCommand):
             if isinstance(e, Arc):
                 c, s, end = e.center_idx, e.start_idx, e.end_idx
                 for constr in sketch.constraints:
-                    from ..constraints import EqualDistanceConstraint
-
                     if isinstance(constr, EqualDistanceConstraint):
                         set1 = {constr.p1, constr.p2}
                         set2 = {constr.p3, constr.p4}
@@ -219,11 +225,48 @@ class RemoveItemsCommand(SketchChangeCommand):
                 or constr.depends_on_entities(to_delete_entity_ids)
             ) and constr not in to_delete_constraints:
                 to_delete_constraints.append(constr)
-        # 5. Get actual objects from IDs
+
+        # 4.5. Orphan Points Owned Only by Deleted Constraints
+        # A point may be referenced solely by constraints (e.g. a
+        # rectangle's auto-created center point) and belong to no
+        # entity. Step C above only orphans points that belonged to
+        # deleted entities, so handle constraint-only points here.
+        to_delete_constraint_set = {id(c) for c in to_delete_constraints}
+        constr_point_attrs = ["p1", "p2", "p3", "p4", "center", "point_id"]
+        points_of_deleted_constraints: set[int] = set()
+        used_points_by_surviving: set[int] = set()
+
+        for constr in sketch.constraints:
+            if id(constr) in to_delete_constraint_set:
+                for attr in constr_point_attrs:
+                    pid = getattr(constr, attr, None)
+                    if isinstance(pid, int):
+                        points_of_deleted_constraints.add(pid)
+            else:
+                for attr in constr_point_attrs:
+                    pid = getattr(constr, attr, None)
+                    if isinstance(pid, int):
+                        used_points_by_surviving.add(pid)
+
+        for e in sketch.registry.entities:
+            if e.id not in to_delete_entity_ids:
+                used_points_by_surviving.update(e.get_point_ids())
+
+        constraint_orphans = (
+            points_of_deleted_constraints
+            - used_points_by_surviving
+            - to_delete_point_ids
+        )
+        to_delete_point_ids.update(constraint_orphans)
+
+        # 5. Get actual objects from IDs. Fixed points are included
+        # (array copies are fixed and must be deletable) except the
+        # sketch origin, which survives entity cascades.
         final_points = [
             p
             for p in sketch.registry.points
-            if p.id in to_delete_point_ids and not p.fixed
+            if p.id in to_delete_point_ids
+            and (not p.fixed or p.id != sketch.origin_id)
         ]
         final_entities = [
             e for e in sketch.registry.entities if e.id in to_delete_entity_ids
@@ -231,12 +274,16 @@ class RemoveItemsCommand(SketchChangeCommand):
 
         return final_points, final_entities, to_delete_constraints
 
-    def _do_execute(self) -> None:
+    def apply_direct(self) -> None:
+        """
+        Removes this command's items from the sketch directly,
+        bypassing execute so prune_arrays() never sees arrays mid-edit
+        (e.g. while an array command rebuilds its members).
+        """
         registry = self.sketch.registry
         point_ids = {p.id for p in self.points}
         entity_ids = {e.id for e in self.entities}
-
-        registry.points = [p for p in registry.points if p.id not in point_ids]
+        registry.remove_points(point_ids)
         registry.entities = [
             e for e in registry.entities if e.id not in entity_ids
         ]
@@ -245,9 +292,33 @@ class RemoveItemsCommand(SketchChangeCommand):
             if c in self.sketch.constraints:
                 self.sketch.constraints.remove(c)
 
+    def _do_execute(self) -> None:
+        self.apply_direct()
+        self.sketch.prune_arrays()
+
     def _do_undo(self) -> None:
         registry = self.sketch.registry
-        registry.points.extend(self.points)
+        registry.add_points(self.points)
         registry.entities.extend(self.entities)
         registry._entity_map = {e.id: e for e in registry.entities}
         self.sketch.constraints.extend(self.constraints)
+
+    @classmethod
+    def calculate_dependencies_for_ids(
+        cls,
+        sketch: Sketch,
+        entity_ids: set[int],
+        point_ids: set[int] | None = None,
+    ) -> tuple[list[Point], list[Entity], list[Constraint]]:
+        """
+        Calculates the removal dependencies for a plain set of entity
+        (and optionally point) IDs, without going through a selection.
+        """
+        return cls.calculate_dependencies(
+            sketch,
+            SimpleNamespace(
+                entity_ids=entity_ids,
+                point_ids=point_ids or set(),
+                constraint_idx=None,
+            ),
+        )

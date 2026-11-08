@@ -132,7 +132,6 @@ class VarSet:
         var.definition_changed.connect(
             self._on_child_var_definition_changed, weak=False
         )
-        logger.debug(f"Emitting signal: var_added for var '{var.key}'")
         self.var_added.send(self, var=var)
 
     def remove(self, key: str) -> Var | None:
@@ -147,7 +146,6 @@ class VarSet:
             var.definition_changed.disconnect(
                 self._on_child_var_definition_changed
             )
-            logger.debug(f"Emitting signal: var_removed for var '{var.key}'")
             self.var_removed.send(self, var=var)
         return var
 
@@ -249,11 +247,20 @@ class VarSet:
     def set_values(self, values: dict[str, Any]):
         """
         Sets the values for multiple Vars from a dictionary.
-        Ignores keys that are not in the VarSet.
+        Ignores keys that are not in the VarSet, and skips values that
+        cannot be coerced to the expected type.
         """
         for key, value in values.items():
             if key in self._vars:
-                self[key] = value
+                try:
+                    self[key] = value
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "Skipping value %r for key '%s': "
+                        "cannot be coerced to expected type",
+                        value,
+                        key,
+                    )
 
     def clear(self):
         """Removes all Var objects from the set."""
@@ -265,15 +272,19 @@ class VarSet:
             var._varset = None
         self._vars.clear()
         self._order.clear()
-        logger.debug("Emitting signal: cleared")
         self.cleared.send(self)
 
     def validate(self):
         """
-        Validates all Var objects in the set.
+        Validates all visible Var objects in the set. Vars hidden by
+        their ``visible_when`` are inert and are not validated.
+
         Raises: ValidationError on the first validation failure.
         """
+        values = self.get_values()
         for var in self:
+            if not var.is_visible(values):
+                continue
             var.validate()
 
     def __repr__(self) -> str:

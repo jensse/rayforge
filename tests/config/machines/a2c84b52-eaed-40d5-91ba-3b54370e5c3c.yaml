@@ -8,26 +8,19 @@ machine:
       direction: normal
       extents:
       - 0
-      - 200
+      - 120.0
       letter: X
       resolution: 0.01
     - axis_type: linear
       direction: normal
       extents:
       - 0
-      - 200
+      - 120.0
       letter: Y
       resolution: 0.01
-    - axis_type: linear
-      direction: normal
-      extents:
-      - -50
-      - 50
-      letter: Z
-      resolution: 0.01
   axis_extents:
-  - 200
-  - 200
+  - 120.0
+  - 120.0
   cameras: []
   capabilities: null
   clear_alarm_on_connect: false
@@ -70,7 +63,7 @@ machine:
   gcode:
     gcode_precision: 3
   heads:
-  - cut_color: '#ff00ff'
+  - cut_color: '#000000'
     focal_distance: 0.0
     focus_power_percent: 1.0
     frame_corner_pause: 0
@@ -79,6 +72,7 @@ machine:
     frame_speed: 0
     laser_type: diode
     max_power: 1000
+    max_power_watts: 5.0
     max_pulse_width: 500
     max_pwm_frequency: 5000
     min_pulse_width: 5
@@ -86,7 +80,6 @@ machine:
     name: Laser Head
     pulse_width: 50
     pwm_frequency: 500
-    raster_color: '#000000'
     spot_size_mm:
     - 0.1
     - 0.1
@@ -110,6 +103,7 @@ machine:
     - 1.0
     type: LaserHead
     uid: 46606ac3-7eb1-4979-a379-d44fc2b03911
+    wavelength_nm: 455.0
   home_on_start: true
   hookmacros: {}
   machine_hours:
@@ -125,13 +119,18 @@ machine:
   name: Sculpfun iCube
   nogo_zones: []
   origin: bottom_left
+  panel_orientation: native
+  placeholder: false
   reverse_x_axis: false
   reverse_y_axis: false
   reverse_z_axis: false
+  reviewed_profile_hash: null
   rotary_enabled_default: false
   rotary_modules: []
+  schema_version: 1
   single_axis_homing_enabled: true
   soft_limits: null
+  source_profile_id: null
   speeds:
     acceleration: 1000
     max_cut_speed: 1000
@@ -140,6 +139,8 @@ machine:
   supports_curves: false
   units:
     unit_system: metric
+  usb_pid: null
+  usb_vid: null
   wcs_origin_is_workarea_origin: false
   work_margins:
   - 0

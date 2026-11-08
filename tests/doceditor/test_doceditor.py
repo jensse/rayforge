@@ -6,13 +6,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from raygeo.ops.axis import Axis
 
 from rayforge.context import get_context
 from rayforge.core.step_registry import step_registry
 from rayforge.core.vectorization_spec import TraceSpec
 from rayforge.image.svg import svg_fallback
 from rayforge.machine.models.machine import Origin
-from rayforge.machine.models.rotary_module import RotaryModule
+from rayforge.machine.models.rotary_module import RotaryMode, RotaryModule
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -174,6 +175,60 @@ async def test_import_svg_export_gcode(
             assert gen_parts[key] == pytest.approx(exp_parts[key], abs=0.1)
 
 
+@pytest.mark.asyncio
+async def test_import_svg_export_gcode_with_air_assist(
+    context_initializer,
+    doc_editor,
+    tmp_path,
+    assets_path,
+    contour_step_class,
+):
+    """
+    End-to-end: an air assist enabled step emits M8 in the exported
+    G-code.
+
+    Regression test for the 1.9.0 pipeline rewrite, where the step's
+    air assist setting no longer reached the ops stream.
+    """
+    machine = get_context().machine
+    assert machine is not None, "Machine should be initialized in context"
+    machine.set_dialect_uid("grbl")
+
+    # --- 1. ARRANGE ---
+    step = contour_step_class.create(
+        context_initializer, name="Vectorize", optimize=False
+    )
+    step.set_power(0.5)
+    step.set_cut_speed(3000)
+    step.set_air_assist(True)
+    step.visible = True
+
+    workflow = doc_editor.doc.active_layer.workflow
+    assert workflow is not None, (
+        "Active layer must have a workflow for this test"
+    )
+    workflow.add_step(step)
+
+    svg_path = assets_path / "10x10_square.svg"
+    output_gcode_path = tmp_path / "output_air_assist.gcode"
+
+    # --- 2. ACT ---
+    await doc_editor.import_file_from_path(
+        svg_path, mime_type="image/svg+xml", vectorization_spec=TraceSpec()
+    )
+    await doc_editor.wait_until_settled()
+    await doc_editor.export_gcode_to_path(output_gcode_path)
+
+    # --- 3. ASSERT ---
+    assert output_gcode_path.exists()
+    text = output_gcode_path.read_text(encoding="utf-8")
+    assert "M8" in text, f"M8 missing from G-code:\n{text}"
+    assert "M9" in text, f"M9 missing from G-code:\n{text}"
+    assert text.index("M8") < text.index("M4"), (
+        "Air assist must turn on before the laser:\n" + text
+    )
+
+
 def test_saved_state_with_undo_redo(doc_editor):
     """
     Test that saved state correctly tracks undo/redo operations.
@@ -266,6 +321,17 @@ def test_returns_immediately_when_not_processing(doc_editor):
     assert result is True
 
 
+@pytest.mark.asyncio
+async def test_settled_flushes_pending_rebuild(doc_editor):
+    """A model change arms a debounced rebuild. Settling must flush
+    and wait for it so no rebuild can start afterwards."""
+    machine = doc_editor.context.machine
+    machine.set_max_cut_speed(1234)
+
+    await doc_editor.wait_until_settled()
+    assert not doc_editor.pipeline.is_busy
+
+
 def test_returns_true_when_processing_finishes(doc_editor):
     """Test that wait_until_settled_sync returns True when
     processing finishes within timeout."""
@@ -338,7 +404,8 @@ def test_handles_multiple_busy_tasks(doc_editor):
             doc_editor.notify_task_ended()
 
 
-def test_configure_machine_uses_first_layer(doc_editor):
+@pytest.mark.asyncio
+async def test_configure_machine_uses_first_layer(doc_editor):
     editor = doc_editor
     machine = editor.context.machine
     rm = RotaryModule()
@@ -350,10 +417,14 @@ def test_configure_machine_uses_first_layer(doc_editor):
 
     with patch.object(machine, "configure_for_layer") as mock_cfg:
         editor.configure_machine()
+        await editor.wait_until_settled()
     mock_cfg.assert_called_with(first_layer)
 
 
-def test_configure_machine_mounts_rotary_for_first_layer(doc_editor):
+@pytest.mark.asyncio
+async def test_configure_machine_mounts_rotary_for_first_layer(
+    doc_editor,
+):
     editor = doc_editor
     machine = editor.context.machine
     rm = RotaryModule()
@@ -364,4 +435,68 @@ def test_configure_machine_mounts_rotary_for_first_layer(doc_editor):
     first_layer.set_rotary_module_uid(rm.uid)
 
     editor.configure_machine()
+    await editor.wait_until_settled()
     assert machine.assembly.has_rotary
+
+
+@pytest.mark.asyncio
+async def test_frame_job_rotary_svg_drives_a_axis(
+    context_initializer,
+    doc_editor,
+    assets_path,
+    contour_step_class,
+    mocker,
+):
+    """End-to-end: framing a rotary SVG job drives the A (rotary) axis
+    instead of the physical Y axis (issue #356)."""
+    from rayforge.machine.cmd import MachineCmd
+
+    machine = get_context().machine
+    assert machine is not None
+    machine.set_dialect_uid("grbl")
+    machine.set_origin(Origin.BOTTOM_LEFT)
+
+    # TRUE_4TH_AXIS rotary module on the A axis.
+    rm = RotaryModule()
+    rm.set_mode(RotaryMode.TRUE_4TH_AXIS)
+    rm.set_axis(Axis.A)
+    machine.add_rotary_module(rm)
+
+    layer = doc_editor.doc.active_layer
+    layer.set_rotary_enabled(True)
+    layer.set_rotary_module_uid(rm.uid)
+
+    step = contour_step_class.create(
+        context_initializer, name="Vectorize", optimize=False
+    )
+    step.set_power(0.5)
+    step.set_cut_speed(3000)
+    step.visible = True
+    workflow = layer.workflow
+    assert workflow is not None
+    workflow.add_step(step)
+
+    head = machine.get_default_laser_head()
+    assert head is not None
+    head.set_frame_power(1)
+    assert machine.can_frame() is True
+
+    # Import a real square so the frame rectangle has a Y extent.
+    svg_path = assets_path / "10x10_square.svg"
+    await doc_editor.import_file_from_path(
+        svg_path, mime_type="image/svg+xml", vectorization_spec=TraceSpec()
+    )
+    await doc_editor.wait_until_settled()
+
+    run_spy = mocker.spy(machine.driver, "run")
+    machine_cmd = MachineCmd(doc_editor)
+    await machine_cmd.frame_job(machine)
+    await doc_editor.wait_until_settled()
+
+    run_spy.assert_called_once()
+    encoded = run_spy.call_args.args[0]
+    machine_code = encoded.text
+    assert re.search(r"\bA-?\d", machine_code), (
+        f"Expected an A-axis (rotary) move in frame G-code, "
+        f"got:\n{machine_code}"
+    )

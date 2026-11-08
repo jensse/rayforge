@@ -8,10 +8,10 @@ from utils import (
     get_target,
     load_project,
     open_step_settings,
+    restore_config,
     run_on_main_thread,
     set_window_size,
     take_screenshot,
-    target_to_filename,
 )
 
 from rayforge.uiscript import app, win
@@ -52,13 +52,15 @@ def set_engrave_mode(dialog, mode_name: str):
     mode_index = list(DepthMode).index(mode_enum)
 
     general_view = dialog.general_view
-    logger.info("Searching for mode_row in general_view children...")
+    logger.info("Searching for mode row in general_view varset widgets...")
 
     def find_mode_row(widget, depth=0):
         indent = "  " * depth
-        logger.info(f"{indent}Checking: {type(widget).__name__}")
-        if hasattr(widget, "mode_row") and widget.mode_row is not None:
-            return widget.mode_row
+        logger.debug(f"{indent}Checking: {type(widget).__name__}")
+        if hasattr(widget, "row_for"):
+            row = widget.row_for("depth_mode")
+            if row is not None:
+                return row
         child = widget.get_first_child()
         while child:
             result = find_mode_row(child, depth + 1)
@@ -73,10 +75,11 @@ def set_engrave_mode(dialog, mode_name: str):
         logger.info(f"Set engrave mode to: {mode_name} (index {mode_index})")
         return True
 
-    logger.warning("Could not find engraver widget with mode_row")
+    logger.warning("Could not find engraver widget with mode row")
     return False
 
 
+@restore_config
 def main():
     set_window_size(win, 2400, 1650)
 
@@ -111,9 +114,7 @@ def main():
             run_on_main_thread(lambda m=mode_name: set_engrave_mode(dialog, m))
             time.sleep(0.5)
 
-    output_name = target_to_filename(TARGET)
-
-    take_screenshot(output_name)
+    take_screenshot()
     time.sleep(0.25)
     app.quit_idle()
 

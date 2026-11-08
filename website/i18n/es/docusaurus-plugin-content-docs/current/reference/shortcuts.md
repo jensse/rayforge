@@ -2,12 +2,13 @@
 
 Referencia completa de atajos de teclado en Rayforge.
 
-:::note Convenciones de Plataforma
-
+<!-- prettier-ignore-start -->
+:::note[Convenciones de Plataforma]
 - **Linux/Windows:** Tecla `Ctrl`
 - **macOS:** Tecla `Command`
 - La documentación usa `Ctrl` - usuarios de macOS sustituyan con `Command`
-  :::
+:::
+<!-- prettier-ignore-end -->
 
 ---
 
@@ -129,15 +130,20 @@ Referencia completa de atajos de teclado en Rayforge.
 
 ## Control de Máquina
 
-| Atajo       | Acción             | Descripción                             |
-| ----------- | ------------------ | --------------------------------------- |
-| `Ctrl+L`    | Panel Inferior     | Alternar visibilidad del panel inferior |
-| `Ctrl+&lt;` | Ajustes de Máquina | Abrir diálogo de ajustes de máquina     |
-| `F1`        | Acerca de          | Mostrar diálogo acerca de               |
+| Atajo       | Acción             | Descripción                              |
+| ----------- | ------------------ | ---------------------------------------- |
+| `Ctrl+L`    | Panel Inferior     | Alternar visibilidad del panel inferior  |
+| `Ctrl+M`    | Modo Mover Cabeza  | Activar clic en lienzo para mover cabeza |
+| `Ctrl+&lt;` | Ajustes de Máquina | Abrir diálogo de ajustes de máquina      |
+| `F1`        | Acerca de          | Mostrar diálogo acerca de                |
 
-:::note Operaciones de Máquina
-Las operaciones de control de máquina (Home, Enmarcar, Enviar, etc.) actualmente no tienen atajos predeterminados pero se pueden acceder vía botones de la barra de herramientas o menús.
+<!-- prettier-ignore-start -->
+:::note[Operaciones de Máquina]
+Las operaciones de control de máquina (Home, Enmarcar, Enviar, etc.)
+actualmente no tienen atajos predeterminados pero se pueden acceder vía botones de la barra de
+herramientas o menús.
 :::
+<!-- prettier-ignore-end -->
 
 ---
 
@@ -225,9 +231,12 @@ Cuando se edita código G o campos de texto:
 
 ## Personalizando Atajos
 
-:::note Atajos Personalizados
-Los atajos de teclado están actualmente codificados. La configuración de atajos personalizados puede añadirse en futuras versiones.
+<!-- prettier-ignore-start -->
+:::note[Atajos Personalizados]
+Los atajos de teclado están actualmente codificados. La configuración
+de atajos personalizados puede añadirse en futuras versiones.
 :::
+<!-- prettier-ignore-end -->
 
 **Limitaciones actuales:**
 
@@ -311,10 +320,12 @@ Algunos atajos menos conocidos:
 
 **Problemas comunes:**
 
-1. **Foco en elemento equivocado** - Asegúrate de que el lienzo o ventana principal tenga foco, no un campo de texto
+1. **Foco en elemento equivocado** - Asegúrate de que el lienzo o ventana principal tenga foco, no
+   un campo de texto
 2. **Aplicación en conflicto** - Otra app puede estar interceptando el atajo
 3. **Atajo de entorno de escritorio** - Los atajos del sistema pueden anular (ej., Alt+F4)
-4. **Teclado numérico vs fila numérica** - Usa la fila numérica para atajos de vista 3D, no el teclado numérico
+4. **Teclado numérico vs fila numérica** - Usa la fila numérica para atajos de vista 3D, no el
+   teclado numérico
 
 **Soluciones:**
 
@@ -376,6 +387,7 @@ Algunos atajos menos conocidos:
 |                 | Ctrl+G          | Agrupar             |
 |                 | Ctrl+U          | Desagrupar          |
 | **Máquina**     | Ctrl+L          | Panel Inferior      |
+|                 | Ctrl+M          | Modo Mover Cabeza   |
 |                 | Ctrl+&lt;       | Ajustes de Máquina  |
 |                 | F1              | Acerca de           |
 
@@ -386,4 +398,3 @@ Algunos atajos menos conocidos:
 - [Ventana Principal](../ui/main-window.md) - Resumen de UI
 - [Herramientas del Lienzo](../ui/canvas-tools.md) - Interacción con el lienzo
 - [Vista Previa 3D](../ui/3d-preview.md) - Controles de vista 3D
-

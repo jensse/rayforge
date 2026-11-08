@@ -9,6 +9,8 @@ from raygeo.geo import Matrix
 from ..context import get_context
 from ..core.item import DocItem
 from ..core.undo import ChangePropertyCommand
+from ..core.workpiece import WorkPiece
+from ..machine.models.machine_panel import PanelOrientation
 
 if TYPE_CHECKING:
     from .editor import DocEditor
@@ -135,10 +137,43 @@ class TransformCmd:
                 )
                 t.execute(cmd)
 
+    @staticmethod
+    def _flip_matrix_world(item: DocItem, horizontal: bool) -> Matrix:
+        """World-space flip matrix that mirrors around the item's centre.
+
+        The canvas presents PANEL space (the optional 90-degree
+        presentation rotation), so "horizontal"/"vertical" refer to the
+        on-screen axes. The reflection is built in PANEL space around the
+        item's presented centre and conjugated back into WORLD space;
+        for a NATIVE panel this reduces to the plain world-space flip.
+        """
+        world_center = item.get_world_transform().transform_point((0.5, 0.5))
+
+        machine = get_context().machine
+        panel = getattr(machine, "panel", None) if machine else None
+        if panel is not None:
+            orientation = getattr(panel, "orientation", None)
+            if isinstance(orientation, PanelOrientation) and (
+                orientation is not PanelOrientation.NATIVE
+            ):
+                world_to_panel = panel.get_world_to_panel_2d()
+                panel_to_world = world_to_panel.invert()
+                panel_center = world_to_panel.transform_point(world_center)
+                if horizontal:
+                    panel_flip = Matrix.flip_horizontal(center=panel_center)
+                else:
+                    panel_flip = Matrix.flip_vertical(center=panel_center)
+                return panel_to_world @ panel_flip @ world_to_panel
+
+        if horizontal:
+            return Matrix.flip_horizontal(center=world_center)
+        return Matrix.flip_vertical(center=world_center)
+
     def flip_horizontal(self, items: list[DocItem]):
         """
-        Flips a list of DocItems horizontally (mirrors along the Y-axis),
-        creating a single undoable transaction for the operation.
+        Flips a list of DocItems horizontally (mirrors along the on-screen
+        vertical axis through each item's centre), creating a single
+        undoable transaction for the operation.
 
         Args:
             items: The list of DocItems to flip horizontally.
@@ -150,15 +185,8 @@ class TransformCmd:
         with history_manager.transaction(_("Flip Horizontal")) as t:
             for item in items:
                 old_matrix = item.matrix.copy()
-                # Get the world center of the item before transformation
-                # This ensures we always flip around the same point
-                world_center = item.get_world_transform().transform_point(
-                    (0.5, 0.5)
-                )
-
-                # Create a flip matrix (scale by -1 on X-axis) around world
-                # center
-                flip_matrix = Matrix.flip_horizontal(center=world_center)
+                # Flip around the item's own centre so it stays in place.
+                flip_matrix = self._flip_matrix_world(item, horizontal=True)
                 new_matrix = flip_matrix @ old_matrix
 
                 if old_matrix.is_close(new_matrix):
@@ -174,8 +202,9 @@ class TransformCmd:
 
     def flip_vertical(self, items: list[DocItem]):
         """
-        Flips a list of DocItems vertically (mirrors along the X-axis),
-        creating a single undoable transaction for the operation.
+        Flips a list of DocItems vertically (mirrors along the on-screen
+        horizontal axis through each item's centre), creating a single
+        undoable transaction for the operation.
 
         Args:
             items: The list of DocItems to flip vertically.
@@ -187,15 +216,8 @@ class TransformCmd:
         with history_manager.transaction(_("Flip Vertical")) as t:
             for item in items:
                 old_matrix = item.matrix.copy()
-                # Get the world center of the item before transformation
-                # This ensures we always flip around the same point
-                world_center = item.get_world_transform().transform_point(
-                    (0.5, 0.5)
-                )
-
-                # Create a flip matrix (scale by -1 on Y-axis) around world
-                # center
-                flip_matrix = Matrix.flip_vertical(center=world_center)
+                # Flip around the item's own centre so it stays in place.
+                flip_matrix = self._flip_matrix_world(item, horizontal=False)
                 new_matrix = flip_matrix @ old_matrix
 
                 if old_matrix.is_close(new_matrix):
@@ -237,8 +259,7 @@ class TransformCmd:
                 size_world = item.size
 
                 if machine:
-                    space = machine.get_coordinate_space()
-                    x_world, y_world = space.machine_item_to_world(
+                    x_world, y_world = machine.panel.machine_item_to_world(
                         (x, y), size_world
                     )
                 else:
@@ -262,6 +283,48 @@ class TransformCmd:
                     old_value=old_matrix,
                 )
                 t.execute(cmd)
+
+    def set_position_at_anchor(
+        self, item: WorkPiece, x: float, y: float
+    ) -> None:
+        """
+        Moves a single workpiece so that its anchor point lands at the
+        given machine coordinates. The anchor point is the origin selected
+        via ``anchor_mode``: the bounding box corner, the box center, or
+        the geometry provider's reference point.
+
+        Args:
+            item: The workpiece to move.
+            x: Target anchor X position in machine coordinates.
+            y: Target anchor Y position in machine coordinates.
+        """
+        history_manager = self._editor.history_manager
+        machine = get_context().machine
+
+        if machine:
+            target_world = machine.panel.machine_point_to_world(x, y)
+        else:
+            # Fallback to direct mapping if no machine context
+            target_world = (x, y)
+
+        with history_manager.transaction(_("Move item(s)")) as t:
+            old_matrix = item.matrix.copy()
+            current_world = item.get_anchor_world()
+            dx = target_world[0] - current_world[0]
+            dy = target_world[1] - current_world[1]
+
+            new_matrix = Matrix.translation(dx, dy) @ old_matrix
+
+            if old_matrix.is_close(new_matrix):
+                return
+
+            cmd = ChangePropertyCommand(
+                target=item,
+                property_name="matrix",
+                new_value=new_matrix,
+                old_value=old_matrix,
+            )
+            t.execute(cmd)
 
     def set_angle(self, items: list[DocItem], angle: float):
         """Sets **every** item's local rotation angle to *angle* degrees,
@@ -370,8 +433,13 @@ class TransformCmd:
                     )
 
                 # The set_size method will rebuild the matrix,
-                # preserving pos/angle
-                item.set_size(new_width, new_height)
+                # preserving the anchor point and angle
+                if isinstance(item, WorkPiece):
+                    item.set_size(
+                        new_width, new_height, anchor=item.anchor_point
+                    )
+                else:
+                    item.set_size(new_width, new_height)
                 new_matrix = item.matrix.copy()
 
                 if old_matrix.is_close(new_matrix):
@@ -409,8 +477,9 @@ class TransformCmd:
 
         machine = get_context().machine
         if machine:
-            space = machine.get_coordinate_space()
-            target_world = space.machine_item_to_world((x, y), group_size)
+            target_world = machine.panel.machine_item_to_world(
+                (x, y), group_size
+            )
         else:
             target_world = (x, y)
 
@@ -641,8 +710,9 @@ class TransformCmd:
         min_x, min_y, max_x, max_y = cls.group_bbox_world(items)
         gw, gh = max_x - min_x, max_y - min_y
         if machine:
-            space = machine.get_coordinate_space()
-            return space.world_item_to_machine((min_x, min_y), (gw, gh))
+            return machine.panel.world_item_to_machine(
+                (min_x, min_y), (gw, gh)
+            )
         return (min_x, min_y)
 
     @classmethod

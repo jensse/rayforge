@@ -10,6 +10,7 @@ from ..core.undo import ChangePropertyCommand, DictItemCommand
 from ..core.vectorization_spec import LayerSource, PassthroughSpec
 
 if TYPE_CHECKING:
+    from ..core.recipe import Recipe
     from ..core.step import Step
     from .editor import DocEditor
 
@@ -76,14 +77,12 @@ class StepCmd:
         stock_items = self._doc.stock_items
         machine = self._context.machine
 
-        # Query the RecipeManager for the best match for ANY supported
-        # capability
-        matching_recipes = []
-        if step.capabilities:
-            recipe_mgr = self._context.recipe_mgr
+        # Query the RecipeManager for the best match for this step type.
+        matching_recipes: list = []
+        recipe_mgr = self._context.recipe_mgr
+        if recipe_mgr is not None:
             matching_recipes = recipe_mgr.find_recipes(
                 stock_items=stock_items,
-                capabilities=step.capabilities,
                 machine=machine,
                 step_type=type(step).__name__,
             )
@@ -94,13 +93,54 @@ class StepCmd:
             logger.info(
                 f"Applying best recipe '{best_recipe.name}' to new step."
             )
-            # Apply the settings to the step object
-            for key, value in best_recipe.settings.items():
-                if hasattr(step, key):
-                    setattr(step, key, value)
+            # Apply the settings to the step object. Names are gated
+            # through the step type's recipe_keys allowlist; the step
+            # itself decides how to apply each value (setter when
+            # available, plain assignment otherwise).
+            for key, value in best_recipe.get_settings_for_step(step).items():
+                step.set_recipe_value(key, value)
+
+            # Apply transformer settings directly to the freshly-created
+            # step. Per-workpiece and per-step dicts are mutated in place.
+            self._apply_recipe_transformers_to_step(step, best_recipe)
 
             # Store a reference to the applied recipe
             step.applied_recipe_uid = best_recipe.uid
+
+    @staticmethod
+    def _apply_recipe_transformers_to_step(step: Step, recipe: Recipe) -> None:
+        """Apply a recipe's transformer settings to a fresh step.
+
+        Direct mutation of the step's per-workpiece and per-step
+        transformer dicts, used by the auto-apply path. For each recipe
+        transformer dict with ``recipe_apply=True``, update the step's
+        matching dict (by name) with ``enabled`` and the transformer's
+        params. Only param keys the step's dict already declares are
+        written (recipe files are user-provided).
+        """
+        step_dicts_by_name: dict[str, dict] = {}
+        for d in list(step.per_workpiece_transformers_dicts) + list(
+            step.per_step_transformers_dicts
+        ):
+            name = d.get("name")
+            if name and name not in step_dicts_by_name:
+                step_dicts_by_name[name] = d
+
+        for recipe_dict in recipe.transformer_dicts or []:
+            if not recipe_dict.get("recipe_apply", True):
+                continue
+            name = recipe_dict.get("name")
+            if not name:
+                continue
+            step_dict = step_dicts_by_name.get(name)
+            if step_dict is None:
+                continue
+            for key, value in recipe_dict.items():
+                if key in ("name", "recipe_apply"):
+                    continue
+                if key not in step_dict:
+                    continue
+                step_dict[key] = value
 
     def rename_step(self, step: Step, new_name: str):
         """Renames a step with an undoable command."""

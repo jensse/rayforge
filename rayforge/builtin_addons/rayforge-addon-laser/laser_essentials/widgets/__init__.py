@@ -4,9 +4,13 @@ Laser Essentials UI Widgets.
 
 from .contour_page import ContourStepSettingsPage
 from .frame_page import FrameStepSettingsPage
+from .levels_adapter import LevelsAdapter
 from .material_test_grid_page import MaterialTestGridSettingsPage
+from .offset_fill_page import OffsetFillStepSettingsPage
 from .raster_page import RasterSettingsPage
+from .scan_angle_adapter import ScanAngleAdapter
 from .shrinkwrap_page import ShrinkWrapStepSettingsPage
+from .tuple_adapter import TupleAdapter
 from .wavefront_page import WavefrontStepSettingsPage
 
 ASSEMBLER_WIDGETS = {
@@ -16,14 +20,19 @@ ASSEMBLER_WIDGETS = {
     "shrinkwrap": ShrinkWrapStepSettingsPage,
     "wavefront": WavefrontStepSettingsPage,
     "material_test_grid": MaterialTestGridSettingsPage,
+    "offset_fill": OffsetFillStepSettingsPage,
 }
 
 __all__ = [
     "ASSEMBLER_WIDGETS",
     "ContourStepSettingsPage",
     "FrameStepSettingsPage",
+    "LevelsAdapter",
     "MaterialTestGridSettingsPage",
+    "OffsetFillStepSettingsPage",
     "RasterSettingsPage",
+    "ScanAngleAdapter",
     "ShrinkWrapStepSettingsPage",
+    "TupleAdapter",
     "WavefrontStepSettingsPage",
 ]

@@ -7,9 +7,9 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Rayforge\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-05-08 23:36+0200\n"
+"POT-Creation-Date: 2026-10-15 05:49+0200\n"
 "PO-Revision-Date: 2025-07-13 11:49+0200\n"
-"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Last-Translator: Samuel Abels <knipknap@gmail.com>\n"
 "Language-Team: Chinese (Simplified)\n"
 "Language: zh_CN\n"
 "MIME-Version: 1.0\n"
@@ -45,13 +45,18 @@ msgstr "平行四边形"
 msgid "Origin at {}"
 msgstr "原点在 {}"
 
-#: sketcher/core/constraints/point_on_line.py
-msgid "Point on Line"
-msgstr "点在线上"
+#: sketcher/core/constraints/point_on_curve.py
+msgid "Point on Curve"
+msgstr "点在曲线上"
 
+#: sketcher/core/constraints/point_on_curve.py
 #: sketcher/core/constraints/point_on_line.py
 msgid "Point at {}"
 msgstr "点在 {}"
+
+#: sketcher/core/constraints/point_on_line.py
+msgid "Point on Line"
+msgstr "点在线上"
 
 #: sketcher/core/constraints/collinear.py
 msgid "Collinear"
@@ -70,7 +75,11 @@ msgstr "相切"
 msgid "Line to {} at {}"
 msgstr "直线到 {} 在 {}"
 
-#: sketcher/core/constraints/distance.py
+#: sketcher/core/constraints/rotational.py
+msgid "Rotational Array"
+msgstr "旋转阵列"
+
+#: sketcher/core/constraints/distance.py sketcher/ui_gtk/tools/offset_tool.py
 #: sketcher/ui_gtk/tools/distance_constraint_tool.py
 msgid "Distance"
 msgstr "距离"
@@ -81,6 +90,11 @@ msgstr "距离"
 #: sketcher/core/constraints/aspect_ratio.py
 msgid "From {} to {}"
 msgstr "从 {} 到 {}"
+
+#: sketcher/core/constraints/distance.py sketcher/core/constraints/vertical.py
+#: sketcher/core/constraints/horizontal.py
+msgid "Enter length or expression."
+msgstr "输入长度或表达式。"
 
 #: sketcher/core/constraints/vertical.py
 #: sketcher/ui_gtk/tools/vertical_constraint_tool.py
@@ -114,6 +128,10 @@ msgstr "对称"
 msgid "Horizontal"
 msgstr "水平"
 
+#: sketcher/core/constraints/base.py
+msgid "Enter value or expression."
+msgstr "输入值或表达式。"
+
 #: sketcher/core/constraints/angle.py
 #: sketcher/ui_gtk/tools/angle_constraint_tool.py
 msgid "Angle"
@@ -123,6 +141,10 @@ msgstr "角度"
 msgid "Between two lines"
 msgstr "在两条直线之间"
 
+#: sketcher/core/constraints/angle.py
+msgid "Enter angle in degrees or expression."
+msgstr "输入角度（度）或表达式。"
+
 #: sketcher/core/constraints/diameter.py
 #: sketcher/ui_gtk/tools/diameter_constraint_tool.py
 msgid "Diameter"
@@ -131,6 +153,10 @@ msgstr "直径"
 #: sketcher/core/constraints/diameter.py
 msgid "Circle at {}"
 msgstr "圆在 {}"
+
+#: sketcher/core/constraints/diameter.py
+msgid "Enter diameter or expression."
+msgstr "输入直径或表达式。"
 
 #: sketcher/core/constraints/coincident.py
 #: sketcher/ui_gtk/tools/coincident_constraint_tool.py
@@ -142,6 +168,7 @@ msgid "At {}"
 msgstr "在 {}"
 
 #: sketcher/core/constraints/radius.py
+#: sketcher/ui_gtk/tools/circular_array_tool.py
 #: sketcher/ui_gtk/tools/radius_constraint_tool.py
 msgid "Radius"
 msgstr "半径"
@@ -149,6 +176,10 @@ msgstr "半径"
 #: sketcher/core/constraints/radius.py
 msgid "{} at {}"
 msgstr "{} 在 {}"
+
+#: sketcher/core/constraints/radius.py
+msgid "Enter radius or expression (e.g. 'width/2')."
+msgstr "输入半径或表达式（例如 'width/2'）。"
 
 #: sketcher/core/constraints/aspect_ratio.py
 #: sketcher/ui_gtk/tools/aspect_ratio_constraint_tool.py
@@ -203,9 +234,17 @@ msgstr "添加 {}"
 msgid "Add Grid"
 msgstr "添加网格"
 
+#: sketcher/core/commands/edit_array.py
+msgid "Edit Array"
+msgstr "编辑阵列"
+
 #: sketcher/core/commands/chamfer.py
 msgid "Add Chamfer"
 msgstr "添加倒角"
+
+#: sketcher/core/commands/mirror.py
+msgid "Mirror Selection"
+msgstr "镜像选择"
 
 #: sketcher/core/commands/arc.py
 msgid "Add Arc"
@@ -216,9 +255,21 @@ msgstr "添加圆弧"
 msgid "Straighten"
 msgstr "拉直"
 
+#: sketcher/core/commands/duplicate.py
+msgid "Duplicate Selection"
+msgstr "复制选择"
+
+#: sketcher/core/commands/create_array.py
+msgid "Create Array"
+msgstr "创建阵列"
+
 #: sketcher/core/commands/rounded_rect.py
 msgid "Add Rounded Rectangle"
 msgstr "添加圆角矩形"
+
+#: sketcher/core/commands/offset.py sketcher/ui_gtk/tools/offset_tool.py
+msgid "Offset"
+msgstr "偏移"
 
 #: sketcher/core/commands/rectangle.py
 msgid "Add Rectangle"
@@ -232,6 +283,26 @@ msgstr "修改文本属性"
 msgid "Set Waypoint Type"
 msgstr "设置路点类型"
 
+#: sketcher/core/commands/boolean.py sketcher/ui_gtk/menu.py
+msgid "Union"
+msgstr "并集"
+
+#: sketcher/core/commands/boolean.py sketcher/ui_gtk/menu.py
+msgid "Difference"
+msgstr "差集"
+
+#: sketcher/core/commands/boolean.py sketcher/ui_gtk/menu.py
+msgid "Intersection"
+msgstr "交集"
+
+#: sketcher/core/commands/boolean.py sketcher/ui_gtk/menu.py
+msgid "Exclude"
+msgstr "排他"
+
+#: sketcher/core/commands/polygon.py
+msgid "Add Polygon"
+msgstr "添加多边形"
+
 #: sketcher/core/commands/point.py
 msgid "Move Point"
 msgstr "移动点"
@@ -243,6 +314,10 @@ msgstr "移动控制点"
 #: sketcher/core/commands/point.py
 msgid "Unstick Junction"
 msgstr "取消连接点"
+
+#: sketcher/core/commands/point.py
+msgid "Move Entities"
+msgstr "移动实体"
 
 #: sketcher/core/commands/ellipse.py
 msgid "Add Ellipse"
@@ -284,6 +359,14 @@ msgstr "编辑草图"
 msgid "Export Object..."
 msgstr "导出对象..."
 
+#: sketcher/ui_gtk/studio.py sketcher/ui_gtk/menu.py
+msgid "Undo"
+msgstr "撤销"
+
+#: sketcher/ui_gtk/studio.py sketcher/ui_gtk/menu.py
+msgid "Redo"
+msgstr "重做"
+
 #: sketcher/ui_gtk/studio.py
 msgid "Toggle constraints"
 msgstr "切换约束"
@@ -296,9 +379,19 @@ msgstr "切换辅助几何"
 msgid "Fill color:"
 msgstr "填充颜色："
 
+#: sketcher/ui_gtk/studio.py sketcher/ui_gtk/tools/mirror_tool.py
+#: sketcher/ui_gtk/menu.py
+msgid "Mirror Vertically"
+msgstr "垂直镜像"
+
+#: sketcher/ui_gtk/studio.py sketcher/ui_gtk/tools/mirror_tool.py
+#: sketcher/ui_gtk/menu.py
+msgid "Mirror Horizontally"
+msgstr "水平镜像"
+
 #: sketcher/ui_gtk/studio.py sketcher/ui_gtk/tools/dimension_input.py
 #: sketcher/ui_gtk/tools/grid_tool.py sketcher/ui_gtk/tools/circle_tool.py
-#: sketcher/ui_gtk/sketchcanvas.py
+#: sketcher/ui_gtk/tools/offset_tool.py sketcher/ui_gtk/sketchcanvas.py
 msgid "Cancel"
 msgstr "取消"
 
@@ -344,7 +437,7 @@ msgstr "约束到轴"
 
 #: sketcher/ui_gtk/tools/select_tool.py sketcher/ui_gtk/tools/path_tool.py
 #: sketcher/ui_gtk/tools/rectangle_tool.py sketcher/ui_gtk/tools/arc_tool.py
-#: sketcher/ui_gtk/tools/circle_tool.py
+#: sketcher/ui_gtk/tools/circle_tool.py sketcher/ui_gtk/tools/polygon_tool.py
 msgid "Toggle Magnetic Snap"
 msgstr "切换磁力吸附"
 
@@ -357,6 +450,7 @@ msgid "Fillet"
 msgstr "圆角"
 
 #: sketcher/ui_gtk/tools/dimension_input.py
+#: sketcher/ui_gtk/tools/offset_tool.py
 msgid "Apply"
 msgstr "应用"
 
@@ -385,7 +479,8 @@ msgstr "对齐网格"
 msgid "Sharp"
 msgstr "尖锐"
 
-#: sketcher/ui_gtk/tools/rectangle_tool.py sketcher/ui_gtk/menu.py
+#: sketcher/ui_gtk/tools/rectangle_tool.py sketcher/ui_gtk/tools/__init__.py
+#: sketcher/ui_gtk/menu.py
 msgid "Rectangle"
 msgstr "矩形"
 
@@ -399,9 +494,40 @@ msgstr "宽"
 msgid "H"
 msgstr "高"
 
+#: sketcher/ui_gtk/tools/rectangle_tool.py sketcher/ui_gtk/tools/circle_tool.py
+#: sketcher/ui_gtk/tools/rounded_rect_tool.py
+msgid "Center on start point"
+msgstr "以起点为中心"
+
+#: sketcher/ui_gtk/tools/rectangle_tool.py
+#: sketcher/ui_gtk/tools/rounded_rect_tool.py
+msgid "Constrain to square"
+msgstr "约束为正方形"
+
 #: sketcher/ui_gtk/tools/rectangle_tool.py
 msgid "Type dimensions (W H)"
 msgstr "输入尺寸（宽 高）"
+
+#: sketcher/ui_gtk/tools/rectangle_tool.py sketcher/ui_gtk/tools/circle_tool.py
+#: sketcher/ui_gtk/tools/rounded_rect_tool.py
+msgid "Set edge point"
+msgstr "设置边缘点"
+
+#: sketcher/ui_gtk/tools/__init__.py
+msgid "Array"
+msgstr "阵列"
+
+#: sketcher/ui_gtk/tools/__init__.py
+msgid "Constrain"
+msgstr "约束"
+
+#: sketcher/ui_gtk/tools/__init__.py
+msgid "Dimension"
+msgstr "尺寸"
+
+#: sketcher/ui_gtk/tools/__init__.py
+msgid "Waypoint"
+msgstr "路点"
 
 #: sketcher/ui_gtk/tools/aspect_ratio_constraint_tool.py
 msgid "Add Aspect Ratio Constraint"
@@ -415,7 +541,8 @@ msgstr "添加角度约束"
 msgid "Fill"
 msgstr "填充"
 
-#: sketcher/ui_gtk/tools/arc_tool.py sketcher/ui_gtk/menu.py
+#: sketcher/ui_gtk/tools/arc_tool.py
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py sketcher/ui_gtk/menu.py
 msgid "Arc"
 msgstr "圆弧"
 
@@ -452,10 +579,6 @@ msgid "Ellipse"
 msgstr "椭圆"
 
 #: sketcher/ui_gtk/tools/circle_tool.py
-msgid "Center on start point"
-msgstr "以起点为中心"
-
-#: sketcher/ui_gtk/tools/circle_tool.py
 msgid "Constrain to circle"
 msgstr "约束为圆形"
 
@@ -463,15 +586,111 @@ msgstr "约束为圆形"
 msgid "Add Vertical Constraint"
 msgstr "添加垂直约束"
 
+#: sketcher/ui_gtk/tools/circular_array_tool.py sketcher/ui_gtk/menu.py
+msgid "Circular Array"
+msgstr "圆形阵列"
+
+#: sketcher/ui_gtk/tools/circular_array_tool.py
+msgid "Edit Circular Array"
+msgstr "编辑圆形阵列"
+
+#: sketcher/ui_gtk/tools/circular_array_tool.py
+msgid "Circular"
+msgstr "圆形"
+
+#: sketcher/ui_gtk/tools/circular_array_tool.py
+msgid "Places copies along a circular arc around a centre."
+msgstr "沿圆弧围绕中心放置副本。"
+
+#: sketcher/ui_gtk/tools/circular_array_tool.py
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "Count"
+msgstr "数量"
+
+#: sketcher/ui_gtk/tools/circular_array_tool.py
+msgid "Total angle (deg)"
+msgstr "总角度（度）"
+
+#: sketcher/ui_gtk/tools/circular_array_tool.py
+msgid "Center X"
+msgstr "中心 X"
+
+#: sketcher/ui_gtk/tools/circular_array_tool.py
+msgid "Center Y"
+msgstr "中心 Y"
+
+#: sketcher/ui_gtk/tools/circular_array_tool.py
+msgid "Rotate copies"
+msgstr "旋转副本"
+
+#: sketcher/ui_gtk/tools/circular_array_tool.py
+msgid "Resizes the whole array."
+msgstr "调整整个阵列的大小。"
+
+#: sketcher/ui_gtk/tools/circular_array_tool.py
+msgid "Derived from the template's anchor point."
+msgstr "源自模板的锚点。"
+
 #: sketcher/ui_gtk/tools/delete_tool.py
 msgid "Delete Selection"
 msgstr "删除选中项"
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "Line"
+msgstr "直线"
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "Bezier"
+msgstr "贝塞尔"
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py sketcher/ui_gtk/menu.py
+msgid "Array Along Curve"
+msgstr "沿曲线阵列"
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "Edit Array Along Curve"
+msgstr "编辑沿曲线阵列"
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "Along Curve"
+msgstr "沿曲线"
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "Distributes copies along a guide path, oriented to its tangent."
+msgstr "沿引导路径分布副本，方向与其切线一致。"
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "Guide path"
+msgstr "引导路径"
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "First selected entity; the rest are repeated."
+msgstr "第一个选中的实体；其余的进行重复。"
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "Spacing"
+msgstr "间距"
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid ""
+"Distance between copies. 0 derives count from the path length; >0 sets the "
+"count from the usable length."
+msgstr "副本之间的距离。0 根据路径长度推算数量；>0 根据可用长度设置数量。"
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "Start offset"
+msgstr "起始偏移"
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "Align to tangent"
+msgstr "对齐到切线"
 
 #: sketcher/ui_gtk/tools/rounded_rect_tool.py sketcher/ui_gtk/menu.py
 msgid "Rounded Rectangle"
 msgstr "圆角矩形"
 
 #: sketcher/ui_gtk/tools/rounded_rect_tool.py
+#: sketcher/ui_gtk/tools/polygon_tool.py
 msgid "R"
 msgstr "R"
 
@@ -491,6 +710,16 @@ msgstr "切换构造线"
 msgid "Add Radius Constraint"
 msgstr "添加半径约束"
 
+#: sketcher/ui_gtk/tools/offset_tool.py
+msgid "Offset Contour"
+msgstr "偏移轮廓"
+
+#: sketcher/ui_gtk/tools/offset_tool.py
+msgid ""
+"Replaces the selected contours with their offset. Positive values grow "
+"closed contours; open contours become slots."
+msgstr "用偏移后的轮廓替换选中的轮廓。正值会扩大封闭轮廓；开放轮廓会变成槽口。"
+
 #: sketcher/ui_gtk/tools/text_box_tool.py
 msgid "Text Box"
 msgstr "文本框"
@@ -499,6 +728,26 @@ msgstr "文本框"
 msgid "Add Diameter Constraint"
 msgstr "添加直径约束"
 
+#: sketcher/ui_gtk/tools/polygon_tool.py sketcher/ui_gtk/menu.py
+msgid "Polygon"
+msgstr "多边形"
+
+#: sketcher/ui_gtk/tools/polygon_tool.py
+msgid "N"
+msgstr "N"
+
+#: sketcher/ui_gtk/tools/polygon_tool.py
+msgid "Star"
+msgstr "星形"
+
+#: sketcher/ui_gtk/tools/polygon_tool.py
+msgid "Type radius, corners and star ratio (R N Star)"
+msgstr "输入半径、角数和星形比例（R N 星形）"
+
+#: sketcher/ui_gtk/tools/polygon_tool.py
+msgid "Set first corner"
+msgstr "设置第一个角点"
+
 #: sketcher/ui_gtk/tools/waypoint_smooth_tool.py
 msgid "Smooth"
 msgstr "平滑"
@@ -506,6 +755,10 @@ msgstr "平滑"
 #: sketcher/ui_gtk/tools/coincident_constraint_tool.py
 msgid "Add Coincident Constraint"
 msgstr "添加重合约束"
+
+#: sketcher/ui_gtk/tools/coincident_constraint_tool.py
+msgid "Add Point On Curve"
+msgstr "在曲线上添加点"
 
 #: sketcher/ui_gtk/tools/coincident_constraint_tool.py
 msgid "Add Point On Shape"
@@ -534,6 +787,14 @@ msgstr "添加相等约束"
 #: sketcher/ui_gtk/tools/distance_constraint_tool.py
 msgid "Add Distance Constraint"
 msgstr "添加距离约束"
+
+#: sketcher/ui_gtk/tools/array_base.py
+msgid "_Cancel"
+msgstr "取消(_C)"
+
+#: sketcher/ui_gtk/tools/array_base.py
+msgid "_Apply"
+msgstr "应用(_A)"
 
 #: sketcher/ui_gtk/conflicts_widget.py
 msgid "Conflicting Constraints"
@@ -572,14 +833,6 @@ msgid "_File"
 msgstr "文件(_F)"
 
 #: sketcher/ui_gtk/menu.py
-msgid "Undo"
-msgstr "撤销"
-
-#: sketcher/ui_gtk/menu.py
-msgid "Redo"
-msgstr "重做"
-
-#: sketcher/ui_gtk/menu.py
 msgid "_Edit"
 msgstr "编辑(_E)"
 
@@ -602,6 +855,14 @@ msgstr "倒角"
 #: sketcher/ui_gtk/menu.py
 msgid "Modify"
 msgstr "修改"
+
+#: sketcher/ui_gtk/menu.py
+msgid "Boolean"
+msgstr "布尔"
+
+#: sketcher/ui_gtk/menu.py
+msgid "Arrays"
+msgstr "阵列"
 
 #: sketcher/ui_gtk/menu.py
 msgid "_Sketch"
@@ -644,26 +905,6 @@ msgid "Select Font"
 msgstr "选择字体"
 
 #: sketcher/ui_gtk/sketchcanvas.py
-msgid "Enter radius or expression (e.g. 'width/2')."
-msgstr "输入半径或表达式（例如 'width/2'）。"
-
-#: sketcher/ui_gtk/sketchcanvas.py
-msgid "Enter diameter or expression."
-msgstr "输入直径或表达式。"
-
-#: sketcher/ui_gtk/sketchcanvas.py
-msgid "Enter angle in degrees or expression."
-msgstr "输入角度（度）或表达式。"
-
-#: sketcher/ui_gtk/sketchcanvas.py
-msgid "Enter length or expression."
-msgstr "输入长度或表达式。"
-
-#: sketcher/ui_gtk/sketchcanvas.py
-msgid "Enter value or expression."
-msgstr "输入值或表达式。"
-
-#: sketcher/ui_gtk/sketchcanvas.py
 msgid "OK"
 msgstr "确定"
 
@@ -671,3 +912,11 @@ msgstr "确定"
 #, python-brace-format
 msgid "{app_name} Sketch"
 msgstr "{app_name} 草图"
+
+#: sketcher/image/importer.py
+msgid "Sketch file is invalid JSON: {}"
+msgstr "草图文件是无效的JSON：{}"
+
+#: sketcher/image/importer.py
+msgid "Failed to load sketch structure: {}"
+msgstr "加载草图结构失败：{}"

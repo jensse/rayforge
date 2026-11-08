@@ -1,6 +1,7 @@
 # Perfilado de Marco
 
-El Perfilado de Marco crea una trayectoria de corte rectangular simple alrededor de todo tu diseño. Es la forma más rápida de añadir un borde limpio o liberar tu trabajo de la lámina de material.
+El Perfilado de Marco crea una trayectoria de corte rectangular simple alrededor de todo tu diseño.
+Es la forma más rápida de añadir un borde limpio o liberar tu trabajo de la lámina de material.
 
 ## Resumen
 
@@ -22,7 +23,8 @@ Usa el perfilado de marco para:
 
 **No uses perfilado de marco para:**
 
-- Formas irregulares alrededor de múltiples objetos (usa [Envoltura Ajustada](shrink-wrap) en su lugar)
+- Formas irregulares alrededor de múltiples objetos (usa [Envoltura Ajustada](shrink-wrap) en su
+  lugar)
 - Cortar piezas individuales (usa [Contorno](contour) en su lugar)
 - Seguir la forma exacta de tu diseño
 
@@ -49,11 +51,13 @@ Configura los parámetros del marco:
 
 ## Ajustes Principales
 
-El diálogo de ajustes de paso tiene tres pestañas: **Ajustes de Paso**, **Láser** y **Post-Procesamiento**. Los ajustes se describen en orden de pestañas a continuación.
+El diálogo de ajustes de paso tiene cuatro pestañas: **Ajustes de Paso**, **Láser**,
+**Post-Procesamiento** y **Piezas de trabajo**. Los ajustes se describen en orden de pestañas a
+continuación.
 
 ### Geometría
 
-![Ajustes de paso de Perfilado de Marco](/screenshots/step-settings-frame-outline-general.png)
+![Ajustes de paso de Perfilado de Marco](/screenshots/step-settings-frame-outline-general.webp)
 
 El grupo **Geometría** en la pestaña _Ajustes de Paso_ controla la forma del marco.
 
@@ -80,11 +84,25 @@ Controla dónde corta el láser en relación a la trayectoria del marco:
 - **2-5mm:** Pequeño margen para una apariencia limpia
 - **10mm+:** Borde grande para montaje o manipulación
 
+#### Esquinas Redondeadas
+
+Activa **Esquinas Redondeadas** para reemplazar las esquinas afiladas de 90° del marco por arcos
+redondeados, y luego define el **Radio de Esquina** en mm. El radio se reduce automáticamente cuando
+es demasiado grande para caber en el marco.
+
+- **0mm:** Esquinas afiladas (predeterminado)
+- **3-10mm:** Esquinas más suaves y fáciles de manejar
+- **Mayor:** Marco muy redondeado, limitado a la mitad del lado más corto del marco
+
+Las esquinas redondeadas son útiles para materiales que se astillan o desportillan en ángulos
+agudos, y evitan tener que post-procesar el marco o dibujar a mano un contorno redondeado.
+
 ### Ajustes del Láser
 
-![Ajustes del láser](/screenshots/step-settings-frame-outline-laser.png)
+![Ajustes del láser](/screenshots/step-settings-frame-outline-laser.webp)
 
-La potencia, la velocidad y la selección del cabezal láser se encuentran en la página **Láser** del diálogo de ajustes de paso.
+La potencia, la velocidad y la selección del cabezal láser se encuentran en la página **Láser** del
+diálogo de ajustes de paso.
 
 #### Potencia y Velocidad
 
@@ -98,6 +116,17 @@ La potencia, la velocidad y la selección del cabezal láser se encuentran en la
 - Qué tan rápido se mueve el láser
 - Más lento para materiales más gruesos
 
+#### Modo de Potencia
+
+El ajuste de Modo de Potencia controla cómo se emite la potencia láser durante los movimientos:
+
+- **Dinámico (M4)** escala la potencia con la velocidad de avance (predeterminado)
+- **Constante (M3)** mantiene la potencia fija independientemente de la velocidad
+
+La potencia dinámica reduce la potencia cuando el cabezal se frena en una esquina, lo que puede
+dejar esquinas mal grabadas en algunas máquinas. Cambia a **Constante (M3)** si las esquinas del
+marco se graban demasiado débilmente.
+
 Para cortar el marco más de una vez, añade un post-procesador [Multi-Pasada](../multi-pass.md).
 
 #### Compensación de Kerf
@@ -110,7 +139,7 @@ El perfilado de marco soporta compensación de kerf:
 
 ## Post-Procesamiento
 
-![Ajustes de post-procesamiento de Perfilado de Marco](/screenshots/step-settings-frame-outline-post.png)
+![Ajustes de post-procesamiento de Perfilado de Marco](/screenshots/step-settings-frame-outline-post.webp)
 
 Las operaciones de Perfilado de Marco soportan varias opciones de post-procesamiento:
 
@@ -118,7 +147,8 @@ Las operaciones de Perfilado de Marco soportan varias opciones de post-procesami
 - **[Recortar al Material](../crop-to-stock.md)** - Limita los cortes al límite del material
 - **[Optimización de Trayectoria](../path-optimization.md)** - Reduce la distancia de viaje
 - **[Multi-Pasada](../multi-pass.md)** - Repite cortes para materiales gruesos
-- **[Entrada/Salida](../lead-in-out.md)** - Añade movimientos de aproximación y salida sin potencia para extremos de corte más limpios
+- **[Entrada/Salida](../lead-in-out.md)** - Añade movimientos de aproximación y salida sin potencia
+  para extremos de corte más limpios
 
 ## Casos de Uso
 

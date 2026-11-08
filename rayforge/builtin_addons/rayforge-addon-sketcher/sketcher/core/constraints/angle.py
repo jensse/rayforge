@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from gettext import gettext as _
 from typing import (
     TYPE_CHECKING,
     Any,
 )
 
+from gi.repository import PangoCairo
 from raygeo.geo.shape.arc import normalize_angle
 from raygeo.geo.shape.line import get_line_line_intersection
 from raygeo.geo.types import Point
+
+from rayforge.ui_gtk.shared.text import create_text_layout
 
 from ..entities import Line
 from ..types import EntityID
@@ -20,6 +23,7 @@ from .base import Constraint, ConstraintStatus
 if TYPE_CHECKING:
     import cairo
 
+    from ..entities import Entity
     from ..params import ParameterContext
     from ..registry import EntityRegistry
     from ..selection import SketchSelection
@@ -78,17 +82,47 @@ class AngleConstraint(Constraint):
     def get_type_key(cls) -> str:
         return "angle"
 
+    def get_referenced_entity_ids(self) -> set[EntityID]:
+        return {self.e1_id, self.e2_id}
+
+    def get_referenced_point_ids(self) -> set[EntityID]:
+        ids: set[EntityID] = set()
+        if self.e1_far_idx is not None:
+            ids.add(self.e1_far_idx)
+        if self.e2_far_idx is not None:
+            ids.add(self.e2_far_idx)
+        return ids
+
+    def is_mirror_compatible(self) -> bool:
+        # An expression-based angle encodes a user intent (e.g. "width/2")
+        # that does not auto-flip under reflection, so it cannot be
+        # preserved. A plain numeric angle can be negated — see mirror().
+        return self.expression is None
+
+    def mirror(self, axis) -> None:
+        # Reflection reverses the signed (CW) angle. Negate the numeric
+        # value so the constraint stays satisfied with the mirrored lines.
+        if self.expression is not None:
+            return  # should have been dropped via is_mirror_compatible
+        self.value = -self.value
+
     @classmethod
     def can_apply_to(
         cls, selection: SketchSelection, sketch: Sketch | None = None
     ) -> bool:
         if selection.point_ids or len(selection.entity_ids) != 2:
             return False
-        if sketch is None:
-            return False
-        e1 = sketch.registry.get_entity(selection.entity_ids[0])
-        e2 = sketch.registry.get_entity(selection.entity_ids[1])
-        return isinstance(e1, Line) and isinstance(e2, Line)
+        entities = selection.resolve_entities(
+            sketch.registry if sketch else None
+        )
+        return entities is not None and cls.applies_to_entities(entities)
+
+    @classmethod
+    def applies_to_entities(cls, entities: Sequence[Entity]) -> bool:
+        """Both operands must be Lines."""
+        return len(entities) == 2 and all(
+            isinstance(e, Line) for e in entities
+        )
 
     @staticmethod
     def get_type_name() -> str:
@@ -105,6 +139,9 @@ class AngleConstraint(Constraint):
         if isinstance(e1, Line) and isinstance(e2, Line):
             return _("Between two lines")
         return ""
+
+    def get_edit_subtitle(self) -> str:
+        return _("Enter angle in degrees or expression.")
 
     def to_dict(self) -> dict[str, Any]:
         data = {
@@ -436,7 +473,8 @@ class AngleConstraint(Constraint):
         ctx.stroke()
 
         label = self._format_value() + "°"
-        ext = ctx.text_extents(label)
+        layout = create_text_layout(ctx, label)
+        ext, _ = layout.get_pixel_extents()
 
         ccw_diff = normalize_angle(other_ang - anchor_ang)
 
@@ -471,8 +509,11 @@ class AngleConstraint(Constraint):
         else:
             ctx.set_source_rgb(0, 0, 0.5)
 
-        ctx.move_to(label_x - ext.width / 2, label_y + ext.height / 2 - 2)
-        ctx.show_text(label)
+        ctx.move_to(
+            label_x - ext.width / 2 - ext.x,
+            label_y - ext.height / 2 - ext.y,
+        )
+        PangoCairo.show_layout(ctx, layout)
         ctx.new_path()
 
         ctx.restore()

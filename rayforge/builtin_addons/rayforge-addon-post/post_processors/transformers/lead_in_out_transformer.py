@@ -30,6 +30,8 @@ class LeadInOutTransformer(OpsTransformer):
     improving cut quality at start/end points.
     """
 
+    SPEC_NAME = "lead_in_out"
+
     def __init__(
         self,
         enabled: bool = True,
@@ -67,7 +69,7 @@ class LeadInOutTransformer(OpsTransformer):
         distance_mm = (speed_mm_per_sec**2) / (
             2 * max_acceleration * safety_factor
         )
-        return max(0.5, distance_mm)
+        return distance_mm
 
     @property
     def lead_in_mm(self) -> float:

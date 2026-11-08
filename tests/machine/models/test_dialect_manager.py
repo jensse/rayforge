@@ -38,7 +38,7 @@ class TestMigrateBuiltinDialectToCopy:
 
         dialect = mgr.get(new_uid)
         assert dialect.is_custom is True
-        assert dialect.parent_uid is None
+        assert dialect.parent_uid == "grbl"
         assert "grbl" in dialect.label.lower()
         assert "Test Machine" in dialect.label
 
@@ -92,13 +92,30 @@ class TestMigrateBuiltinDialectToCopy:
         assert migrated_dialect.is_custom is True
         assert original_dialect.is_custom is False
 
-    def test_no_parent_uid_in_migrated_dialect(self, mgr):
+    def test_parent_uid_kept_in_migrated_dialect(self, mgr):
         new_uid, _ = mgr.migrate_builtin_dialect_to_copy(
             "smoothieware", "Test Machine"
         )
 
         dialect = mgr.get(new_uid)
-        assert dialect.parent_uid is None
+        assert dialect.parent_uid == "smoothieware"
+
+    def test_copy_inherits_fields_missing_from_storage(
+        self, mgr, temp_dialect_dir
+    ):
+        """A stored copy predating a new built-in field picks it up
+        from the parent on load, while stored fields stay untouched."""
+        new_uid, _ = mgr.migrate_builtin_dialect_to_copy(
+            "grbl", "Test Machine"
+        )
+        yaml_file = temp_dialect_dir / f"{new_uid}.yaml"
+        data = yaml.safe_load(yaml_file.read_text())
+        del data["move_to"]
+        yaml.safe_dump(data, yaml_file.open("w"))
+
+        mgr.load_all()
+
+        assert mgr.get(new_uid).move_to == mgr.get("grbl").move_to
 
     def test_multiple_migrations_create_distinct_copies(self, mgr):
         initial_count = len(mgr._registry)
@@ -171,6 +188,101 @@ class TestDialectManagerBasics:
             mgr.add_dialect(GRBL_DIALECT)
 
 
+class TestUnusedDialectCleanup:
+    """Tests for finding and deleting dialects no machine uses."""
+
+    def test_unused_dialects_found(self, mgr, lite_context):
+        used = GRBL_DIALECT.copy_as_custom("Used")
+        unused = GRBL_DIALECT.copy_as_custom("Unused")
+        mgr.add_dialect(used)
+        mgr.add_dialect(unused)
+
+        machine = Machine(lite_context)
+        machine.dialect_uid = used.uid
+
+        result = mgr.get_unused_dialects([machine])
+
+        assert [d.uid for d in result] == [unused.uid]
+
+    def test_builtin_dialects_never_reported_unused(self, mgr, lite_context):
+        machine = Machine(lite_context)
+        machine.dialect_uid = "no-machine-uses-this"
+
+        result = mgr.get_unused_dialects([machine])
+
+        assert all(d.is_custom for d in result)
+
+    def test_unused_match_is_case_insensitive(self, mgr, lite_context):
+        used = GRBL_DIALECT.copy_as_custom("Used")
+        mgr.add_dialect(used)
+
+        machine = Machine(lite_context)
+        machine.dialect_uid = used.uid.upper()
+
+        assert mgr.get_unused_dialects([machine]) == []
+
+    def test_delete_unused_dialects_removes_files(
+        self, mgr, lite_context, temp_dialect_dir
+    ):
+        used = GRBL_DIALECT.copy_as_custom("Used")
+        unused_one = GRBL_DIALECT.copy_as_custom("Unused One")
+        unused_two = GRBL_DIALECT.copy_as_custom("Unused Two")
+        mgr.add_dialect(used)
+        mgr.add_dialect(unused_one)
+        mgr.add_dialect(unused_two)
+
+        machine = Machine(lite_context)
+        machine.dialect_uid = used.uid
+
+        deleted = mgr.delete_unused_dialects([machine])
+
+        assert {d.uid for d in deleted} == {unused_one.uid, unused_two.uid}
+        assert unused_one.uid not in mgr._registry
+        assert unused_two.uid not in mgr._registry
+        assert not (temp_dialect_dir / f"{unused_one.uid}.yaml").exists()
+        assert not (temp_dialect_dir / f"{unused_two.uid}.yaml").exists()
+        assert (temp_dialect_dir / f"{used.uid}.yaml").exists()
+
+    def test_delete_unused_dialects_returns_empty_when_all_used(
+        self, mgr, lite_context
+    ):
+        used = GRBL_DIALECT.copy_as_custom("Used")
+        mgr.add_dialect(used)
+
+        machine = Machine(lite_context)
+        machine.dialect_uid = used.uid
+
+        assert mgr.delete_unused_dialects([machine]) == []
+
+    def test_delete_unused_dialects_signals_change(self, mgr, lite_context):
+        unused = GRBL_DIALECT.copy_as_custom("Unused")
+        mgr.add_dialect(unused)
+        signal_calls = []
+
+        def signal_handler(sender):
+            signal_calls.append(sender)
+
+        mgr.dialects_changed.connect(signal_handler)
+
+        mgr.delete_unused_dialects([])
+
+        assert len(signal_calls) == 1
+
+    def test_delete_unused_dialects_skips_signal_when_nothing_deleted(
+        self, mgr, lite_context
+    ):
+        signal_calls = []
+
+        def signal_handler(sender):
+            signal_calls.append(sender)
+
+        mgr.dialects_changed.connect(signal_handler)
+
+        mgr.delete_unused_dialects([])
+
+        assert signal_calls == []
+
+
 class TestLegacyConfigMigration:
     """Tests using actual legacy config files from tests/machine/configs."""
 
@@ -186,7 +298,7 @@ class TestLegacyConfigMigration:
 
         dialect = lite_context.dialect_mgr.get(machine.dialect_uid)
         assert dialect.is_custom is True
-        assert dialect.parent_uid is None
+        assert dialect.parent_uid == "marlin"
         assert "marlin" in dialect.label.lower()
         assert "Legacy Dialect UID Machine" in dialect.label
 
@@ -216,7 +328,7 @@ class TestLegacyConfigMigration:
 
         dialect = lite_context.dialect_mgr.get(machine.dialect_uid)
         assert dialect.is_custom is True
-        assert dialect.parent_uid is None
+        assert dialect.parent_uid == "grbl"
         assert "Default Machine" in dialect.label
 
     def test_migration_is_idempotent_from_config(self, lite_context):

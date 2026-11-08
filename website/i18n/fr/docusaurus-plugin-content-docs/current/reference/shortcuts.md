@@ -2,12 +2,13 @@
 
 Référence complète des raccourcis clavier dans Rayforge.
 
-:::note Conventions de plateforme
-
+<!-- prettier-ignore-start -->
+:::note[Conventions de plateforme]
 - **Linux/Windows :** touche `Ctrl`
 - **macOS :** touche `Command`
 - La documentation utilise `Ctrl` - les utilisateurs macOS remplacent par `Command`
-  :::
+:::
+<!-- prettier-ignore-end -->
 
 ---
 
@@ -129,15 +130,20 @@ Référence complète des raccourcis clavier dans Rayforge.
 
 ## Contrôle de la machine
 
-| Raccourci   | Action             | Description                                        |
-| ----------- | ------------------ | -------------------------------------------------- |
-| `Ctrl+L`    | Panneau inférieur  | Basculer la visibilité du panneau inférieur        |
-| `Ctrl+&lt;` | Paramètres machine | Ouvrir la boîte de dialogue des paramètres machine |
-| `F1`        | À propos           | Afficher la boîte de dialogue À propos             |
+| Raccourci   | Action             | Description                                           |
+| ----------- | ------------------ | ----------------------------------------------------- |
+| `Ctrl+L`    | Panneau inférieur  | Basculer la visibilité du panneau inférieur           |
+| `Ctrl+M`    | Mode déplacer tête | Activer « Clic sur le canevas pour déplacer la tête » |
+| `Ctrl+&lt;` | Paramètres machine | Ouvrir la boîte de dialogue des paramètres machine    |
+| `F1`        | À propos           | Afficher la boîte de dialogue À propos                |
 
-:::note Opérations machine
-Les opérations de contrôle de la machine (Origine, Cadrer, Envoyer, etc.) n'ont actuellement pas de raccourcis par défaut mais sont accessibles via les boutons de la barre d'outils ou les menus.
+<!-- prettier-ignore-start -->
+:::note[Opérations machine]
+Les opérations de contrôle de la machine (Origine, Cadrer, Envoyer, etc.)
+n'ont actuellement pas de raccourcis par défaut mais sont accessibles via les boutons de la barre
+d'outils ou les menus.
 :::
+<!-- prettier-ignore-end -->
 
 ---
 
@@ -225,9 +231,12 @@ Lors de l'édition de G-code ou de champs de texte :
 
 ## Personnaliser les raccourcis
 
-:::note Raccourcis personnalisés
-Les raccourcis clavier sont actuellement codés en dur. La configuration de raccourcis personnalisés pourrait être ajoutée dans les futures versions.
+<!-- prettier-ignore-start -->
+:::note[Raccourcis personnalisés]
+Les raccourcis clavier sont actuellement codés en dur. La
+configuration de raccourcis personnalisés pourrait être ajoutée dans les futures versions.
 :::
+<!-- prettier-ignore-end -->
 
 **Limitations actuelles :**
 
@@ -235,7 +244,8 @@ Les raccourcis clavier sont actuellement codés en dur. La configuration de racc
 - Pas d'interface graphique pour la personnalisation des raccourcis
 - Certaines actions peuvent ne pas avoir de raccourcis attribués
 
-**Demande de fonctionnalité :** Si tu as besoin de raccourcis personnalisés, ouvre un ticket sur GitHub.
+**Demande de fonctionnalité :** Si tu as besoin de raccourcis personnalisés, ouvre un ticket sur
+GitHub.
 
 ---
 
@@ -246,7 +256,8 @@ Les raccourcis clavier sont actuellement codés en dur. La configuration de racc
 1. **Apprends d'abord les raccourcis d'édition** - `Ctrl+Z/Y/C/V/D` sont utilisés constamment
 2. **Utilise les bascules à touche unique** - `H`, `T`, `P` pour des changements de vue rapides
 3. **Raccourcis de vue 3D** - `1`, `2`, `7` pour un changement de vue instantané
-4. **Raccourcis d'alignement** - `Shift+Flèche` plus rapide que de cliquer sur les boutons d'alignement
+4. **Raccourcis d'alignement** - `Shift+Flèche` plus rapide que de cliquer sur les boutons
+   d'alignement
 5. **Mode simulation** - `F11` pour vérifier rapidement l'exécution
 
 ### Raccourcis de flux de travail
@@ -311,10 +322,13 @@ Certains raccourcis moins connus :
 
 **Problèmes courants :**
 
-1. **Focus sur le mauvais élément** - Assure-toi que le canevas ou la fenêtre principale a le focus, pas un champ de texte
+1. **Focus sur le mauvais élément** - Assure-toi que le canevas ou la fenêtre principale a le focus,
+   pas un champ de texte
 2. **Application conflictuelle** - Une autre application peut intercepter le raccourci
-3. **Raccourci de l'environnement de bureau** - Les raccourcis système peuvent remplacer (par exemple, Alt+F4)
-4. **Pavé numérique vs rangée de chiffres** - Utilise la rangée de chiffres pour les raccourcis de vue 3D, pas le pavé numérique
+3. **Raccourci de l'environnement de bureau** - Les raccourcis système peuvent remplacer (par
+   exemple, Alt+F4)
+4. **Pavé numérique vs rangée de chiffres** - Utilise la rangée de chiffres pour les raccourcis de
+   vue 3D, pas le pavé numérique
 
 **Solutions :**
 
@@ -376,6 +390,7 @@ Certains raccourcis moins connus :
 |                 | Ctrl+G       | Grouper              |
 |                 | Ctrl+U       | Dissocier            |
 | **Machine**     | Ctrl+L       | Panneau inférieur    |
+|                 | Ctrl+M       | Mode déplacer tête   |
 |                 | Ctrl+&lt;    | Paramètres machine   |
 |                 | F1           | À propos             |
 
@@ -386,4 +401,3 @@ Certains raccourcis moins connus :
 - [Fenêtre principale](../ui/main-window.md) - Aperçu de l'interface
 - [Outils du canevas](../ui/canvas-tools.md) - Interaction avec le canevas
 - [Prévisualisation 3D](../ui/3d-preview.md) - Contrôles de la vue 3D
-

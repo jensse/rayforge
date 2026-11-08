@@ -13,6 +13,7 @@ from ..core.asset import UnknownAsset
 from ..core.doc import Doc
 from ..core.layer import Layer
 from ..core.vectorization_spec import VectorizationSpec
+from ..pipeline import intent_controller as intent_controller_module
 from ..pipeline.artifact import JobArtifact
 from ..pipeline.artifact.handle import BaseArtifactHandle
 from ..pipeline.pipeline import Pipeline
@@ -25,6 +26,9 @@ from .file_cmd import FileCmd
 from .group_cmd import GroupCmd
 from .layer_cmd import LayerCmd
 from .layout_cmd import LayoutCmd
+from .node_edit_cmd import NodeEditCmd
+from .path_cleanup_cmd import PathCleanupCmd
+from .reload_cmd import ReloadCmd
 from .split_cmd import SplitCmd
 from .step_cmd import StepCmd
 from .stock_cmd import StockCmd
@@ -150,6 +154,9 @@ class DocEditor:
         self.group = GroupCmd(self, self.task_manager)
         self.layer = LayerCmd(self)
         self.layout = LayoutCmd(self, self.task_manager)
+        self.path_cleanup = PathCleanupCmd(self)
+        self.node_edit = NodeEditCmd(self)
+        self.reload = ReloadCmd(self)
         self.split = SplitCmd(self)
         self.stock = StockCmd(self)
         self.step = StepCmd(self)
@@ -279,33 +286,36 @@ class DocEditor:
         """
         Waits until the internal Pipeline has finished all background
         processing and the document state is stable.
+
+        The pipeline is quiesced first: pending debounced rebuilds are
+        flushed and one debounce period is waited out, so a rebuild
+        armed by a late main-thread callback cannot start after this
+        method returns. Any remaining editor-level background tasks
+        (e.g. grouping calculations) are awaited afterwards.
         """
-        if not self.is_processing:
-            return
-
-        settled_future = asyncio.get_running_loop().create_future()
-
-        def on_settled(sender, is_processing: bool):
-            if not is_processing and not settled_future.done():
-                settled_future.set_result(True)
-
-        self.processing_state_changed.connect(on_settled)
-        try:
-            if not self.is_processing and not settled_future.done():
-                settled_future.set_result(True)
-            await asyncio.wait_for(settled_future, timeout)
-        finally:
-            self.processing_state_changed.disconnect(on_settled)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while True:
+            await self.pipeline.wait_until_idle(deadline - loop.time())
+            if not self.is_processing:
+                return
+            if loop.time() >= deadline:
+                raise TimeoutError(
+                    f"Pipeline did not settle within {timeout}s."
+                )
+            await asyncio.sleep(0.005)
 
     def wait_until_settled_sync(self, timeout: float = 10.0) -> bool:
         """
         Synchronous version of wait_until_settled for use in scripts.
 
-        Uses a polling loop to detect when is_processing becomes False,
+        Uses a polling loop to detect when the pipeline becomes idle,
         with the processing_state_changed signal as an early wakeup
         hint. This avoids relying solely on signal delivery, which can
         be missed when the pipeline transitions busy→idle faster than
-        _check_and_update_processing_state runs.
+        _check_and_update_processing_state runs. Like the async
+        variant, pending debounced rebuilds are flushed instead of
+        waited out.
 
         Returns True if settled within timeout, False otherwise.
         """
@@ -315,18 +325,30 @@ class DocEditor:
             if not is_processing:
                 settled_event.set()
 
+        def is_settled() -> bool:
+            return not self.is_processing and not self.pipeline.is_busy
+
         self.processing_state_changed.connect(on_settled)
         try:
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
-                if not self.is_processing:
-                    return True
+                self.pipeline.flush_pending_rebuild()
+                if is_settled():
+                    break
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
                 settled_event.wait(timeout=min(remaining, 0.2))
                 settled_event.clear()
-            return not self.is_processing
+            if not is_settled():
+                return False
+            time.sleep(intent_controller_module.REBUILD_DEBOUNCE_MS / 1000.0)
+            while self.pipeline.is_busy:
+                self.pipeline.flush_pending_rebuild()
+                if time.monotonic() >= deadline:
+                    return False
+                time.sleep(0.005)
+            return is_settled()
         finally:
             self.processing_state_changed.disconnect(on_settled)
 

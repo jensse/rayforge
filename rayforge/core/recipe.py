@@ -1,70 +1,45 @@
+import logging
 import math
 import uuid
 from dataclasses import asdict, dataclass, field
-from gettext import gettext as _
 from typing import TYPE_CHECKING, Any, Optional
 
-from .capability import StepCapability
-from .capability_registry import step_capability_registry
-from .varset import VarSet
-
-DEFAULT_CAPABILITY_NAME = "CUT"
+from .step import Step
+from .step_registry import step_registry
 
 if TYPE_CHECKING:
     from ..machine.models.machine import Machine
-    from .step import Step
     from .stock import StockItem
 
+logger = logging.getLogger(__name__)
 
-class _UnknownCapability(StepCapability):
-    """Fallback for a recipe whose target capability is not registered."""
+# Specificity score contributed by the step-type axis when a recipe is
+# generic (matches any step type). It must rank as the least specific
+# option, so it is larger than any realistic ``len(target_step_types)``.
+_GENERIC_STEP_TYPE_SCORE = 1 << 16
 
-    @property
-    def name(self) -> str:
-        return "UNKNOWN"
-
-    @property
-    def label(self) -> str:
-        return _("Unknown")
-
-    @property
-    def varset(self) -> VarSet:
-        return VarSet(vars=[])
-
-
-class _AnyCapability(StepCapability):
-    """Sentinel for a recipe with no capability constraint.
-
-    Such a recipe is either step-type-scoped or fully generic, so it
-    matches any capability context.
-    """
-
-    @property
-    def name(self) -> str:
-        return ""
-
-    @property
-    def label(self) -> str:
-        return _("Any")
-
-    @property
-    def varset(self) -> VarSet:
-        return VarSet(vars=[])
-
-    @property
-    def icon_name(self) -> str:
-        return "recipe-symbolic"
-
-
-_UNKNOWN_CAPABILITY = _UnknownCapability()
-_ANY_CAPABILITY = _AnyCapability()
+# Migration shim: maps the legacy ``target_capability_name`` values to
+# the list of step class names that declared that capability, captured
+# at the time step capabilities were removed. Used only by
+# :meth:`Recipe.from_dict` to preserve the targeting of old recipe files.
+_LEGACY_CAPABILITY_STEPS: dict[str, list[str]] = {
+    "CUT": ["ContourStep", "FrameStep", "WavefrontStep", "ShrinkWrapStep"],
+    "SCORE": ["ContourStep", "FrameStep", "ShrinkWrapStep"],
+    "ENGRAVE": ["EngraveStep"],
+    "MATERIAL_TEST": ["MaterialTestStep"],
+}
 
 
 @dataclass
 class Recipe:
     """
-    A preset for configuring a single task (capability) based on context,
-    such as material and thickness. This is a pure data object.
+    A preset for configuring a step based on context, such as material
+    and thickness. This is a pure data object.
+
+    A recipe applies to one or more step types (identified by their
+    class name as registered in ``step_registry``). When
+    :attr:`target_step_types` is empty the recipe is generic and matches
+    any step type.
     """
 
     uid: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -72,42 +47,51 @@ class Recipe:
     description: str = ""
 
     # --- Applicability Criteria ---
-    target_capability_name: str = DEFAULT_CAPABILITY_NAME
-    # When set, the recipe only matches steps of this class (by class
-    # name, as registered in step_registry). When None, it matches by
-    # capability as before.
-    target_step_type: str | None = None
+    target_step_types: list[str] = field(default_factory=list)
     target_machine_id: str | None = None
     material_uid: str | None = None
     min_thickness_mm: float | None = None
     max_thickness_mm: float | None = None
 
     # --- Payload ---
-    # A single dictionary of settings to be applied.
-    settings: dict[str, Any] = field(default_factory=dict)
+    # Setting entries captured by this recipe. Each dict carries
+    # ``name``, ``value`` and ``recipe_apply`` (False = "Leave
+    # unchanged"), structurally identical to ``transformer_dicts``.
+    setting_dicts: list[dict[str, Any]] = field(default_factory=list)
+
+    # Post-processor (transformer) settings captured by this recipe.
+    # Each dict carries ``name``, ``enabled``, ``recipe_apply`` (False =
+    # "Leave unchanged"), plus the transformer's own params.
+    transformer_dicts: list[dict[str, Any]] = field(default_factory=list)
 
     # Forward compatibility: store unknown attributes
     extra: dict[str, Any] = field(default_factory=dict)
 
-    @property
-    def capability(self) -> StepCapability:
-        """
-        Returns the capability instance for this recipe, falling back to
-        the default capability (and finally an unknown placeholder) when
-        the target capability is not registered.
+    def get_applied_settings(self) -> dict[str, Any]:
+        """Flat dict of the recipe's settings with ``recipe_apply=True``.
 
-        A recipe without a capability constraint
-        (``target_capability_name`` empty) resolves to the "Any"
-        capability sentinel.
+        Entries without an explicit ``recipe_apply`` count as applied.
         """
-        if not self.target_capability_name:
-            return _ANY_CAPABILITY
-        cap = step_capability_registry.get(self.target_capability_name)
-        if cap is None:
-            cap = step_capability_registry.get(DEFAULT_CAPABILITY_NAME)
-        if cap is None:
-            cap = _UNKNOWN_CAPABILITY
-        return cap
+        return {
+            d["name"]: d["value"]
+            for d in self.setting_dicts
+            if d.get("name") is not None and d.get("recipe_apply", True)
+        }
+
+    def get_settings_for_step(self, step: "Step") -> dict[str, Any]:
+        """The recipe's applied settings the given step actually owns.
+
+        Setting names are gated through the step type's
+        :meth:`~rayforge.core.step.Step.recipe_keys` allowlist;
+        everything else is dropped. Recipe files are user-provided, so
+        they must never be able to reach arbitrary step attributes.
+        """
+        allowed = type(step).recipe_keys()
+        return {
+            name: value
+            for name, value in self.get_applied_settings().items()
+            if name in allowed
+        }
 
     def matches_step_settings(
         self,
@@ -115,14 +99,16 @@ class Recipe:
         tolerance=1e-6,
     ) -> bool:
         """
-        Compares this recipe's settings against a Step object's current
-        settings. Only keys present in the recipe are checked.
+        Compares this recipe's applied settings against a Step object's
+        current settings. Only keys the recipe carries and the step type
+        owns are checked; enum-backed attributes are compared through
+        the step's ``recipe_value`` serialization.
         """
-        for key, recipe_val in self.settings.items():
+        for key, recipe_val in self.get_settings_for_step(step).items():
             if not hasattr(step, key):
                 return False  # Step is missing an attribute the recipe defines
 
-            step_val = getattr(step, key)
+            step_val = type(step).recipe_value(key, getattr(step, key))
 
             if isinstance(step_val, float) and isinstance(recipe_val, float):
                 if not math.isclose(
@@ -133,10 +119,62 @@ class Recipe:
                 return False
         return True
 
+    def matches_step_transformers(
+        self,
+        step: "Step",
+        tolerance: float = 1e-6,
+    ) -> bool:
+        """Compare recipe's ``recipe_apply=True`` transformers to the
+        step's transformers by name + params.
+
+        Only transformer dicts with ``recipe_apply=True`` are checked.
+        Each is matched against the step's
+        ``per_workpiece_transformers_dicts`` +
+        ``per_step_transformers_dicts`` (deduplicated by name). For
+        each matching transformer name, every key present in the recipe
+        dict (except ``recipe_apply``) that the step's dict also
+        declares is compared against it. Floats use ``math.isclose``
+        with ``tolerance``.
+
+        Returns ``True`` if the step has a matching transformer for
+        every recipe entry with ``recipe_apply=True``.
+        """
+        apply_dicts = [
+            d for d in self.transformer_dicts if d.get("recipe_apply", True)
+        ]
+        if not apply_dicts:
+            return True
+        step_dicts = Step._dedupe_transformer_dicts_by_name(
+            list(step.per_workpiece_transformers_dicts)
+            + list(step.per_step_transformers_dicts)
+        )
+        for recipe_dict in apply_dicts:
+            name = recipe_dict.get("name")
+            if not name:
+                return False
+            match = step_dicts.get(name)
+            if match is None:
+                return False
+            for key, recipe_val in recipe_dict.items():
+                if key == "recipe_apply":
+                    continue
+                if key not in match:
+                    continue
+                step_val = match[key]
+                if isinstance(step_val, float) and isinstance(
+                    recipe_val, float
+                ):
+                    if not math.isclose(
+                        step_val, recipe_val, rel_tol=0, abs_tol=tolerance
+                    ):
+                        return False
+                elif step_val != recipe_val:
+                    return False
+        return True
+
     def matches(
         self,
         stock_items: list["StockItem"],
-        capabilities: tuple[StepCapability, ...] | None = None,
         machine: Optional["Machine"] = None,
         step_type: str | None = None,
     ) -> bool:
@@ -147,21 +185,21 @@ class Recipe:
             stock_items: A list of StockItems. If empty, only generic recipes
                          (without material/thickness constraints) match.
                          Returns True if recipe matches ANY item in the list.
-            capabilities: An optional set of capabilities to filter by.
             machine: An optional machine to filter by.
             step_type: An optional step class name (as registered in
-                       ``step_registry``) to filter by. Only meaningful
-                       when :attr:`target_step_type` is set.
+                       ``step_registry``). Only meaningful when
+                       :attr:`target_step_types` is non-empty; a recipe
+                       with an empty ``target_step_types`` matches any
+                       step type.
 
         Returns:
             True if the recipe is a valid match, False otherwise.
         """
         # 1. Check step type compatibility
-        if self.target_step_type and (
-            not step_type or step_type != self.target_step_type
-        ):
-            # This recipe targets a specific step class. It can only
-            # match when a step type context is provided and matches.
+        if self.target_step_types and step_type not in self.target_step_types:
+            # This recipe targets specific step classes. It can only
+            # match when a step type context is provided and is one of
+            # the targeted classes.
             return False
 
         # 2. Check machine compatibility
@@ -175,7 +213,7 @@ class Recipe:
         # secondary constraints like laser head.
 
         # 3. Check head compatibility (if specified in settings)
-        target_head_uid = self.settings.get("selected_head_uid")
+        target_head_uid = self.get_applied_settings().get("selected_head_uid")
         if target_head_uid and (
             not machine
             or not any(head.uid == target_head_uid for head in machine.heads)
@@ -184,15 +222,7 @@ class Recipe:
             # a machine context is provided and that machine has the head.
             return False
 
-        # 4. Check capability (only when the recipe constrains it)
-        if (
-            self.target_capability_name
-            and capabilities
-            and self.capability not in capabilities
-        ):
-            return False
-
-        # 5. If no stock items to check against, only match generic recipes
+        # 4. If no stock items to check against, only match generic recipes
         # (recipes without material/thickness constraints)
         if not stock_items:
             # If recipe has material constraint, it can't match without stock
@@ -204,7 +234,7 @@ class Recipe:
                 or self.max_thickness_mm is not None
             )
 
-        # 6. Check if recipe matches ANY of the stock items
+        # 5. Check if recipe matches ANY of the stock items
         for stock_item in stock_items:
             if self._matches_stock(stock_item):
                 return True
@@ -252,12 +282,18 @@ class Recipe:
         The score is a tuple
         (machine, head, material, thickness, step_type).
 
+        For the step-type axis, a recipe targeting fewer step types is
+        more specific than one targeting more; a generic recipe (no
+        step types) is the least specific.
+
         Returns:
             A tuple representing the specificity score.
         """
         # Score 0 for specific, 1 for generic (None or not present)
         machine_score = 0 if self.target_machine_id is not None else 1
-        head_score = 0 if "selected_head_uid" in self.settings else 1
+        head_score = (
+            0 if "selected_head_uid" in self.get_applied_settings() else 1
+        )
         material_score = 0 if self.material_uid is not None else 1
         thickness_score = (
             0
@@ -265,7 +301,11 @@ class Recipe:
             or self.max_thickness_mm is not None
             else 1
         )
-        step_type_score = 0 if self.target_step_type is not None else 1
+        if self.target_step_types:
+            # Fewer targeted step types = more specific.
+            step_type_score = len(self.target_step_types)
+        else:
+            step_type_score = _GENERIC_STEP_TYPE_SCORE
         return (
             machine_score,
             head_score,
@@ -274,51 +314,176 @@ class Recipe:
             step_type_score,
         )
 
+    def get_icon_name(self) -> str:
+        """An icon name representing this recipe's targeted step types.
+
+        When exactly one step type is targeted, that step's icon is
+        used; otherwise the generic recipe icon.
+        """
+        if len(self.target_step_types) == 1:
+            step_class = step_registry.get(self.target_step_types[0])
+            if step_class is not None:
+                return step_class.ICON or "recipe-symbolic"
+        return "recipe-symbolic"
+
+    def get_step_type_label(self) -> str | None:
+        """A comma-joined label of the targeted step types.
+
+        Returns ``None`` when the recipe is generic (no step types), so
+        callers can decide their own fallback (e.g. "Any"). The string
+        may be long; UI labels should ellipsize it.
+        """
+        if not self.target_step_types:
+            return None
+        labels = []
+        for name in self.target_step_types:
+            step_class = step_registry.get(name)
+            if step_class is not None:
+                labels.append(step_class.TYPELABEL)
+            else:
+                labels.append(name)
+        return ", ".join(labels)
+
     def to_dict(self) -> dict[str, Any]:
         """Serializes the Recipe to a dictionary suitable for YAML."""
         result = asdict(self)
+        del result["extra"]
         result.update(self.extra)
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Recipe":
-        """Deserializes a Recipe from a dictionary."""
-        known_keys = {
+    def _collect_extra(cls, data: dict[str, Any]) -> dict[str, Any]:
+        """Gathers keys that are not dataclass fields or legacy keys.
+
+        A literal ``extra`` key from an older save is unwrapped so the
+        blob does not nest one level deeper on every save/load cycle.
+        """
+        known_keys = cls._known_keys()
+        extra: dict[str, Any] = {}
+        for key, value in data.items():
+            if key == "extra" and isinstance(value, dict):
+                extra.update(
+                    {k: v for k, v in value.items() if k not in known_keys}
+                )
+            elif key not in known_keys:
+                extra[key] = value
+        return extra
+
+    @classmethod
+    def _known_keys(cls) -> set[str]:
+        """All keys :meth:`from_dict` consumes directly."""
+        return {
             "uid",
             "name",
             "description",
-            "target_capability_name",
-            "target_step_type",
+            "target_step_types",
             "target_machine_id",
             "material_uid",
             "min_thickness_mm",
             "max_thickness_mm",
+            "setting_dicts",
+            "transformer_dicts",
+            "extra",
+            # Legacy keys, consumed by the migration below.
             "settings",
+            "target_capability_name",
+            "target_step_type",
         }
-        extra = {k: v for k, v in data.items() if k not in known_keys}
 
-        settings = data.get("settings", {})
-        # Legacy alias: old recipe files keyed head selection as
-        # "selected_laser_uid".
-        if (
-            "selected_laser_uid" in settings
-            and "selected_head_uid" not in settings
-        ):
-            settings = dict(settings)
-            settings["selected_head_uid"] = settings.pop("selected_laser_uid")
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Recipe":
+        """Deserializes a Recipe from a dictionary.
+
+        Migrates the legacy ``target_step_type`` (single step class) and
+        ``target_capability_name`` (operation category) keys into the
+        current :attr:`target_step_types` list. Legacy capabilities are
+        expanded to the step class names that declared them via
+        :data:`_LEGACY_CAPABILITY_STEPS`.
+        """
+        extra = cls._collect_extra(data)
+
+        setting_dicts = cls._migrate_setting_dicts(data)
+
+        target_step_types = cls._migrate_target_step_types(data)
+
+        transformer_dicts = data.get("transformer_dicts") or []
+        if transformer_dicts and not isinstance(transformer_dicts, list):
+            transformer_dicts = []
+        transformer_dicts = [
+            dict(d) for d in transformer_dicts if isinstance(d, dict)
+        ]
 
         return cls(
             uid=data.get("uid", str(uuid.uuid4())),
             name=data.get("name", "Unnamed Recipe"),
             description=data.get("description", ""),
-            target_capability_name=data.get(
-                "target_capability_name", DEFAULT_CAPABILITY_NAME
-            ),
-            target_step_type=data.get("target_step_type"),
+            target_step_types=target_step_types,
             target_machine_id=data.get("target_machine_id"),
             material_uid=data.get("material_uid"),
             min_thickness_mm=data.get("min_thickness_mm"),
             max_thickness_mm=data.get("max_thickness_mm"),
-            settings=settings,
+            setting_dicts=setting_dicts,
+            transformer_dicts=transformer_dicts,
             extra=extra,
         )
+
+    @classmethod
+    def _migrate_setting_dicts(
+        cls, data: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Resolve ``setting_dicts`` from new and legacy keys.
+
+        New files store ``setting_dicts`` (a list of ``name``/``value``/
+        ``recipe_apply`` dicts). Legacy files store a flat ``settings``
+        dict whose entries all count as applied. The legacy
+        ``selected_laser_uid`` head key is renamed to
+        ``selected_head_uid`` in both forms.
+        """
+        raw = data.get("setting_dicts")
+        if raw is None:
+            legacy = data.get("settings") or {}
+            entries = [
+                {"name": k, "value": v, "recipe_apply": True}
+                for k, v in legacy.items()
+            ]
+        else:
+            entries = [dict(d) for d in raw if isinstance(d, dict)]
+
+        has_head = any(d.get("name") == "selected_head_uid" for d in entries)
+        migrated: list[dict[str, Any]] = []
+        for d in entries:
+            name = d.get("name")
+            if name == "selected_laser_uid":
+                if has_head:
+                    continue
+                name = "selected_head_uid"
+            migrated.append({**d, "name": name})
+        return migrated
+
+    @staticmethod
+    def _migrate_target_step_types(data: dict[str, Any]) -> list[str]:
+        """Resolve ``target_step_types`` from new and legacy keys."""
+        if "target_step_types" in data:
+            return list(data.get("target_step_types") or [])
+
+        step_types: list[str] = []
+
+        legacy_step_type = data.get("target_step_type")
+        if legacy_step_type:
+            step_types.append(legacy_step_type)
+
+        legacy_capability = data.get("target_capability_name")
+        if legacy_capability:
+            mapped = _LEGACY_CAPABILITY_STEPS.get(legacy_capability)
+            if mapped:
+                for name in mapped:
+                    if name not in step_types:
+                        step_types.append(name)
+            else:
+                logger.warning(
+                    "Could not migrate legacy target_capability_name"
+                    " '%s'; no step-type mapping is registered.",
+                    legacy_capability,
+                )
+
+        return step_types

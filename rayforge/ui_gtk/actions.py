@@ -1,14 +1,16 @@
 import logging
 from collections.abc import Callable
 from gettext import gettext as _
+from gettext import ngettext
 from typing import TYPE_CHECKING, cast
 
-from gi.repository import Gio, GLib, Gtk
+from gi.repository import Adw, Gio, GLib, Gtk
 
 from ..context import get_context
 from ..core.group import Group
 from ..core.item import DocItem
 from ..core.layer import Layer
+from ..core.source_asset import SourceAsset
 from ..core.stock import StockItem
 from ..core.workpiece import WorkPiece
 from ..doceditor.array import ArrayMode
@@ -20,10 +22,12 @@ from .array_dialog import (
     PointRotationArrayDialog,
 )
 from .doceditor.add_tabs_popover import AddTabsPopover
+from .doceditor.path_tolerance_dialog import PathToleranceDialog
 from .doceditor.stock_properties_dialog import StockPropertiesDialog
 from .shared.keyboard import PRIMARY_ACCEL
 
 if TYPE_CHECKING:
+    from ..core.doc import Doc
     from .mainwindow import MainWindow
 
 logger = logging.getLogger(__name__)
@@ -46,6 +50,7 @@ SHORTCUTS = {
     "win.paste": f"{PRIMARY_ACCEL}v",
     "win.select_all": f"{PRIMARY_ACCEL}a",
     "win.duplicate": f"{PRIMARY_ACCEL}d",
+    "win.rename-item": "F2",
     "win.remove": "Delete",
     "win.clear": f"{PRIMARY_ACCEL}<Shift>Delete",
     "win.settings": f"{PRIMARY_ACCEL}comma",
@@ -85,6 +90,7 @@ SHORTCUTS = {
     "win.flip-horizontal": "<Shift>h",
     "win.flip-vertical": "<Shift>v",
     # Machine & Help
+    "win.move-head-here": f"{PRIMARY_ACCEL}m",
     "win.machine-settings": f"{PRIMARY_ACCEL}less",
     "win.about": "F1",
 }
@@ -105,21 +111,23 @@ class ActionExtensionRegistry:
     def __init__(self):
         self._setup_handlers: list[ActionSetupHandler] = []
         self._state_update_handlers: list[ActionStateUpdateHandler] = []
-        self._setup_addon_map: dict[str, str] = {}
-        self._state_update_addon_map: dict[str, str] = {}
+        self._setup_addon_map: dict[int, str] = {}
+        self._state_update_addon_map: dict[int, str] = {}
 
     def register_setup(self, handler: ActionSetupHandler, addon_name: str):
         """Register a handler to be called during action setup."""
+        if handler in self._setup_handlers:
+            return
         self._setup_handlers.append(handler)
         if addon_name:
-            self._setup_addon_map[handler.__name__] = addon_name
+            self._setup_addon_map[id(handler)] = addon_name
         logger.debug(f"Registered action setup handler: {handler.__name__}")
 
     def unregister_setup(self, handler: ActionSetupHandler) -> bool:
         """Unregister an action setup handler."""
         try:
             self._setup_handlers.remove(handler)
-            self._setup_addon_map.pop(handler.__name__, None)
+            self._setup_addon_map.pop(id(handler), None)
             return True
         except ValueError:
             return False
@@ -128,9 +136,11 @@ class ActionExtensionRegistry:
         self, handler: ActionStateUpdateHandler, addon_name: str
     ):
         """Register a handler to be called during action state updates."""
+        if handler in self._state_update_handlers:
+            return
         self._state_update_handlers.append(handler)
         if addon_name:
-            self._state_update_addon_map[handler.__name__] = addon_name
+            self._state_update_addon_map[id(handler)] = addon_name
         logger.debug(
             f"Registered action state update handler: {handler.__name__}"
         )
@@ -141,7 +151,7 @@ class ActionExtensionRegistry:
         """Unregister an action state update handler."""
         try:
             self._state_update_handlers.remove(handler)
-            self._state_update_addon_map.pop(handler.__name__, None)
+            self._state_update_addon_map.pop(id(handler), None)
             return True
         except ValueError:
             return False
@@ -161,21 +171,21 @@ class ActionExtensionRegistry:
         setup_to_remove = [
             h
             for h in self._setup_handlers
-            if self._setup_addon_map.get(h.__name__) == addon_name
+            if self._setup_addon_map.get(id(h)) == addon_name
         ]
         for h in setup_to_remove:
             self._setup_handlers.remove(h)
-            self._setup_addon_map.pop(h.__name__, None)
+            self._setup_addon_map.pop(id(h), None)
         count += len(setup_to_remove)
 
         state_to_remove = [
             h
             for h in self._state_update_handlers
-            if self._state_update_addon_map.get(h.__name__) == addon_name
+            if self._state_update_addon_map.get(id(h)) == addon_name
         ]
         for h in state_to_remove:
             self._state_update_handlers.remove(h)
-            self._state_update_addon_map.pop(h.__name__, None)
+            self._state_update_addon_map.pop(id(h), None)
         count += len(state_to_remove)
 
         if count > 0:
@@ -222,10 +232,34 @@ class ActionManager:
         self.doc = self.editor.doc
 
         # Connect to doc signals to update action states
-        self.doc.descendant_added.connect(self.update_action_states)
-        self.doc.descendant_removed.connect(self.update_action_states)
+        self._doc_signal_doc: Doc | None = None
+        self._connect_doc_signals(self.doc)
         self.win.surface.selection_changed.connect(self.update_action_states)
         self.win.surface.context_changed.connect(self.update_action_states)
+
+        # Keep the action states in sync when a new document is loaded.
+        self.editor.document_changed.connect(self._on_document_changed)
+
+    def _connect_doc_signals(self, doc: "Doc"):
+        """Connects doc signal handlers that refresh action states."""
+        self._doc_signal_doc = doc
+        doc.descendant_added.connect(self.update_action_states)
+        doc.descendant_removed.connect(self.update_action_states)
+
+    def _disconnect_doc_signals(self):
+        """Disconnects the doc signal handlers of the previous document."""
+        doc = self._doc_signal_doc
+        if doc is not None:
+            doc.descendant_added.disconnect(self.update_action_states)
+            doc.descendant_removed.disconnect(self.update_action_states)
+            self._doc_signal_doc = None
+
+    def _on_document_changed(self, sender):
+        """Re-targets the current doc when a new document is loaded."""
+        self._disconnect_doc_signals()
+        self.doc = self.editor.doc
+        self._connect_doc_signals(self.doc)
+        self.update_action_states()
 
     def register_actions(self):
         """Creates all Gio.SimpleActions and adds them to the window."""
@@ -290,6 +324,16 @@ class ActionManager:
             self.win.on_show_models_state_change,
             GLib.Variant.new_boolean(cv.show_models),
         )
+        self._add_stateful_action(
+            "show_workpiece_image",
+            self.win.on_show_workpiece_image_state_change,
+            GLib.Variant.new_boolean(cv.show_workpiece_image),
+        )
+        self._add_stateful_action(
+            "show_stock",
+            self.win.on_show_stock_state_change,
+            GLib.Variant.new_boolean(cv.show_stock),
+        )
         config = get_context().config
         self._add_stateful_action(
             "toggle_bottom_panel",
@@ -336,6 +380,7 @@ class ActionManager:
         self._add_action("paste", self.win.on_paste_requested)
         self._add_action("select_all", self.win.on_select_all)
         self._add_action("duplicate", self.win.on_menu_duplicate)
+        self._add_action("rename-item", self.win.on_menu_rename)
         self._add_action("remove", self.win.on_menu_remove)
         self._add_action("clear", self.win.on_clear_clicked)
 
@@ -373,6 +418,12 @@ class ActionManager:
             "asset-create-workpiece",
             self.on_asset_create_workpiece,
         )
+        self._add_action("asset-reload-source", self.on_asset_reload_source)
+        self._add_action("asset-relink-source", self.on_asset_relink_source)
+
+        # Imported Source Actions
+        self._add_action("reload-source", self.on_reload_source)
+        self._add_action("relink-source", self.on_relink_source)
 
         # Layer Management Actions
         self._add_action("layer-move-up", self.on_layer_move_up)
@@ -384,6 +435,12 @@ class ActionManager:
 
         # Split Action
         self._add_action("split", self.on_split_action)
+
+        # Path Clean-Up Actions
+        self._add_action("break-apart", self.on_break_apart)
+        self._add_action("close-paths", self.on_close_paths)
+        self._add_action("join-paths", self.on_join_paths)
+        self._add_action("delete-duplicates", self.on_delete_duplicates)
 
         # Convert to Stock Action
         self._add_action("convert-to-stock", self.on_convert_to_stock)
@@ -454,6 +511,7 @@ class ActionManager:
             self.win.on_zero_here_clicked,
             GLib.VariantType.new("s"),
         )
+        self._add_action("move-head-here", self.win.on_move_head_here_clicked)
 
         action_extension_registry.invoke_setup_handlers(self)
 
@@ -511,9 +569,37 @@ class ActionManager:
             layout_info.action.set_enabled(has_workpieces)
 
         self.actions["split"].set_enabled(bool(selected_wps))
+        for name in (
+            "break-apart",
+            "close-paths",
+            "join-paths",
+            "delete-duplicates",
+        ):
+            self.actions[name].set_enabled(bool(selected_wps))
         self.actions["export-object"].set_enabled(len(selected_wps) == 1)
 
+        sources = self.editor.reload.sources_of(list(selected_wps))
+        self.actions["reload-source"].set_enabled(
+            any(self.editor.reload.can_reload(s) for s in sources)
+        )
+        self.actions["relink-source"].set_enabled(
+            len(sources) == 1 and self.editor.reload.can_relink(sources[0])
+        )
+
         action_extension_registry.invoke_state_update_handlers(self)
+        self._update_predicated_actions()
+
+    def _update_predicated_actions(self):
+        """Sets enabled state of actions registered with enabled_when."""
+        for info in action_registry.get_all():
+            if info.enabled_when is None:
+                continue
+            try:
+                info.action.set_enabled(info.enabled_when(self))
+            except Exception:
+                logger.exception(
+                    f"Error updating state of action '{info.action_name}'"
+                )
 
     def on_add_stock(self, action, param):
         """Handler for the 'add-stock' action."""
@@ -562,6 +648,44 @@ class ActionManager:
     def on_asset_create_workpiece(self, action, param):
         browser = self.win.bottom_panel.asset_browser
         browser.create_workpiece_from_selected()
+
+    def _selected_sources(self) -> list[SourceAsset]:
+        selected = self.win.surface.get_selected_workpieces()
+        return self.editor.reload.sources_of(list(selected))
+
+    def _browser_sources(self) -> list[SourceAsset]:
+        browser = self.win.bottom_panel.asset_browser
+        return [
+            asset
+            for asset in browser.get_selected_assets()
+            if isinstance(asset, SourceAsset)
+        ]
+
+    def _reload_sources(self, sources: list[SourceAsset]):
+        reloadable = [s for s in sources if self.editor.reload.can_reload(s)]
+        if reloadable:
+            self.win.source_reload.reload_assets(reloadable)
+        elif sources:
+            message = _(
+                "The file of {name} cannot be found. Use Relink to pick it."
+            ).format(name=sources[0].name)
+            self.editor.notification_requested.send(self, message=message)
+
+    def _relink_sources(self, sources: list[SourceAsset]):
+        if len(sources) == 1 and self.editor.reload.can_relink(sources[0]):
+            self.win.source_reload.choose_relink(sources[0])
+
+    def on_reload_source(self, action, param):
+        self._reload_sources(self._selected_sources())
+
+    def on_relink_source(self, action, param):
+        self._relink_sources(self._selected_sources())
+
+    def on_asset_reload_source(self, action, param):
+        self._reload_sources(self._browser_sources())
+
+    def on_asset_relink_source(self, action, param):
+        self._relink_sources(self._browser_sources())
 
     def _update_asset_action_states(self):
         browser = self.win.bottom_panel.asset_browser
@@ -758,6 +882,90 @@ class ActionManager:
         new_items = self.editor.split.split_items(selected_workpieces)
         if new_items:
             self.win.surface.select_items(new_items)
+
+    def on_break_apart(self, action, param):
+        """Handler for the 'break-apart' action."""
+        selected_workpieces = self.win.surface.get_selected_workpieces()
+        if not selected_workpieces:
+            return
+
+        new_items = self.editor.path_cleanup.break_apart(selected_workpieces)
+        if new_items:
+            self.win.surface.select_items(new_items)
+        else:
+            self._show_toast(_("Nothing to break apart"))
+
+    def on_close_paths(self, action, param):
+        """Handler for the 'close-paths' action: asks for a tolerance."""
+        workpieces = self.win.surface.get_selected_workpieces()
+        if not workpieces:
+            return
+
+        def _apply(tolerance: float):
+            count = self.editor.path_cleanup.close_paths(workpieces, tolerance)
+            self._show_toast(
+                ngettext(
+                    "Closed {count} path",
+                    "Closed {count} paths",
+                    count,
+                ).format(count=count)
+            )
+
+        PathToleranceDialog(
+            heading=_("Close Paths"),
+            body=_(
+                "Closes open paths whose start and end point are closer "
+                "than the tolerance."
+            ),
+            apply_label=_("Close Paths"),
+            key="close-paths",
+            on_apply=_apply,
+        ).present(self.win)
+
+    def on_join_paths(self, action, param):
+        """Handler for the 'join-paths' action: asks for a tolerance."""
+        workpieces = self.win.surface.get_selected_workpieces()
+        if not workpieces:
+            return
+
+        def _apply(tolerance: float):
+            count = self.editor.path_cleanup.join_paths(workpieces, tolerance)
+            self._show_toast(
+                ngettext(
+                    "Made {count} join",
+                    "Made {count} joins",
+                    count,
+                ).format(count=count)
+            )
+
+        PathToleranceDialog(
+            heading=_("Join Open Paths"),
+            body=_(
+                "Joins open paths whose end points are closer than the "
+                "tolerance. Paths whose ends then meet are closed."
+            ),
+            apply_label=_("Join Paths"),
+            key="join-paths",
+            on_apply=_apply,
+        ).present(self.win)
+
+    def on_delete_duplicates(self, action, param):
+        """Handler for the 'delete-duplicates' action."""
+        workpieces = self.win.surface.get_selected_workpieces()
+        if not workpieces:
+            return
+
+        count = self.editor.path_cleanup.delete_duplicates(workpieces)
+        self._show_toast(
+            ngettext(
+                "Deleted {count} duplicate",
+                "Deleted {count} duplicates",
+                count,
+            ).format(count=count)
+        )
+
+    def _show_toast(self, message: str):
+        self.win.toast_overlay.add_toast(Adw.Toast.new(message))
 
     def on_convert_to_stock(self, action, param):
         """Handler for the 'convert-to-stock' action."""

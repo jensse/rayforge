@@ -5,10 +5,14 @@ from gi.repository import Adw, Gtk
 
 from rayforge.context import get_context
 from rayforge.core.step import Step
+from rayforge.ui_gtk.doceditor.step_settings.page_registry import (
+    step_settings_page_registry,
+)
 from rayforge.ui_gtk.doceditor.step_settings.pages import (
     GeneralStepSettingsPage,
     PostProcessingPage,
     StepSettingsPage,
+    WorkpiecesPage,
 )
 from rayforge.ui_gtk.icons import get_icon
 from rayforge.ui_gtk.shared.patched_dialog_window import PatchedDialogWindow
@@ -55,9 +59,18 @@ class StepSettingsDialog(PatchedDialogWindow):
         self.general_view: StepSettingsPage | None = None
         self._extra_pages: list[tuple[str, StepSettingsPage, str | None]] = []
         if context:
-            context.plugin_mgr.hook.step_settings_loaded(
-                dialog=self, step=self.step, producer=None
+            page_cls = step_settings_page_registry.get(
+                self.step.ASSEMBLER_NAME
             )
+            if page_cls:
+                page = page_cls(self.editor, self.step)
+                self.general_view = page
+                for method_name, title, icon_name in page.extra_pages:
+                    self.add_settings_page(
+                        title,
+                        getattr(page, method_name)(),
+                        icon_name,
+                    )
         if self.general_view is None:
             self.general_view = GeneralStepSettingsPage(self.editor, self.step)
         scrolled_page1 = Gtk.ScrolledWindow(
@@ -88,6 +101,17 @@ class StepSettingsDialog(PatchedDialogWindow):
             vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
         )
         self.stack.add_named(scrolled_page2, "post-processing")
+
+        # --- Workpieces (read-only) ---
+        self.workpieces_view: WorkpiecesPage | None = None
+        if step.needs_workpieces and step.layer is not None:
+            self.workpieces_view = WorkpiecesPage(self.editor, self.step)
+            scrolled_page3 = Gtk.ScrolledWindow(
+                child=self.workpieces_view,
+                hscrollbar_policy=Gtk.PolicyType.NEVER,
+                vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+            )
+            self.stack.add_named(scrolled_page3, "workpieces")
 
         # --- Build the custom switcher ---
         switcher_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -133,6 +157,19 @@ class StepSettingsDialog(PatchedDialogWindow):
         )
         switcher_box.append(self.btn_post_processing)
 
+        self.btn_workpieces: Gtk.ToggleButton | None = None
+        if self.workpieces_view is not None:
+            self.btn_workpieces = Gtk.ToggleButton(
+                group=self.btn_step_settings
+            )
+            self.btn_workpieces.set_child(
+                self._create_tab_title(_("Workpieces"), "layer-symbolic")
+            )
+            self.btn_workpieces.connect(
+                "toggled", self._on_tab_toggled, self.stack, "workpieces"
+            )
+            switcher_box.append(self.btn_workpieces)
+
         has_post_processors = bool(
             step.per_step_transformers_dicts
             or step.per_workpiece_transformers_dicts
@@ -145,7 +182,7 @@ class StepSettingsDialog(PatchedDialogWindow):
             self.general_view._sync_widgets_to_model()
 
     def set_step_settings_page(self, page: StepSettingsPage):
-        """Provide the step's settings page (called by addon hooks)."""
+        """Set the step's main settings page."""
         self.general_view = page
 
     def add_settings_page(
@@ -154,7 +191,7 @@ class StepSettingsDialog(PatchedDialogWindow):
         page: StepSettingsPage,
         icon_name: str | None = None,
     ):
-        """Provide an additional settings page (called by addon hooks)."""
+        """Add an additional settings page tab."""
         self._extra_pages.append((title, page, icon_name))
 
     @classmethod
@@ -183,6 +220,9 @@ class StepSettingsDialog(PatchedDialogWindow):
         """Set the initial visible page after dialog construction."""
         if page == "post-processing":
             self.btn_post_processing.set_active(True)
+            return
+        if page == "workpieces" and self.btn_workpieces is not None:
+            self.btn_workpieces.set_active(True)
             return
         for index, (page_title, extra_page, icon_name) in enumerate(
             self._extra_pages
@@ -217,6 +257,8 @@ class StepSettingsDialog(PatchedDialogWindow):
             + [page for _, page, _ in self._extra_pages]
             + [self.post_processing_view]
         )
+        if self.workpieces_view is not None:
+            pages.append(self.workpieces_view)
         for page in pages:
             cleanup = getattr(page, "_cleanup", None)
             if callable(cleanup):

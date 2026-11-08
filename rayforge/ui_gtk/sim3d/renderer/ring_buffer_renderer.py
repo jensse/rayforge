@@ -14,7 +14,11 @@ from OpenGL import GL
 
 from ....simulator.scene3d import ScanlineOverlayLayer
 from ...shared.color_lut_provider import ColorLutProvider
-from ..gl_utils import ShaderSet, set_line_width
+from ..gl_utils import (
+    LINE_DEPTH_WINDOW_BIAS,
+    ShaderSet,
+    set_line_width,
+)
 from ..render_context import RenderContext
 from .base import BaseRenderer
 
@@ -105,7 +109,15 @@ class RingBufferRenderer(BaseRenderer):
 
     def update_from_overlay_layer(self, ol: ScanlineOverlayLayer):
         """Uploads a compiled scanline overlay layer into the ring buffer."""
-        self.upload(ol.positions.ravel(), ol.overlay_attrib)
+        positions = ol.positions.to_numpy()
+        attrib = ol.overlay_attrib.to_numpy()
+        self.update_from_overlay_layer_payload(positions, attrib)
+
+    def update_from_overlay_layer_payload(
+        self, positions: np.ndarray, attrib: np.ndarray
+    ):
+        """Uploads pre-decompressed overlay arrays into the ring buffer."""
+        self.upload(positions.ravel(), attrib)
 
     def update_color_lut(self, lut_data: np.ndarray, num_lasers: int = 1):
         if not self._color_lut_texture:
@@ -165,12 +177,7 @@ class RingBufferRenderer(BaseRenderer):
         self._partial_ring_end = np.zeros(3, dtype=np.float32)
         op_player = ctx.playback.op_player
         if op_player:
-            prog = getattr(op_player, "playback_progress", None)
-            if prog is not None:
-                p, frac = prog()
-            else:
-                p = op_player.current_index + 1
-                frac = 0.0
+            p, frac = op_player.playback_progress()
             exec_ring, self._partial_ring_id, self._partial_ring_end = (
                 self._fractional_exec_count(
                     self.ring_offsets, self._positions, p, frac
@@ -199,8 +206,8 @@ class RingBufferRenderer(BaseRenderer):
         exec_f = base + frac * span
         zero = np.zeros(3, dtype=np.float32)
         if total == 0:
-            # No position data uploaded: fall back to the raw count.
-            return int(exec_f), -1, zero
+            # No position data uploaded: there is nothing to reveal.
+            return 0, -1, zero
         if exec_f >= total:
             return total, -1, zero
         if exec_f <= 0:
@@ -222,7 +229,7 @@ class RingBufferRenderer(BaseRenderer):
 
         ctx.playback.executed_vertex_count = self._exec_ring
 
-        shader = shaders.main
+        shader = shaders.main_lines or shaders.main
         if shader is None:
             return
 
@@ -243,7 +250,7 @@ class RingBufferRenderer(BaseRenderer):
             "uZeroPowerColor", ctx.camera.color_set.get_rgba("zero_power")
         )
         shader.set_int("uExecutedVertexCount", executed_vertex_count)
-        shader.set_float("uAlphaPending", ctx.playback.alpha_pending)
+        shader.set_float("uAlphaPending", 0.0)
         if self._partial_ring_id >= 0:
             shader.set_int("uPartialVertexID", self._partial_ring_id)
             shader.set_vec3("uPartialEnd", self._partial_ring_end)
@@ -255,12 +262,19 @@ class RingBufferRenderer(BaseRenderer):
         GL.glBindTexture(GL.GL_TEXTURE_2D, self._color_lut_texture)
         shader.set_int("uColorLUT", 1)
 
-        # The scanline trail must always draw on top of the toolpath and
-        # the raster texture; never cull it by surface depth (which would
-        # let travel lines or the texture's depth split the trail on a
-        # cylinder).  Depth writes stay off so later geometry is unaffected.
-        GL.glDepthFunc(GL.GL_ALWAYS)
+        # The scanline trail must draw on top of the toolpath and the
+        # raster texture; bias its window-space depth a few LSBs toward
+        # the camera so it always wins against the coplanar surface
+        # (which would let travel lines or the texture's depth split
+        # the trail on a cylinder) while the laser head model still
+        # occludes it.  Depth writes stay off so later geometry is
+        # unaffected.
+        GL.glEnable(GL.GL_BLEND)
+        GL.glBlendFunc(GL.GL_SRC_ALPHA, GL.GL_ONE_MINUS_SRC_ALPHA)
+        GL.glDepthFunc(GL.GL_LEQUAL)
         GL.glDepthMask(GL.GL_FALSE)
+        shader.set_float("uFragDepthBias", LINE_DEPTH_WINDOW_BIAS)
         set_line_width(line_width)
         GL.glBindVertexArray(self.vao)
         GL.glDrawArrays(GL.GL_LINES, 0, draw_count)
+        GL.glBindVertexArray(0)

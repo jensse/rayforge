@@ -94,8 +94,9 @@ class LaserBeamRenderer(BaseRenderer):
             return
 
         ra = kinematics.rotary_axis
-        margin_shift = ctx.viewport.margin_shift
-        vis_mat = margin_shift.astype(np.float32)
+        vis_mat = (
+            ctx.viewport.margin_shift @ ctx.viewport.world_to_panel
+        ).astype(np.float32)
         for name, (hx, hy, hz) in kinematics.head_positions.items():
             head_pos = vis_mat @ np.array([hx, hy, hz, 1.0], dtype=np.float32)
             cfg = kinematics.head_configs.get(name)
@@ -137,7 +138,13 @@ class LaserBeamRenderer(BaseRenderer):
             return
         is_persp = abs(float(proj_matrix[3, 2])) > 0.1
 
-        GL.glDisable(GL.GL_DEPTH_TEST)
+        # Depth-test against the scene so the laser head model and the
+        # workpiece occlude the beam instead of it always drawing on
+        # top.  Depth writes stay off so the beam never affects later
+        # geometry.
+        GL.glEnable(GL.GL_DEPTH_TEST)
+        GL.glDepthFunc(GL.GL_LEQUAL)
+        GL.glDepthMask(GL.GL_FALSE)
         GL.glEnable(GL.GL_BLEND)
         shader.use()
         shader.set_float("uHasNormals", 0.0)

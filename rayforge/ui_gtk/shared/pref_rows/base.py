@@ -3,7 +3,7 @@ import logging
 from blinker import ANY, Signal
 from gi.repository import Adw, GLib, Gtk
 
-from ..adwfix import ensure_spinrow_min_width
+from ..adwfix import ensure_row_min_width
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +100,7 @@ class SpinRow(Adw.ActionRow):
         self.value_changed = _StrongSignal()
         self._destroy_handler_id = self.connect("destroy", self._on_destroy)
 
-        ensure_spinrow_min_width(self)
+        ensure_row_min_width(self)
 
     def get_value(self) -> float:
         """Return the current value (display units), text-aware."""
@@ -110,17 +110,64 @@ class SpinRow(Adw.ActionRow):
         """Return the current value as an int, clamped to the range."""
         return round(self._get_display_value())
 
+    def _echoes_clamped_text(self, value: float) -> bool:
+        """Return True when ``value`` is merely the range-clamped
+        version of the raw entry text.
+
+        While the user edits, the text may hold an out-of-range
+        intermediate value (e.g. deleting one digit of ``150.00``
+        yields ``10.00``, below a lower bound of 50). Consumers see the
+        clamped value and may round-trip it back; rewriting the text
+        then would reset the cursor position and look as if Backspace
+        had deleted a digit. GTK clamps the visible text itself when
+        editing ends (activation or focus-out).
+        """
+        try:
+            raw = float(self._spin_button.get_text())
+        except ValueError:
+            return False
+        adj = self._spin_button.get_adjustment()
+        clamped = max(adj.get_lower(), min(raw, adj.get_upper()))
+        if abs(clamped - raw) < 1e-9:
+            return False
+        # A text that matches the committed adjustment value is a stale
+        # rendering (e.g. a unit switch or a bound change narrowed the
+        # range below the displayed value), not an in-progress user
+        # edit; it must be rewritten rather than preserved.
+        if abs(raw - float(self._spin_button.get_value())) < 1e-9:
+            return False
+        return abs(value - clamped) < 1e-9
+
     def set_value(self, value: float) -> None:
         """
         Set the value programmatically.
 
         This does not emit :attr:`value_changed`; only user edits do.
+        A no-op when the entry already shows ``value`` so redundant model
+        syncs (e.g. a backend update round-tripping an unchanged value)
+        do not rewrite the text and yank the cursor mid-edit. A value
+        that only echoes the clamp of an out-of-range intermediate edit
+        is likewise skipped for the same reason.
         """
         if self._is_updating:
+            return
+        try:
+            current = float(self._spin_button.get_text())
+        except ValueError:
+            current = float(self._spin_button.get_value())
+        if abs(value - current) < 1e-9:
+            self._last_emitted_value = value
+            return
+        if self._echoes_clamped_text(value):
             return
         self._is_updating = True
         try:
             self._spin_button.set_value(value)
+            # GTK delivers the entry text update asynchronously; record
+            # the value now so that the deferred change notification is
+            # recognized as an echo of this programmatic set rather
+            # than a user edit.
+            self._last_emitted_value = value
         finally:
             self._is_updating = False
 

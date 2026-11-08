@@ -32,6 +32,9 @@ class VisibilityOverlay(Gtk.Box):
         show_models=False,
         show_grid=False,
         show_tabs=False,
+        show_stock=False,
+        show_workpiece_image=False,
+        show_nogo_zones=True,
         shortcuts=None,
         **kwargs,
     ):
@@ -48,9 +51,10 @@ class VisibilityOverlay(Gtk.Box):
         self.set_margin_end(6)
         self._shortcuts = shortcuts or {}
 
+        self._vis_on_icon = get_icon("visibility-on-symbolic")
+        self._vis_off_icon = get_icon("visibility-off-symbolic")
+
         if show_workpiece:
-            self._vis_on_icon = get_icon("visibility-on-symbolic")
-            self._vis_off_icon = get_icon("visibility-off-symbolic")
             self.workpiece_button = Gtk.ToggleButton()
             self.workpiece_button.set_active(True)
             self.workpiece_button.set_child(self._vis_on_icon)
@@ -65,6 +69,38 @@ class VisibilityOverlay(Gtk.Box):
                 "toggled", self._on_workpiece_toggled
             )
             self.append(self.workpiece_button)
+
+        self.workpiece_image_button = None
+        if show_workpiece_image:
+            self.workpiece_image_button = Gtk.ToggleButton()
+            self.workpiece_image_button.set_active(True)
+            self.workpiece_image_button.set_child(self._vis_on_icon)
+            self.workpiece_image_button.set_tooltip_text(
+                self._format_tooltip(
+                    _("Toggle workpiece image visibility"),
+                    "win.show_workpiece_image",
+                )
+            )
+            self.workpiece_image_button.set_action_name(
+                "win.show_workpiece_image"
+            )
+            self.workpiece_image_button.connect(
+                "toggled", self._on_workpiece_toggled
+            )
+            self.append(self.workpiece_image_button)
+
+        self.stock_button: Gtk.ToggleButton | None = None
+        if show_stock:
+            self.stock_button = Gtk.ToggleButton()
+            self.stock_button.set_child(get_icon("stock-symbolic"))
+            self.stock_button.set_active(True)
+            self.stock_button.set_tooltip_text(
+                self._format_tooltip(
+                    _("Toggle stock visibility"), "win.show_stock"
+                )
+            )
+            self.stock_button.set_action_name("win.show_stock")
+            self.append(self.stock_button)
 
         if show_tabs:
             self.tabs_button = Gtk.ToggleButton()
@@ -139,10 +175,24 @@ class VisibilityOverlay(Gtk.Box):
             )
         )
         self.nogo_button.set_action_name("win.show_nogo_zones")
+        self.nogo_button.set_visible(show_nogo_zones)
         self.append(self.nogo_button)
 
     def set_camera_visible(self, visible: bool):
         self.camera_button.set_visible(visible)
+
+    def set_nogo_visible(self, visible: bool):
+        self.nogo_button.set_visible(visible)
+
+    def set_stock_present(self, present: bool) -> None:
+        """Shows the stock toggle only when a stock exists in the doc.
+
+        Engraving is visualized solely by the burned-in stock; there is
+        no floating ops underlay to replace, so the stock toggle is
+        simply hidden when no stock exists.
+        """
+        if self.stock_button is not None:
+            self.stock_button.set_visible(present)
 
     def _format_tooltip(self, text, action_name):
         if action_name in self._shortcuts:

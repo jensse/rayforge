@@ -34,7 +34,7 @@ module.exports = {
 
   i18n: {
     defaultLocale: 'en',
-    locales: ['en', 'pt-BR', 'es', 'fr', 'de', 'zh-CN', 'uk'],
+    locales: ['en', 'pt-BR', 'es', 'fr', 'hi', 'de', 'zh-CN', 'uk'],
   },
 
   presets: [
@@ -113,6 +113,13 @@ module.exports = {
     },
   },
 
+  stylesheets: [
+    {
+      href: 'https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Open+Sans:wght@400;500;600;700&family=Roboto+Condensed:wght@600;700&display=swap',
+      rel: 'stylesheet',
+    },
+  ],
+
   scripts: [
     {
       src: 'https://analytics.barebaric.com/script.js',
@@ -146,7 +153,7 @@ module.exports = {
           name: 'barebaric',
           url: 'https://github.com/barebaric',
         },
-        screenshot: 'https://rayforge.org/screenshots/main-standard.png',
+        screenshot: 'https://rayforge.org/screenshots/main-standard.webp',
         featureList: [
           'AI-powered design generation',
           '3D simulation and preview',
@@ -203,14 +210,14 @@ module.exports = {
       { name: 'robots', content: 'index, follow' },
       { property: 'og:type', content: 'website' },
       { property: 'og:site_name', content: 'Rayforge' },
-      { property: 'og:image', content: 'https://rayforge.org/images/social.png' },
-      { property: 'og:image:width', content: '1200' },
-      { property: 'og:image:height', content: '630' },
+      { property: 'og:image', content: 'https://rayforge.org/images/social.webp' },
+      { property: 'og:image:width', content: '1280' },
+      { property: 'og:image:height', content: '640' },
       { property: 'og:image:alt', content: 'Rayforge - Free Open Source Laser Cutter Software' },
       { name: 'twitter:card', content: 'summary_large_image' },
       { name: 'twitter:title', content: 'Rayforge - Free Open Source Laser Cutter Software' },
       { name: 'twitter:description', content: 'The complete creative studio for your laser cutter. Design, simulate, and control — with AI-powered tools, 3D preview, and a built-in sketcher.' },
-      { name: 'twitter:image', content: 'https://rayforge.org/images/social.png' },
+      { name: 'twitter:image', content: 'https://rayforge.org/images/social.webp' },
       { name: 'twitter:image:alt', content: 'Rayforge - Free Open Source Laser Cutter Software' },
     ],
     navbar: {
@@ -251,6 +258,12 @@ module.exports = {
           to: '/blog',
           label: 'Blog',
           position: 'left',
+        },
+        {
+          href: 'https://github.com/barebaric/rayforge/discussions',
+          label: 'Discussions',
+          position: 'right',
+          className: 'navbar__discussions',
         },
         {
           type: 'localeDropdown',

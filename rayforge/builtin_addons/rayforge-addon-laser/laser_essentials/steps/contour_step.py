@@ -8,11 +8,12 @@ from raygeo.ops.assembly import Assembler
 from raygeo.ops.assembly.contour import ContourSpec
 from raygeo.ops.part import Part
 
-from rayforge.core.capability import MachineCapability, StepCapability
+from rayforge.core.capability import MachineCapability
 from rayforge.core.cut_side import CutOrder, CutSide
 from rayforge.core.step import legacy_producer_params
 from rayforge.core.varset import (
     BoolVar,
+    FloatVar,
     LabeledChoiceVar,
     LengthVar,
     VarSet,
@@ -22,7 +23,6 @@ from rayforge.pipeline.stage.assembler_helpers import (
 )
 from rayforge.pipeline.transformer.registry import transformer_registry
 
-from ..capabilities import CUT, SCORE
 from .laser_step import LaserStep
 
 if TYPE_CHECKING:
@@ -40,7 +40,6 @@ if TYPE_CHECKING:
 class ContourStep(LaserStep):
     TYPELABEL = _("Contour")
     ICON = "step-contour-symbolic"
-    CAPABILITIES: tuple[StepCapability, ...] = (CUT, SCORE)
     REQUIRED_MACHINE_CAPS = frozenset({MachineCapability.LASER})
     ASSEMBLER_NAME = "contour"
 
@@ -54,17 +53,7 @@ class ContourStep(LaserStep):
                     label=_("Cut Side"),
                     choices=[(cs.label(), cs.name) for cs in CutSide],
                     default="CENTERLINE",
-                ),
-                LabeledChoiceVar(
-                    key="cut_order",
-                    label=_("Cut Order"),
-                    choices=[(co.label(), co.name) for co in CutOrder],
-                    default="INSIDE_OUTSIDE",
-                ),
-                BoolVar(
-                    key="remove_inner_paths",
-                    label=_("Remove Inner Paths"),
-                    default=False,
+                    allow_none=False,
                 ),
                 LengthVar(
                     key="offset_mm",
@@ -75,12 +64,54 @@ class ContourStep(LaserStep):
                         "compensation for the head"
                     ),
                     default=0.0,
+                    sensitive_when=lambda v: v.get("cut_side") != "CENTERLINE",
+                ),
+                LabeledChoiceVar(
+                    key="cut_order",
+                    label=_("Cut Order"),
+                    description=_("Processing order for nested paths"),
+                    choices=[(co.label(), co.name) for co in CutOrder],
+                    default="INSIDE_OUTSIDE",
+                    allow_none=False,
+                ),
+                BoolVar(
+                    key="remove_inner_paths",
+                    label=_("Remove Inner Paths"),
+                    description=_(
+                        "If enabled, only trace the outer outline of shapes"
+                    ),
+                    default=False,
                 ),
                 LengthVar(
                     key="overcut",
                     label=_("Overcut"),
+                    description=_(
+                        "Extend closed contours past their start point "
+                        "so the cut overlaps itself"
+                    ),
                     default=0.0,
                     min_val=0.0,
+                    max_val=100.0,
+                ),
+                BoolVar(
+                    key="override_threshold",
+                    label=_("Rescan Content"),
+                    description=_(
+                        "Ignore source geometry and re-trace within "
+                        "the workpiece"
+                    ),
+                    default=False,
+                ),
+                FloatVar(
+                    key="threshold",
+                    label=_("Threshold"),
+                    description=_(
+                        "Brightness level (0.0-1.0) to define edges"
+                    ),
+                    default=0.5,
+                    min_val=0.0,
+                    max_val=1.0,
+                    visible_when=lambda v: v.get("override_threshold", False),
                 ),
             ]
         )
@@ -101,6 +132,23 @@ class ContourStep(LaserStep):
             return CutSide[self.cut_side].label()
         except (KeyError, TypeError):
             return None
+
+    def get_cache_params(self) -> dict:
+        """Cache params must cover the raster fallback tracing.
+
+        When "Rescan Content" is enabled, the Part is re-traced from
+        pixels using the threshold, so either setting changing must
+        invalidate the workpiece compute cache even though the
+        assembler spec itself is unchanged.
+        """
+        params = super().get_cache_params()
+        params.update(
+            {
+                "override_threshold": self.override_threshold,
+                "threshold": self.threshold,
+            }
+        )
+        return params
 
     def get_assembler_kwargs(
         self,
@@ -212,6 +260,9 @@ class ContourStep(LaserStep):
         Smooth = transformer_registry.get("Smooth")
         LeadInOutTransformer = transformer_registry.get("LeadInOutTransformer")
         TabOpsTransformer = transformer_registry.get("TabOpsTransformer")
+        PerforationTransformer = transformer_registry.get(
+            "PerforationTransformer"
+        )
         CropTransformer = transformer_registry.get("CropTransformer")
         MergeLinesTransformer = transformer_registry.get(
             "MergeLinesTransformer"
@@ -221,6 +272,7 @@ class ContourStep(LaserStep):
         assert Smooth is not None
         assert LeadInOutTransformer is not None
         assert TabOpsTransformer is not None
+        assert PerforationTransformer is not None
         assert CropTransformer is not None
         assert MergeLinesTransformer is not None
         assert Optimize is not None
@@ -232,6 +284,7 @@ class ContourStep(LaserStep):
                 enabled=False, lead_in_mm=0, lead_out_mm=0, auto=True
             ).to_dict(),
             TabOpsTransformer().to_dict(),
+            PerforationTransformer(enabled=False).to_dict(),
             CropTransformer(enabled=False).to_dict(),
             optimize_dict,
         ], [

@@ -15,7 +15,9 @@ from gi.repository import Adw
 from ....machine.device.profile import DeviceProfile
 from ....machine.driver import get_driver_cls
 from ....machine.models.machine import Origin
+from ....machine.models.machine_panel import PanelOrientation
 from ....shared.units.system import UnitSystem
+from ...shared.markdown import MarkdownView
 from . import WizardPage, _makePreferencesGroup
 
 
@@ -39,6 +41,13 @@ def _format(value) -> str:
 def _format_bool(value) -> str:
     """Boolean with an unset (None) state collapsed to "No"."""
     return _("Yes") if value else _("No")
+
+
+def _format_park_position(position) -> str:
+    """Park position rendered as Yes/No plus the machine coordinates."""
+    if position is None:
+        return _("No")
+    return _("Yes, at ({x}, {y})").format(x=position[0], y=position[1])
 
 
 _ORIGIN_LABELS = {
@@ -100,7 +109,7 @@ def _prefill_name(profile: DeviceProfile) -> str:
 
 
 class ReviewPage(WizardPage):
-    step_number = 11
+    step_number = 12
     title = _("Review & Name")
     subtitle = _("Final name and sanity check before creating the machine.")
 
@@ -128,10 +137,28 @@ class ReviewPage(WizardPage):
         self.content.append(self.warnings_group)
         self._warning_rows: list[Adw.ActionRow] = []
 
+        # Notes sit last and render at their natural height: the page
+        # is already inside a scroller, so a nested one would trap the
+        # notes in a small viewport of their own.
+        self.setup_notes_group = _makePreferencesGroup(
+            title=_("Notes"),
+            description=_(
+                "These notes remain available after setup in "
+                "Machine Settings → Notes."
+            ),
+        )
+        self.setup_notes_group.set_visible(False)
+        self.content.append(self.setup_notes_group)
+        self.setup_notes_view = MarkdownView()
+        self.setup_notes_group.add(self.setup_notes_view)
+
         self.set_ready(True)
 
     def enter(self, profile: DeviceProfile) -> None:
         self.name_row.set_text(_prefill_name(profile))
+        notes = profile.meta.notes or ""
+        self.setup_notes_view.set_text(notes)
+        self.setup_notes_group.set_visible(bool(notes.strip()))
         self._populate_summary(profile)
         self._populate_warnings(profile)
 
@@ -156,6 +183,8 @@ class ReviewPage(WizardPage):
 
         origin = mc.origin if mc.origin is not None else Origin.BOTTOM_LEFT
         origin_label = _ORIGIN_LABELS[origin]
+        orientation = mc.panel_orientation or PanelOrientation.NATIVE
+        orientation_label = orientation.label
         unit_system = mc.unit_system or UnitSystem.METRIC
         unit_system_label = _UNIT_SYSTEM_LABELS[unit_system]
         rows_data = [
@@ -163,11 +192,16 @@ class ReviewPage(WizardPage):
             (_("Connection"), _format_connection(mc)),
             (_("Work Area X×Y"), _format_tuple(mc.axis_extents)),
             (_("Origin"), origin_label),
+            (_("Panel Orientation"), orientation_label),
             (_("Unit System"), unit_system_label),
             (_("Max Travel Speed"), _format(mc.max_travel_speed)),
             (_("Max Cut Speed"), _format(mc.max_cut_speed)),
             (_("Acceleration"), _format(mc.acceleration)),
             (_("Home on Start"), _format_bool(mc.home_on_start)),
+            (
+                _("Park After Homing"),
+                _format_park_position(mc.park_position_after_homing),
+            ),
             (_("Heads"), str(len(mc.heads or []))),
             (_("Rotary Modules"), str(len(mc.rotary_modules or []))),
             (_("Cameras"), str(len(mc.cameras or []))),

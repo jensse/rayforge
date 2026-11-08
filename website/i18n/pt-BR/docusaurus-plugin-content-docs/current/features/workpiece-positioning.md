@@ -1,8 +1,7 @@
 # Guia de Posicionamento de Peça de Trabalho
 
-Este guia cobre todos os métodos disponíveis no Rayforge para posicionar com
-precisão sua peça de trabalho e alinhar seus designs antes de cortar ou
-gravar.
+Este guia cobre todos os métodos disponíveis no Rayforge para posicionar com precisão sua peça de
+trabalho e alinhar seus designs antes de cortar ou gravar.
 
 ## Visão Geral
 
@@ -10,8 +9,7 @@ O posicionamento preciso da peça de trabalho é essencial para:
 
 - **Prevenir desperdício**: Evitar cortar no local errado
 - **Alinhamento preciso**: Posicionar designs em materiais pré-impressos
-- **Resultados repetíveis**: Executar o mesmo trabalho várias vezes de forma
-  consistente
+- **Resultados repetíveis**: Executar o mesmo trabalho várias vezes de forma consistente
 - **Trabalhos de múltiplas peças**: Alinhar múltiplas peças em uma única folha
 
 O Rayforge fornece várias ferramentas complementares para posicionamento:
@@ -22,14 +20,14 @@ O Rayforge fornece várias ferramentas complementares para posicionamento:
 | **Enquadramento**          | Pré-visualizar limites          | Verificar se o design cabe no material            |
 | **Zero SCT**               | Definir origem                  | Posicionamento repetível                          |
 | **Sobreposição de Câmera** | Posicionamento visual do design | Alinhamento preciso em características existentes |
+| **Ponto de Referência**    | Escolher o ponto de ancoragem   | Alinhar esboços paramétricos                      |
 
 ---
 
 ## Modo Foco (Ponteiro Laser)
 
-O modo foco liga o laser em um nível de potência baixo, atuando como um
-"ponteiro laser" para ajudá-lo a ver exatamente onde a cabeça do laser está
-posicionada.
+O modo foco liga o laser em um nível de potência baixo, atuando como um "ponteiro laser" para
+ajudá-lo a ver exatamente onde a cabeça do laser está posicionada.
 
 ### Ativar o Modo Foco
 
@@ -39,11 +37,12 @@ posicionada.
 4. **Mover a cabeça do laser** para ver a posição do feixe no seu material
 5. **Clicar no botão Foco novamente** para desligar quando terminar
 
-:::warning Segurança
+<!-- prettier-ignore-start -->
+:::warning[Segurança]
 Mesmo em baixa potência, o laser pode danificar os olhos. Nunca olhe
-diretamente para o feixe ou aponte para superfícies reflexivas. Use proteção
-ocular adequada.
+diretamente para o feixe ou aponte para superfícies reflexivas. Use proteção ocular adequada.
 :::
+<!-- prettier-ignore-end -->
 
 ### Configurar a Potência de Foco
 
@@ -55,29 +54,78 @@ A potência de foco determina o quão brilhante o ponto laser aparece:
    - Valores típicos: 1-5% para a maioria dos materiais
    - Defina como 0 para desativar o recurso
 
-:::tip Encontrando a Potência Certa
-Comece com 1% e aumente gradualmente. O ponto deve ser visível, mas não
-deixar nenhuma marca no seu material. Materiais mais escuros podem precisar
-de maior potência para ver o ponto claramente.
+<!-- prettier-ignore-start -->
+:::tip[Encontrando a Potência Certa]
+Comece com 1% e aumente gradualmente. O ponto deve ser visível,
+mas não deixar nenhuma marca no seu material. Materiais mais escuros podem precisar de maior
+potência para ver o ponto claramente.
 :::
+<!-- prettier-ignore-end -->
 
 ### Quando Usar o Modo Foco
 
-- **Verificações rápidas de alinhamento**: Ver se o laser está
-  aproximadamente onde você espera
-- **Encontrar bordas do material**: Mover para os cantos para verificar o
-  posicionamento do material
-- **Definir origem SCT**: Posicionar laser no ponto zero desejado antes de
-  definir SCT
-- **Verificar posição inicial**: Verificar se o referenciamento funcionou
-  corretamente
+- **Verificações rápidas de alinhamento**: Ver se o laser está aproximadamente onde você espera
+- **Encontrar bordas do material**: Mover para os cantos para verificar o posicionamento do material
+- **Definir origem SCT**: Posicionar laser no ponto zero desejado antes de definir SCT
+- **Verificar posição inicial**: Verificar se o referenciamento funcionou corretamente
+
+---
+
+## Ponteiro Laser com Deslocamento
+
+Algumas máquinas têm um ponteiro laser dedicado (um pequeno laser de ponto vermelho) montado a uma
+distância fixa do feixe de corte. Quando você alinha o material usando o ponto do ponteiro, o feixe
+de corte na verdade ficaria deslocado desse ponto — a menos que o Rayforge compense.
+
+A configuração de laser [Deslocamento do Ponteiro](../machine/laser.md) permite informar essa
+distância e ativar ou desativar a compensação. Com ela ativada:
+
+- **Definir zero na posição atual** (e Zerar X / Zerar Y) coloca a origem de trabalho na posição do
+  ponto do ponteiro.
+- A tela mostra um ponto amarelo do ponteiro ao lado do ponto vermelho do feixe, marcando onde o
+  ponto do ponteiro está no seu material.
+- Uma chave de **alinhamento do ponteiro** aparece no popover de movimentação (o ícone de bússola ao
+  lado da leitura de posição).
+
+### Alinhamento do Ponteiro
+
+Enquanto o **alinhamento do ponteiro** está ativado, cada operação absoluta de mira — Mover para, os
+atalhos de canto, ir à origem do SCT, Clicar para mover, Mover cabeça para cá e enquadrar — faz o
+_ponto do ponteiro_ ficar na posição mirada, de modo que você pode posicionar o material
+inteiramente pelo ponto visível. A entrada de coordenadas do popover é pré-preenchida com a posição
+do ponto do ponteiro. Na tela, sempre há exatamente um ponto preenchido: o ponto do ponteiro é
+desenhado preenchido enquanto o alinhamento está ativado (o ponto do feixe é então um anel oco), e
+oco enquanto desativado (o ponto do feixe é preenchido).
+
+O fluxo de trabalho combina perfeitamente com o zeramento pelo ponto do ponteiro: a origem fica onde
+o ponteiro marcou, a mira desloca cada alvo pelo deslocamento, e a gravação não é deslocada —
+alinhar com o ponto e cortar com o feixe acabam sendo consistentes.
+
+Ao pressionar **Enviar** com o alinhamento ativado, um aviso aparece a cada envio (não há opção de
+"não perguntar novamente"). Você pode escolher:
+
+- **Simulação com ponteiro**: o trabalho é executado com o deslocamento do ponteiro aplicado, de
+  modo que o ponto do ponteiro traga o trajeto enquanto o feixe corre deslocado. O laser continua
+  disparando na potência do trabalho — certifique-se de que o feixe deslocado não possa atingir nada
+  que não deva.
+- **Desativar e gravar**: o alinhamento é desativado e o trabalho grava normalmente com o feixe nas
+  posições do SCT.
+- **Cancelar**.
+
+Movimentos de jog e trabalhos nunca são deslocados pela chave: o jog é relativo, e a saída G-code é
+idêntica com o alinhamento ativado ou não. A chave vale apenas para a sessão — não é salva no perfil
+da máquina e é redefinida ao trocar de máquina.
+
+O deslocamento do ponteiro é especialmente útil para material maior que a mesa laser (trabalho de
+passagem contínua), onde você alinha repetidamente o desenho a uma marca de referência no material
+em movimento.
 
 ---
 
 ## Enquadramento
 
-O enquadramento traça o retângulo delimitador do seu trabalho em potência
-baixa (ou zero), mostrando exatamente onde seu design será cortado ou gravado.
+O enquadramento traça o retângulo delimitador do seu trabalho em potência baixa (ou zero), mostrando
+exatamente onde seu design será cortado ou gravado.
 
 ### Como Enquadrar
 
@@ -88,31 +136,29 @@ baixa (ou zero), mostrando exatamente onde seu design será cortado ou gravado.
 
 ### Configurações de Enquadramento
 
-Configurar comportamento de enquadramento em **Configurações → Máquina →
-Laser**:
+Configurar comportamento de enquadramento em **Configurações → Máquina → Laser**:
 
-- **Velocidade de Enquadramento**: Quão rápido a cabeça se move durante o
-  enquadramento (mais lento = mais fácil de ver)
+- **Velocidade de Enquadramento**: Quão rápido a cabeça se move durante o enquadramento (mais lento
+  = mais fácil de ver)
 - **Potência de Enquadramento**: Potência do laser durante o enquadramento
   - Defina como 0 para enquadramento a ar (laser desligado, apenas movimento)
   - Defina como 1-5% para um rastro visível no material
 
-:::tip Enquadramento a Ar vs. Baixa Potência
-
-- **Enquadramento a ar (0% potência)**: Seguro para qualquer material, mas
-  você só vê o movimento da cabeça
-- **Enquadramento de baixa potência**: Deixa uma marca visível fraca, útil
-  para alinhamento preciso em materiais escuros
-  :::
+<!-- prettier-ignore-start -->
+:::tip[Enquadramento a Ar vs. Baixa Potência]
+- **Enquadramento a ar (0% potência)**: Seguro para qualquer material, mas você só vê o movimento da
+  cabeça
+- **Enquadramento de baixa potência**: Deixa uma marca visível fraca, útil para alinhamento preciso
+  em materiais escuros
+:::
+<!-- prettier-ignore-end -->
 
 ### Quando Enquadrar
 
 - **Antes de cada trabalho**: Verificação rápida de que o design cabe
-- **Após mudanças de posição**: Confirmar que o novo posicionamento está
-  correto
+- **Após mudanças de posição**: Confirmar que o novo posicionamento está correto
 - **Materiais caros**: Verificar duas vezes antes de se comprometer
-- **Trabalhos de múltiplas peças**: Verificar que todas as peças cabem no
-  material
+- **Trabalhos de múltiplas peças**: Verificar que todas as peças cabem no material
 
 Veja [Enquadrando Seu Trabalho](framing-your-job) para mais detalhes.
 
@@ -120,14 +166,12 @@ Veja [Enquadrando Seu Trabalho](framing-your-job) para mais detalhes.
 
 ## Definir Zero SCT (Sistema de Coordenadas de Trabalho)
 
-Os Sistemas de Coordenadas de Trabalho (SCT) permitem que você defina "pontos
-zero" personalizados para seus trabalhos. Isso facilita alinhar trabalhos à
-posição do seu material.
+Os Sistemas de Coordenadas de Trabalho (SCT) permitem que você defina "pontos zero" personalizados
+para seus trabalhos. Isso facilita alinhar trabalhos à posição do seu material.
 
 ### Configuração Rápida de SCT
 
-1. **Mover a cabeça do laser** para o canto do seu material (ou ponto de
-   origem desejado)
+1. **Mover a cabeça do laser** para o canto do seu material (ou ponto de origem desejado)
 2. **Abrir o Painel de Controle** (`Ctrl+L`)
 3. **Selecionar um SCT** (G54 é o sistema de coordenadas de trabalho padrão)
 4. **Clicar em Zero X e Zero Y** para definir a posição atual como origem
@@ -143,13 +187,16 @@ O Rayforge usa vários sistemas de coordenadas:
 | **G54**     | Sistema de coordenadas de trabalho 1 (padrão)           |
 | **G55-G59** | Sistemas de coordenadas de trabalho adicionais          |
 
-:::tip Múltiplas Áreas de Trabalho
-Use slots SCT diferentes para diferentes posições de fixação. Por exemplo:
+<!-- prettier-ignore-start -->
+:::tip[Múltiplas Áreas de Trabalho]
+Use slots SCT diferentes para diferentes posições de fixação. Por
+exemplo:
 
 - G54 para o lado esquerdo da sua mesa
 - G55 para o lado direito
 - G56 para um acessório rotativo
-  :::
+:::
+<!-- prettier-ignore-end -->
 
 ### Quando Definir Zero SCT
 
@@ -158,50 +205,79 @@ Use slots SCT diferentes para diferentes posições de fixação. Por exemplo:
 - **Trabalhos repetíveis**: Mesmo trabalho, diferentes posições
 - **Lotes de produção**: Posicionamento consistente através de múltiplas peças
 
-Veja [Sistemas de Coordenadas de Trabalho](../general-info/coordinate-systems.md)
-para documentação completa.
+Veja [Sistemas de Coordenadas de Trabalho](../general-info/coordinate-systems.md) para documentação
+completa.
+
+---
+
+## Ponto de Referência
+
+Por padrão, os campos **Posição X** e **Posição Y** no painel de propriedades se referem ao canto
+inferior esquerdo da caixa delimitadora da peça. Para esboços paramétricos, esse geralmente não é o
+ponto de ancoragem mais útil: quando um parâmetro altera o tamanho do esboço, uma posição baseada no
+canto faz o design parecer se deslocar em relação a todo o resto.
+
+A lista suspensa **Posição relativa a** no painel de propriedades permite escolher a qual ponto os
+campos de posição se referem:
+
+| Opção                   | Refere-se a                                              |
+| ----------------------- | -------------------------------------------------------- |
+| **Canto**               | O canto inferior esquerdo da caixa delimitadora (padrão) |
+| **Centro**              | O centro da caixa delimitadora                           |
+| **Ponto de referência** | A origem lógica da geometria, ex. a origem do esboço     |
+
+![A lista «Posição relativa a» no painel de propriedades](/screenshots/main-item-properties.webp)
+
+O ponto de referência escolhido também é o ponto que permanece fixo ao redimensionar a peça e ao
+regenerar um esboço com parâmetros alterados. A opção **Ponto de referência** está disponível apenas
+para peças cuja origem define um, como esboços, onde é a origem do esboço.
+
+<!-- prettier-ignore-start -->
+:::tip[Alinhando esboços paramétricos]
+Para manter uma gravação registrada dentro de um contorno de corte: vincule ambos os esboços à
+origem do esboço, configure ambas as peças como **Ponto de referência** e informe a mesma posição
+X/Y para ambas. Os esboços permanecem alinhados não importa como os parâmetros mudem.
+:::
+<!-- prettier-ignore-end -->
 
 ---
 
 ## Posicionamento Baseado em Câmera
 
-A sobreposição de câmera mostra uma visualização ao vivo do seu material com
-seu design sobreposto, permitindo alinhamento visual preciso.
+A sobreposição de câmera mostra uma visualização ao vivo do seu material com seu design sobreposto,
+permitindo alinhamento visual preciso.
 
 ### Configurar a Câmera
 
 1. **Conectar uma câmera USB** acima da sua área de trabalho
 2. Vá para **Configurações → Câmera** e adicione seu dispositivo de câmera
 3. **Ativar a câmera** para ver a sobreposição na sua tela
-4. **Alinhar a câmera** usando o procedimento de alinhamento (necessário
-   para posicionamento preciso)
+4. **Alinhar a câmera** usando o procedimento de alinhamento (necessário para posicionamento
+   preciso)
 
 ### Alinhamento da Câmera
 
-O alinhamento da câmera mapeia os pixels da câmera para coordenadas do mundo
-real:
+O alinhamento da câmera mapeia os pixels da câmera para coordenadas do mundo real:
 
 1. Abrir **Câmera → Alinhar Câmera**
-2. Colocar marcadores de alinhamento em posições conhecidas (pelo menos 4
-   pontos)
+2. Colocar marcadores de alinhamento em posições conhecidas (pelo menos 4 pontos)
 3. Inserir as coordenadas X/Y do mundo real para cada ponto
 4. Clicar em **Aplicar** para calcular a transformação
 
-:::tip Precisão do Alinhamento
-
+<!-- prettier-ignore-start -->
+:::tip[Precisão do Alinhamento]
 - Use pontos distribuídos por toda sua área de trabalho
 - Meça as coordenadas do mundo cuidadosamente com uma régua
-- Use posições de máquina (mover para coordenadas conhecidas) para maior
-  precisão
-  :::
+- Use posições de máquina (mover para coordenadas conhecidas) para maior precisão
+:::
+<!-- prettier-ignore-end -->
 
 ### Posicionamento com Sobreposição de Câmera
 
 1. **Ativar a sobreposição de câmera** para ver seu material
 2. **Importar seu design**
 3. **Arrastar o design** para alinhar com características visíveis na câmera
-4. **Ajuste fino** usando as teclas de seta para posicionamento perfeito ao
-   pixel
+4. **Ajuste fino** usando as teclas de seta para posicionamento perfeito ao pixel
 5. **Enquadrar para verificar** antes de executar o trabalho
 
 ### Quando Usar Posicionamento com Câmera
@@ -238,6 +314,32 @@ Para posicionamento preciso em materiais pré-impressos ou marcados:
 4. **Importar e posicionar design** visualmente na imagem da câmera
 5. **Desativar câmera** e enquadrar para verificar
 6. **Executar o trabalho**
+
+### Fluxo de Trabalho de Passagem Contínua
+
+Para material mais longo que a mesa laser (alimentado pela máquina em segmentos), o **deslocamento
+do ponteiro** elimina o cálculo manual:
+
+1. **Corte o segmento 1** do seu desenho normalmente.
+2. **Alimente o material para frente** pela passagem contínua para que o próximo segmento fique
+   sobre a mesa.
+3. **Movimente a máquina** até o ponto do ponteiro marcar um ponto de referência no material (por
+   exemplo, um canto de um elemento já cortado).
+4. **Defina o zero do SCT** (ou Zerar X / Zerar Y) — com o deslocamento do ponteiro ativado, a
+   origem fica exatamente onde o ponteiro apontou.
+5. **Posicione o próximo segmento** do desenho em relação a essa origem na tela.
+6. **Enquadre para verificar**, então **execute o trabalho**.
+7. Repita a partir do passo 2 para cada segmento restante.
+
+### Fluxo de Trabalho de Esboços Paramétricos
+
+Para trabalhos que combinam um esboço de corte com um esboço de gravação paramétrico:
+
+1. **Vincule ambos os esboços** à origem do esboço (ex. centralize a geometria na origem)
+2. **Posicione ambas as peças** na tela e defina **Posição relativa a → Ponto de referência**
+3. **Informe a mesma posição X/Y** para ambas as peças
+4. **Ajuste os parâmetros** conforme necessário — os esboços permanecem registrados entre si
+5. **Enquadre o trabalho** para verificar o posicionamento
 
 ### Fluxo de Trabalho de Produção
 
@@ -279,20 +381,14 @@ Para executar o mesmo trabalho em diferentes locais:
 - **Executar alinhamento de câmera novamente** com mais pontos de referência
 - **Verificar montagem da câmera** - ela pode ter se movido
 - **Verificar se as coordenadas do mundo** foram medidas com precisão
-- **Veja solução de problemas da câmera** na documentação de Integração de
-  Câmera
+- **Veja solução de problemas da câmera** na documentação de Integração de Câmera
 
 ---
 
 ## Tópicos Relacionados
 
-- [Enquadrando Seu Trabalho](framing-your-job) - Documentação detalhada de
-  enquadramento
-- [Sistemas de Coordenadas de Trabalho](../general-info/coordinate-systems.md) -
-  Referência SCT
-- [Integração de Câmera](../machine/camera.md) - Configuração e alinhamento de
-  câmera
-- [Painel de Controle](../ui/bottom-panel.md) - Controles de movimento e gestão
-  SCT
-- [Guia de Início Rápido](../getting-started/quick-start.md) - Fluxo de trabalho
-  básico
+- [Enquadrando Seu Trabalho](framing-your-job) - Documentação detalhada de enquadramento
+- [Sistemas de Coordenadas de Trabalho](../general-info/coordinate-systems.md) - Referência SCT
+- [Integração de Câmera](../machine/camera.md) - Configuração e alinhamento de câmera
+- [Painel de Controle](../ui/bottom-panel.md) - Controles de movimento e gestão SCT
+- [Guia de Início Rápido](../getting-started/quick-start.md) - Fluxo de trabalho básico

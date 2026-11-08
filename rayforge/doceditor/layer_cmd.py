@@ -4,6 +4,7 @@ import logging
 from gettext import gettext as _
 from typing import TYPE_CHECKING
 
+from ..context import get_context
 from ..core.color import pick_unused_color
 from ..core.group import Group
 from ..core.item import DocItem
@@ -122,6 +123,9 @@ class AddLayerAndSetActiveCommand(Command):
 
         new_name = f"{base_name} {highest_num + 1}"
         layer = Layer(name=new_name)
+        layer.set_stock_material_uid(
+            get_context().material_mgr.get_default_material().uid
+        )
 
         used = {layer.color for layer in self._editor.doc.layers}
         layer.set_color(pick_unused_color(used))
@@ -272,6 +276,19 @@ class LayerCmd:
             new_value=visible,
             setter_method_name="set_visible",
             name=_("Toggle layer visibility"),
+        )
+        self._editor.history_manager.execute(cmd)
+
+    def set_layer_stock_material(self, layer: Layer, material_uid: str | None):
+        """Sets a layer's rotary stock material with an undoable command."""
+        if material_uid == layer.stock_material_uid:
+            return
+        cmd = ChangePropertyCommand(
+            target=layer,
+            property_name="stock_material_uid",
+            new_value=material_uid,
+            setter_method_name="set_stock_material_uid",
+            name=_("Change layer stock material"),
         )
         self._editor.history_manager.execute(cmd)
 

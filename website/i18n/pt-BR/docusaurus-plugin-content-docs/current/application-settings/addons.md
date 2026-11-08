@@ -1,14 +1,12 @@
 # Addons
 
-![Configurações de Addons](/screenshots/app-settings-addons.png)
+![Configurações de Addons](/screenshots/app-settings-addons.webp)
 
-A página Addons mostra addons de extensão instalados e permite
-gerenciá-los.
+A página Addons mostra addons de extensão instalados e permite gerenciá-los.
 
 ## Visão Geral
 
-Addons são extensões que adicionam funcionalidade ao Rayforge. Eles podem
-fornecer:
+Addons são extensões que adicionam funcionalidade ao Rayforge. Eles podem fornecer:
 
 - Novas operações
 - Filtros de importação/exportação
@@ -31,13 +29,13 @@ A lista de addons mostra todos os addons instalados com:
 
 1. Clique no botão **Instalar**
 2. Selecione um arquivo de addon (`.zip` ou repositório de addon)
-3. Confirme a instalação
+3. Confirme a instalação (addons da comunidade exigem confirmar um aviso de confiança)
 4. Aguarde a conclusão da instalação
 
 ### Atualizando Addons
 
-Quando atualizações estão disponíveis, um indicador aparece no diálogo do Registro de Addons.
-Clique em **Atualizar** para instalar as atualizações disponíveis.
+Quando atualizações estão disponíveis, um indicador aparece no diálogo do Registro de Addons. Clique
+em **Atualizar** para instalar as atualizações disponíveis.
 
 ### Removendo Addons
 
@@ -45,9 +43,27 @@ Clique em **Atualizar** para instalar as atualizações disponíveis.
 2. Clique no botão **Remover**
 3. Confirme a remoção
 
+<!-- prettier-ignore-start -->
 :::warning
 Remover um addon pode afetar documentos que usam seus recursos.
 :::
+<!-- prettier-ignore-end -->
+
+## Addons da Comunidade
+
+Addons que não foram criados pela equipe Rayforge são marcados como addons da comunidade com um
+ícone dedicado nas listas de addons.
+
+Ao instalar um addon da comunidade, um diálogo de confirmação explica que o addon não é fornecido
+pelo próprio Rayforge e mostra um link para o repositório do addon. Abra o link no seu navegador
+para revisar o código e o autor antes de continuar.
+
+<!-- prettier-ignore-start -->
+:::warning
+Os addons têm o mesmo acesso ao seu computador e aos seus arquivos que o próprio Rayforge. Instale
+addons da comunidade apenas se você confiar nos autores.
+:::
+<!-- prettier-ignore-end -->
 
 ## Fontes de Addons
 

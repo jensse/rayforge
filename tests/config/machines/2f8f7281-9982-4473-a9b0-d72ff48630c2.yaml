@@ -18,13 +18,6 @@ machine:
       - 140.0
       letter: Y
       resolution: 0.01
-    - axis_type: linear
-      direction: normal
-      extents:
-      - -50
-      - 50
-      letter: Z
-      resolution: 0.01
     - axis_type: rotary
       direction: normal
       extents:
@@ -47,9 +40,9 @@ machine:
     - 0.0
   - name: G55
     offset:
-    - 34.99999999999996
-    - 66.50000000000003
-    - 34.00000000000006
+    - 35.0
+    - 65.5
+    - 34.0
   - name: G56
     offset:
     - 0.0
@@ -87,6 +80,7 @@ machine:
     frame_speed: 0
     laser_type: diode
     max_power: 1000
+    max_power_watts: 40.0
     max_pulse_width: 500
     max_pwm_frequency: 5000
     min_pulse_width: 5
@@ -94,7 +88,6 @@ machine:
     name: Laser Head
     pulse_width: 50
     pwm_frequency: 500
-    raster_color: '#000000'
     spot_size_mm:
     - 0.1
     - 0.1
@@ -118,6 +111,7 @@ machine:
     - 1.0
     type: LaserHead
     uid: d9277039-5ccc-456a-b3a6-5054b3c363b0
+    wavelength_nm: 455.0
   home_on_start: false
   hookmacros: {}
   machine_hours:
@@ -150,16 +144,19 @@ machine:
     shape: rect
     uid: a1b2c3d4-0002-4000-8000-000000000002
   origin: bottom_left
+  panel_orientation: native
+  placeholder: false
   reverse_x_axis: false
   reverse_y_axis: false
   reverse_z_axis: false
+  reviewed_profile_hash: null
   rotary_enabled_default: false
   rotary_modules:
   - axis: A
     axis_position:
-    - -33.0
-    - -4.0
-    - 25.0
+    - -32.5
+    - -4.5
+    - 23.5
     default_diameter: 25.0
     max_workpiece_length: 60.0
     mode: true_4th_axis
@@ -184,8 +181,10 @@ machine:
     - 0.0
     - 1.0
     uid: bc50197d-9f95-44c2-be99-18f66026e5b1
+  schema_version: 1
   single_axis_homing_enabled: true
   soft_limits: null
+  source_profile_id: null
   speeds:
     acceleration: 1000
     max_cut_speed: 1000
@@ -194,6 +193,8 @@ machine:
   supports_curves: false
   units:
     unit_system: metric
+  usb_pid: null
+  usb_vid: null
   wcs_origin_is_workarea_origin: false
   work_margins:
   - 10.0

@@ -1,14 +1,19 @@
 ---
-description: "Add-on hooks in Rayforge - lifecycle events and extension points for integrating custom functionality into the laser cutting workflow."
+description:
+  "Add-on hooks in Rayforge - lifecycle events and extension points for integrating custom
+  functionality into the laser cutting workflow."
 ---
 
 # Addon Hooks
 
-Hooks are the connection points between your addon and Rayforge. When something happens in the application—a step is created, a dialog opens, or the window initializes—Rayforge calls any registered hooks so your addon can respond.
+Hooks are the connection points between your addon and Rayforge. When something happens in the
+application—a step is created, a dialog opens, or the window initializes—Rayforge calls any
+registered hooks so your addon can respond.
 
 ## How Hooks Work
 
-Rayforge uses [pluggy](https://pluggy.readthedocs.io/) for its hook system. To implement a hook, decorate a function with `@pluggy.HookimplMarker("rayforge")`:
+Rayforge uses [pluggy](https://pluggy.readthedocs.io/) for its hook system. To implement a hook,
+decorate a function with `@pluggy.HookimplMarker("rayforge")`:
 
 ```python
 import pluggy
@@ -29,9 +34,12 @@ These hooks handle the overall lifecycle of your addon.
 
 ### `rayforge_init(context)`
 
-This is your main entry point. Rayforge calls this hook after the application context is fully initialized, meaning all managers, configs, and hardware are ready. Use this for general setup, logging, or injecting UI elements.
+This is your main entry point. Rayforge calls this hook after the application context is fully
+initialized, meaning all managers, configs, and hardware are ready. Use this for general setup,
+logging, or injecting UI elements.
 
-The `context` parameter is a `RayforgeContext` instance that gives you access to everything in Rayforge. See [Accessing Rayforge Data](./addon-overview.md#accessing-rayforges-data) for details.
+The `context` parameter is a `RayforgeContext` instance that gives you access to everything in
+Rayforge. See [Accessing Rayforge Data](./addon-overview.md#accessing-rayforges-data) for details.
 
 ```python
 @hookimpl
@@ -44,7 +52,8 @@ def rayforge_init(context):
 
 ### `on_unload()`
 
-Rayforge calls this when your addon is being disabled or unloaded. Use it to clean up resources, close connections, or unregister handlers.
+Rayforge calls this when your addon is being disabled or unloaded. Use it to clean up resources,
+close connections, or unregister handlers.
 
 ```python
 @hookimpl
@@ -55,7 +64,8 @@ def on_unload():
 
 ### `main_window_ready(main_window)`
 
-This hook fires when the main window is fully initialized. It's useful for registering UI pages, commands, or other components that need the main window to exist first.
+This hook fires when the main window is fully initialized. It's useful for registering UI pages,
+commands, or other components that need the main window to exist first.
 
 The `main_window` parameter is the `MainWindow` instance.
 
@@ -67,13 +77,113 @@ def main_window_ready(main_window):
     main_window.add_page("my-page", MyCustomPage())
 ```
 
+## Job Monitoring Hooks
+
+These hooks report the lifecycle and progress of jobs running on a machine, so addons can react when
+a job starts, progresses, pauses, resumes, or finishes—for example, to run external commands or
+update a smart-home system.
+
+All of them receive a `JobStatus` snapshot (`rayforge.machine.job_status.JobStatus`), an immutable
+object with these fields:
+
+- `machine_id` and `machine_name`: identify the machine running the job
+- `kind`: `JobKind.SEND` for burn jobs, `JobKind.FRAME` for outline traces
+- `phase`: `JobPhase.RUNNING` or `JobPhase.PAUSED`
+- `started_at`: wall-clock time (seconds since the epoch) when the job started
+- `elapsed_seconds`: seconds elapsed since the job started
+- `total_distance` and `traveled_distance`: total and completed path length in millimeters
+- `progress_fraction`: completed fraction of the job, from `0.0` to `1.0`
+- `eta_seconds`: estimated remaining seconds, or `None` when unknown
+- `estimated_seconds`: total modeled job duration in seconds, or `None` when unknown
+
+Handlers run on the main thread and must return quickly; hand longer work (such as launching
+subprocesses or network calls) to a background thread.
+
+### `on_job_started(status)`
+
+Called when a job starts executing on a machine.
+
+```python
+@hookimpl
+def on_job_started(status):
+    logger.info(f"Job on {status.machine_name} started")
+```
+
+### `on_job_updated(status)`
+
+Called with progress updates while a job runs, at most about once per second.
+
+```python
+@hookimpl
+def on_job_updated(status):
+    print(
+        f"Progress: {status.progress_fraction:.0%}, "
+        f"ETA {status.eta_seconds}s"
+    )
+```
+
+### `on_job_paused(status)` / `on_job_resumed(status)`
+
+Called when the running job enters or leaves a feed hold (pause).
+
+### `on_job_finished(status, outcome, message="")`
+
+Called when a job finishes, regardless of how it ended. The `outcome` argument is a `JobOutcome`
+member—`COMPLETED`, `CANCELLED`, or `FAILED`—and `message` carries error details when the outcome is
+`FAILED`. For completed jobs, the snapshot's `progress_fraction` is `1.0`.
+
+```python
+@hookimpl
+def on_job_finished(status, outcome, message=""):
+    if outcome == JobOutcome.FAILED:
+        notify(f"Job failed: {message}")
+    else:
+        notify(f"Job {outcome.name.lower()} on {status.machine_name}")
+```
+
+The latest snapshot can also be polled between events: while a job runs, `machine.current_job`
+returns its `JobStatus`, or `None` when no job is running.
+
+Here is a complete addon that runs a shell command on every job state change:
+
+```python
+import subprocess
+
+import pluggy
+
+from rayforge.machine.job_status import JobOutcome
+
+hookimpl = pluggy.HookimplMarker("rayforge")
+
+
+@hookimpl
+def on_job_started(status):
+    subprocess.Popen(["/usr/local/bin/notify-ha", "started"])
+
+
+@hookimpl
+def on_job_paused(status):
+    subprocess.Popen(["/usr/local/bin/notify-ha", "paused"])
+
+
+@hookimpl
+def on_job_resumed(status):
+    subprocess.Popen(["/usr/local/bin/notify-ha", "resumed"])
+
+
+@hookimpl
+def on_job_finished(status, outcome, message=""):
+    subprocess.Popen(["/usr/local/bin/notify-ha", outcome.name.lower()])
+```
+
 ## Registration Hooks
 
 These hooks let you register custom components with Rayforge's various registries.
 
 ### `register_machines(machine_manager)`
 
-Use this to register new machine drivers. The `machine_manager` is a `MachineManager` instance that manages all machine configurations.
+Use this to register new machine drivers. The `machine_manager` is a `MachineManager` instance that
+manages all machine configurations.
 
 ```python
 @hookimpl
@@ -84,7 +194,8 @@ def register_machines(machine_manager):
 
 ### `register_steps(step_registry)`
 
-Register custom step types that appear in the operations panel. The `step_registry` is a `StepRegistry` instance.
+Register custom step types that appear in the operations panel. The `step_registry` is a
+`StepRegistry` instance.
 
 ```python
 @hookimpl
@@ -95,7 +206,8 @@ def register_steps(step_registry):
 
 ### `register_producers(producer_registry)`
 
-Register custom ops producers that generate toolpaths. The `producer_registry` is a `ProducerRegistry` instance.
+Register custom ops producers that generate toolpaths. The `producer_registry` is a
+`ProducerRegistry` instance.
 
 ```python
 @hookimpl
@@ -106,7 +218,8 @@ def register_producers(producer_registry):
 
 ### `register_transformers(transformer_registry)`
 
-Register custom ops transformers for post-processing operations. Transformers modify operations after producers generate them. The `transformer_registry` is a `TransformerRegistry` instance.
+Register custom ops transformers for post-processing operations. Transformers modify operations
+after producers generate them. The `transformer_registry` is a `TransformerRegistry` instance.
 
 ```python
 @hookimpl
@@ -117,7 +230,8 @@ def register_transformers(transformer_registry):
 
 ### `register_commands(command_registry)`
 
-Register editor commands that extend the document editor's functionality. The `command_registry` is a `CommandRegistry` instance.
+Register editor commands that extend the document editor's functionality. The `command_registry` is
+a `CommandRegistry` instance.
 
 ```python
 @hookimpl
@@ -128,7 +242,8 @@ def register_commands(command_registry):
 
 ### `register_actions(action_registry)`
 
-Register window actions with optional menu and toolbar placement. Actions are how you add buttons, menu items, and keyboard shortcuts. The `action_registry` is an `ActionRegistry` instance.
+Register window actions with optional menu and toolbar placement. Actions are how you add buttons,
+menu items, and keyboard shortcuts. The `action_registry` is an `ActionRegistry` instance.
 
 ```python
 from gi.repository import Gio
@@ -138,7 +253,7 @@ from rayforge.ui_gtk.action_registry import MenuPlacement, ToolbarPlacement
 def register_actions(action_registry):
     action = Gio.SimpleAction.new("my-action", None)
     action.connect("activate", on_my_action_activated)
-    
+
     action_registry.register(
         action_name="my-action",
         action=action,
@@ -153,7 +268,9 @@ def register_actions(action_registry):
 
 ### `register_layout_strategies(layout_registry)`
 
-Register custom layout strategies for arranging content in the document. The `layout_registry` is a `LayoutStrategyRegistry` instance. Note that UI metadata like labels and shortcuts should be registered via `register_actions`, not here.
+Register custom layout strategies for arranging content in the document. The `layout_registry` is a
+`LayoutStrategyRegistry` instance. Note that UI metadata like labels and shortcuts should be
+registered via `register_actions`, not here.
 
 ```python
 @hookimpl
@@ -164,7 +281,8 @@ def register_layout_strategies(layout_registry):
 
 ### `register_asset_types(asset_type_registry)`
 
-Register custom asset types that can be stored in documents. This enables dynamic deserialization of addon-provided assets. The `asset_type_registry` is an `AssetTypeRegistry` instance.
+Register custom asset types that can be stored in documents. This enables dynamic deserialization of
+addon-provided assets. The `asset_type_registry` is an `AssetTypeRegistry` instance.
 
 ```python
 @hookimpl
@@ -175,7 +293,8 @@ def register_asset_types(asset_type_registry):
 
 ### `register_renderers(renderer_registry)`
 
-Register custom renderers for displaying your asset types in the UI. The `renderer_registry` is a `RendererRegistry` instance.
+Register custom renderers for displaying your asset types in the UI. The `renderer_registry` is a
+`RendererRegistry` instance.
 
 ```python
 @hookimpl
@@ -186,7 +305,8 @@ def register_renderers(renderer_registry):
 
 ### `register_exporters(exporter_registry)`
 
-Register file exporters for custom export formats. The `exporter_registry` is an `ExporterRegistry` instance.
+Register file exporters for custom export formats. The `exporter_registry` is an `ExporterRegistry`
+instance.
 
 ```python
 @hookimpl
@@ -197,7 +317,8 @@ def register_exporters(exporter_registry):
 
 ### `register_importers(importer_registry)`
 
-Register file importers for custom import formats. The `importer_registry` is an `ImporterRegistry` instance.
+Register file importers for custom import formats. The `importer_registry` is an `ImporterRegistry`
+instance.
 
 ```python
 @hookimpl
@@ -208,7 +329,8 @@ def register_importers(importer_registry):
 
 ### `register_material_libraries(library_manager)`
 
-Register additional material libraries. Call `library_manager.add_library_from_path(path)` to register directories containing material YAML files. By default, registered libraries are read-only.
+Register additional material libraries. Call `library_manager.add_library_from_path(path)` to
+register directories containing material YAML files. By default, registered libraries are read-only.
 
 ```python
 @hookimpl
@@ -224,9 +346,11 @@ These hooks let you extend existing UI components.
 
 ### `step_settings_loaded(dialog, step, producer)`
 
-Rayforge calls this when a step settings dialog is being populated. You can add custom widgets to the dialog based on the step's producer type.
+Rayforge calls this when a step settings dialog is being populated. You can add custom widgets to
+the dialog based on the step's producer type.
 
-The `dialog` is a `GeneralStepSettingsView` instance. The `step` is the `Step` being configured. The `producer` is the `OpsProducer` instance, or `None` if not available.
+The `dialog` is a `GeneralStepSettingsView` instance. The `step` is the `Step` being configured. The
+`producer` is the `OpsProducer` instance, or `None` if not available.
 
 ```python
 @hookimpl
@@ -239,9 +363,11 @@ def step_settings_loaded(dialog, step, producer):
 
 ### `transformer_settings_loaded(dialog, step, transformer)`
 
-Called when post-processing settings are being populated. Add custom widgets for your transformers here.
+Called when post-processing settings are being populated. Add custom widgets for your transformers
+here.
 
-The `dialog` is a `PostProcessingSettingsView` instance. The `step` is the `Step` being configured. The `transformer` is the `OpsTransformer` instance.
+The `dialog` is a `PostProcessingSettingsView` instance. The `step` is the `Step` being configured.
+The `transformer` is the `OpsTransformer` instance.
 
 ```python
 @hookimpl
@@ -253,11 +379,17 @@ def transformer_settings_loaded(dialog, step, transformer):
 
 ## API Version History
 
-Hooks are versioned to maintain backwards compatibility. When new hooks are added or existing ones change, the API version is incremented. Your addon's `api_version` field must be at least the minimum supported version.
+Hooks are versioned to maintain backwards compatibility. When new hooks are added or existing ones
+change, the API version is incremented. Your addon's `api_version` field must be at least the
+minimum supported version.
 
-The current API version is 9. Here's what changed in recent versions:
+The current API version is 24. Here's what changed in recent versions:
 
-**Version 9** added `main_window_ready`, `register_exporters`, `register_importers`, and `register_renderers`.
+**Version 24** added the job monitoring hooks `on_job_started`, `on_job_updated`, `on_job_paused`,
+`on_job_resumed`, and `on_job_finished`, plus the `Machine.current_job` pull API.
+
+**Version 9** added `main_window_ready`, `register_exporters`, `register_importers`, and
+`register_renderers`.
 
 **Version 8** added `register_asset_types` for custom asset types.
 
@@ -265,10 +397,13 @@ The current API version is 9. Here's what changed in recent versions:
 
 **Version 6** added `register_transformers`.
 
-**Version 5** replaced `register_step_widgets` with `step_settings_loaded` and `transformer_settings_loaded`.
+**Version 5** replaced `register_step_widgets` with `step_settings_loaded` and
+`transformer_settings_loaded`.
 
-**Version 4** removed `register_menu_items` and consolidated action registration into `register_actions`.
+**Version 4** removed `register_menu_items` and consolidated action registration into
+`register_actions`.
 
 **Version 2** added `register_layout_strategies`.
 
-**Version 1** was the initial release with core hooks for addon lifecycle, resource registration, and UI integration.
+**Version 1** was the initial release with core hooks for addon lifecycle, resource registration,
+and UI integration.

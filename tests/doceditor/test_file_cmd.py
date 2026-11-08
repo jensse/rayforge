@@ -11,7 +11,11 @@ from rayforge.core.layer import Layer
 from rayforge.core.source_asset import SourceAsset
 from rayforge.core.step import Step
 from rayforge.core.stock_asset import StockAsset
-from rayforge.core.vectorization_spec import TraceSpec
+from rayforge.core.vectorization_spec import (
+    LayerImportMode,
+    PassthroughSpec,
+    TraceSpec,
+)
 from rayforge.core.workpiece import WorkPiece
 from rayforge.doceditor.editor import DocEditor
 from rayforge.doceditor.file_cmd import (
@@ -28,14 +32,17 @@ from rayforge.image import (
     LayerInfo,
     ParsingResult,
 )
+from rayforge.image.dxf.importer import DxfImporter
+from rayforge.image.lightburn.importer import LightBurnImporter
+from rayforge.image.ruida.importer import RuidaImporter
 from rayforge.image.svg.renderer import SVG_RENDERER
-from rayforge.machine.models.machine import Machine
-from rayforge.machine.models.spindle import SpindleHead
-from rayforge.pipeline.coordspace import (
+from rayforge.machine.models.coordspace import (
     AxisDirection,
     MachineSpace,
     OriginCorner,
 )
+from rayforge.machine.models.machine import Machine
+from rayforge.machine.models.spindle import SpindleHead
 from rayforge.shared.tasker.manager import TaskManager
 
 
@@ -421,7 +428,11 @@ class TestFitAndPositionAtReferenceOrigin:
             mock_machine = MagicMock()
             mock_machine.axis_extents = (200, 150)
             mock_machine.work_area = (0, 0, 200, 150)
-            mock_machine.get_reference_position_world.return_value = (0, 0)
+            mock_machine.panel.reference_position_world = (0, 0)
+            mock_machine.panel.world_position_from_origin.return_value = (
+                0,
+                0,
+            )
             mock_machine.get_coordinate_space.return_value = MachineSpace(
                 origin=OriginCorner.BOTTOM_LEFT,
                 x_positive_direction=AxisDirection.POSITIVE_RIGHT,
@@ -446,7 +457,11 @@ class TestFitAndPositionAtReferenceOrigin:
             mock_machine = MagicMock()
             mock_machine.axis_extents = (200, 150)
             mock_machine.work_area = (0, 0, 200, 150)
-            mock_machine.get_reference_position_world.return_value = (10, 20)
+            mock_machine.panel.reference_position_world = (10, 20)
+            mock_machine.panel.world_position_from_origin.return_value = (
+                10,
+                20,
+            )
             mock_machine.get_coordinate_space.return_value = MachineSpace(
                 origin=OriginCorner.BOTTOM_LEFT,
                 x_positive_direction=AxisDirection.POSITIVE_RIGHT,
@@ -495,6 +510,105 @@ class TestCommitItemsToDocument:
 
         assert source in file_cmd._editor.doc.get_all_assets()
         assert sample_layer in file_cmd._editor.doc.children
+
+    @staticmethod
+    def _imported_layer(name: str) -> tuple[Layer, WorkPiece]:
+        wp = WorkPiece(name=name)
+        layer = Layer(name=name)
+        layer.add_child(wp)
+        return layer, wp
+
+    def test_commit_maps_to_default_layer_and_renames(self, file_cmd):
+        """Map to Existing renames a default-named layer to the imported
+        layer name."""
+        source = SourceAsset(
+            source_file=Path("chaveiros.svg"),
+            original_data=b"<svg></svg>",
+            renderer=SVG_RENDERER,
+        )
+        imported, wp = self._imported_layer("chaveiro")
+        spec = PassthroughSpec(
+            layer_import_mode=LayerImportMode.MAP_TO_EXISTING
+        )
+
+        file_cmd._commit_items_to_document(
+            [imported],
+            source,
+            Path("chaveiros.svg"),
+            vectorization_spec=spec,
+        )
+
+        doc = file_cmd._editor.doc
+        assert doc.layers[0].name == "chaveiro"
+        assert doc.layers[0].workflow is not None
+        assert doc.layers[0].workflow.name == "chaveiro Workflow"
+        assert wp in doc.layers[0].children
+
+    def test_commit_preserves_manually_named_layer(self, file_cmd):
+        """Map to Existing keeps the name of a manually renamed layer."""
+        doc = file_cmd._editor.doc
+        doc.layers[0].set_name("My Custom Layer")
+
+        source = SourceAsset(
+            source_file=Path("chaveiros.svg"),
+            original_data=b"<svg></svg>",
+            renderer=SVG_RENDERER,
+        )
+        imported, wp = self._imported_layer("chaveiro")
+        spec = PassthroughSpec(
+            layer_import_mode=LayerImportMode.MAP_TO_EXISTING
+        )
+
+        file_cmd._commit_items_to_document(
+            [imported],
+            source,
+            Path("chaveiros.svg"),
+            vectorization_spec=spec,
+        )
+
+        assert doc.layers[0].name == "My Custom Layer"
+        assert wp in doc.layers[0].children
+
+    def test_commit_rename_is_undoable(self, file_cmd):
+        """Undoing the import restores the previous layer name."""
+        source = SourceAsset(
+            source_file=Path("chaveiros.svg"),
+            original_data=b"<svg></svg>",
+            renderer=SVG_RENDERER,
+        )
+        imported, wp = self._imported_layer("chaveiro")
+        spec = PassthroughSpec(
+            layer_import_mode=LayerImportMode.MAP_TO_EXISTING
+        )
+
+        file_cmd._commit_items_to_document(
+            [imported],
+            source,
+            Path("chaveiros.svg"),
+            vectorization_spec=spec,
+        )
+
+        doc = file_cmd._editor.doc
+        assert doc.layers[0].name == "chaveiro"
+        file_cmd._editor.history_manager.undo()
+        assert doc.layers[0].name == "Layer 1"
+        assert wp not in doc.layers[0].children
+
+    def test_commit_new_layers_keeps_existing_names(self, file_cmd):
+        """New Layers mode does not rename existing document layers."""
+        doc = file_cmd._editor.doc
+        imported, _wp = self._imported_layer("chaveiro")
+        spec = PassthroughSpec(layer_import_mode=LayerImportMode.NEW_LAYERS)
+
+        file_cmd._commit_items_to_document(
+            [imported],
+            None,
+            Path("chaveiros.svg"),
+            vectorization_spec=spec,
+        )
+
+        assert doc.layers[0].name == "Layer 1"
+        assert imported in doc.children
 
 
 class TestFinalizeImportOnMainThread:
@@ -731,6 +845,35 @@ class TestGetImporterInfo:
             )
             assert cls is None
             assert features == set()
+
+    def test_generic_mime_does_not_shadow_extension(self, file_cmd):
+        """
+        A .dxf file reported with the generic binary MIME type must be
+        routed by its extension, not by the generic match.
+
+        macOS reports files with unrecognized UTIs (e.g. .dxf, .lbrn2)
+        as application/octet-stream. If that MIME type won the lookup,
+        the file was handed to the RuidaImporter, which parsed the text
+        file as a binary Ruida job and produced garbage geometry.
+        """
+        cls, features = file_cmd.get_importer_info(
+            Path("part.dxf"), "application/octet-stream"
+        )
+        assert cls is DxfImporter
+        assert ImporterFeature.LAYER_SELECTION in features
+
+    def test_generic_mime_does_not_shadow_lightburn_extension(self, file_cmd):
+        cls, _ = file_cmd.get_importer_info(
+            Path("puzzle.lbrn2"), "application/octet-stream"
+        )
+        assert cls is LightBurnImporter
+
+    def test_ruida_resolves_by_extension_with_generic_mime(self, file_cmd):
+        cls, features = file_cmd.get_importer_info(
+            Path("job.rd"), "application/octet-stream"
+        )
+        assert cls is RuidaImporter
+        assert ImporterFeature.DIRECT_VECTOR in features
 
 
 class TestAnalyzeImportTarget:

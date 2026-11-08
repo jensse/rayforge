@@ -172,6 +172,118 @@ def test_set_value_programmatically_does_not_fire(ui_context_initializer):
 
 
 @pytest.mark.ui
+def test_same_value_sync_preserves_cursor(ui_context_initializer):
+    """Re-setting an unchanged value must not rewrite the text.
+
+    A backend update (e.g. ``step.updated`` → model sync) round-trips
+    the very value the user just typed. Rewriting the entry would yank
+    the cursor to the start mid-edit, so a redundant set of the same
+    value must be a no-op that keeps the cursor position.
+    """
+    row = SpeedSpinRow("Cut", value_in_base=500.0)
+    spin = row.get_spin_button()
+    spin.grab_focus()
+    spin.select_region(0, -1)
+    spin.delete_selection()
+    spin.set_text("1000")
+    spin.set_position(2)
+    assert spin.get_position() == 2
+
+    # Model round-trip with the identical value.
+    row.set_value_in_base_units(1000.0)
+    assert spin.get_position() == 2
+    assert spin.get_text() == "1000"
+
+    # A genuinely different value still updates the text.
+    row.set_value_in_base_units(1200.0)
+    assert row.get_value_in_base_units() == pytest.approx(1200.0)
+
+
+@pytest.mark.ui
+def test_plain_same_value_sync_preserves_cursor(ui_context_initializer):
+    """The plain SpinRow setter is likewise idempotent for unchanged
+    values."""
+    row = SpinRow("Count", lower=0, upper=100, digits=0, value=5)
+    spin = row.get_spin_button()
+    spin.grab_focus()
+    spin.select_region(0, -1)
+    spin.delete_selection()
+    spin.set_text("42")
+    spin.set_position(1)
+    assert spin.get_position() == 1
+
+    row.set_value(42.0)
+    assert spin.get_position() == 1
+    assert spin.get_text() == "42"
+
+    row.set_value(50.0)
+    assert row.get_value() == pytest.approx(50.0)
+
+
+@pytest.mark.ui
+def test_clamp_round_trip_preserves_mid_edit_text(ui_context_initializer):
+    """Editing below the lower bound must not be clobbered by syncs.
+
+    Deleting one digit of ``150.00`` yields ``10.00``, below the 50
+    lower bound. The emitted value is the clamped 50; when consumers
+    round-trip that value back, the entry must keep showing the user's
+    intermediate text with the cursor intact. Rewriting it to
+    ``50.00`` would reset the cursor and read as if Backspace had
+    deleted the leading digit instead. GTK reformats the text itself
+    when editing ends (activation or focus-out).
+    """
+    row = LengthSpinRow(
+        "Y Extent", lower=50.0, upper=10000.0, value_in_base=150.0
+    )
+    received = []
+    row.value_changed.connect(
+        lambda r: received.append(r.get_value_in_base_units()), weak=False
+    )
+    spin = row.get_spin_button()
+    spin.grab_focus()
+    spin.select_region(0, -1)
+    spin.delete_selection()
+    spin.set_text("150.00")
+    spin.set_position(1)
+    # pressing Delete behind the '1' removes the '5': 150.00 -> 10.00
+    spin.set_text("10.00")
+    spin.set_position(1)
+    assert received[-1] == pytest.approx(50.0)
+
+    # the model round-trip echoes the clamped value; the entry keeps
+    # the user's text and cursor position.
+    row.set_value_in_base_units(50.0)
+    assert spin.get_text() == "10.00"
+    assert spin.get_position() == 1
+
+    # a genuinely different value from elsewhere still updates the text
+    row.set_value_in_base_units(2000.0)
+    assert row.get_value_in_base_units() == pytest.approx(2000.0)
+
+
+@pytest.mark.ui
+def test_plain_clamp_round_trip_preserves_mid_edit_text(
+    ui_context_initializer,
+):
+    """The plain SpinRow setter likewise skips clamp-only echoes."""
+    row = SpinRow("Count", lower=50, upper=10000, digits=2, value=150)
+    received = []
+    row.value_changed.connect(lambda r: received.append(r), weak=False)
+    spin = row.get_spin_button()
+    spin.grab_focus()
+    spin.set_text("10.00")
+    spin.set_position(1)
+    assert received[-1].get_value() == pytest.approx(50.0)
+
+    row.set_value(50.0)
+    assert spin.get_text() == "10.00"
+    assert spin.get_position() == 1
+
+    row.set_value(80.0)
+    assert spin.get_text() == "80.00"
+
+
+@pytest.mark.ui
 def test_debounce_coalesces_rapid_changes(ui_context_initializer):
     row = LengthSpinRow("Len", value_in_base=0.0, debounce_ms=10)
     received = []
@@ -237,6 +349,35 @@ def test_added_to_preferences_group(ui_context_initializer):
 
 
 @pytest.mark.ui
+def test_default_step_is_one_in_mm(ui_context_initializer):
+    config = ui_context_initializer.config
+    config.unit_preferences["length"] = "mm"
+    row = LengthSpinRow("Len")
+    adj = row.get_spin_button().get_adjustment()
+    assert adj.get_step_increment() == pytest.approx(1.0)
+
+
+@pytest.mark.ui
+def test_step_follows_display_unit(ui_context_initializer):
+    config = ui_context_initializer.config
+    config.unit_preferences["length"] = "mm"
+    row = LengthSpinRow("Len", step_in_base=0.1)
+    adj = row.get_spin_button().get_adjustment()
+    assert adj.get_step_increment() == pytest.approx(0.1)
+    config.set_unit_preference("length", "in")
+    assert adj.get_step_increment() == pytest.approx(0.1 / 25.4)
+
+
+@pytest.mark.ui
+def test_step_increment_override(ui_context_initializer):
+    config = ui_context_initializer.config
+    config.unit_preferences["length"] = "mm"
+    row = LengthSpinRow("Len", step_in_base=0.5)
+    adj = row.get_spin_button().get_adjustment()
+    assert adj.get_step_increment() == pytest.approx(0.5)
+
+
+@pytest.mark.ui
 def test_quantity_subclasses(ui_context_initializer):
     speed = SpeedSpinRow("Speed", value_in_base=1000.0)
     accel = AccelerationSpinRow("Accel", value_in_base=500.0)
@@ -282,6 +423,27 @@ def test_display_unit_switch_still_reformats(ui_context_initializer):
     config.set_unit_preference("length", "in")
     assert row.get_value_in_base_units() == pytest.approx(25.4)
     assert row.get_spin_button().get_text() == "1.000"
+
+
+@pytest.mark.ui
+def test_unit_switch_narrowing_bounds_reformats_stale_text(
+    ui_context_initializer,
+):
+    """A unit switch that narrows the bounds below the displayed value
+    must rewrite the entry text.
+
+    Switching mm/min -> mm/s shrinks the adjustment upper bound (1000
+    mm/min becomes ~16.7 mm/s). The stale text then clamps to the new
+    bound, which used to fool the clamp-echo guard into skipping the
+    rewrite and leaving the old text visible.
+    """
+    row = SpeedSpinRow(
+        "Cut", lower=0.0, upper=1000.0, value_in_base=1000.0, digits=0
+    )
+    assert row.get_spin_button().get_text() == "1000"
+    ui_context_initializer.config.set_unit_preference("speed", "mm/s")
+    assert row.get_value_in_base_units() == pytest.approx(1000.0)
+    assert row.get_spin_button().get_text() == "16.7"
 
 
 @pytest.mark.ui

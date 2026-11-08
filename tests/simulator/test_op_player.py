@@ -95,6 +95,34 @@ def test_seek_then_advance():
     assert player.state.axes[Axis.X] == 0.0
 
 
+def test_sync_state_to_playhead_advances_to_playhead():
+    ops = _make_ops()
+    player = OpPlayer(ops, _make_machine(), Doc())
+    player.seek(0)
+    t = player.get_cumulative_time(4)
+    player.set_sim_time(t)
+    player.sync_state_to_playhead()
+    p, _frac = player.playback_progress()
+    reference = OpPlayer(ops, _make_machine(), Doc())
+    reference.seek(max(p - 1, 0))
+    assert player.current_index == reference.current_index
+    assert player.state.axes == reference.state.axes
+
+
+def test_sync_state_to_playhead_scrubs_backwards():
+    ops = _make_ops()
+    player = OpPlayer(ops, _make_machine(), Doc())
+    player.seek(6)
+    t = player.get_cumulative_time(2)
+    player.set_sim_time(t)
+    player.sync_state_to_playhead()
+    p, _frac = player.playback_progress()
+    reference = OpPlayer(ops, _make_machine(), Doc())
+    reference.seek(max(p - 1, 0))
+    assert player.current_index == reference.current_index
+    assert player.state.axes == reference.state.axes
+
+
 def test_advance_backwards_raises():
     ops = _make_ops()
     player = OpPlayer(ops, _make_machine(), Doc())
@@ -108,6 +136,127 @@ def test_seek_out_of_range_raises():
     player = OpPlayer(ops, _make_machine(), Doc())
     with pytest.raises(IndexError):
         player.seek(999)
+
+
+def test_set_playhead_anchors_at_command_boundary():
+    """Regression test for issue #370 stepping sync.
+
+    Commands 0-2 of ``_make_ops`` take zero simulated time, so
+    commands 0, 1 and 2 all share cumulative time 0. Anchoring by
+    index must land exactly on the stepped-to command instead of
+    letting the ambiguous time lookup skip ahead.
+    """
+    ops = _make_ops()
+    player = OpPlayer(ops, _make_machine(), Doc())
+    player.set_playhead(2)
+    assert player.current_index == 2
+    assert player.sim_time == pytest.approx(0.0)
+    # Progress is anchored to command 3 (the first cut) at frac 0:
+    # nothing of it is revealed yet.
+    assert player.playback_progress() == (3, 0.0)
+    assert player.state.axes[Axis.X] == 0.0
+    assert player.state.power == 0.5
+
+    # Stepping onto a zero-duration command right after a move: state
+    # includes it, progress anchors to the next cut with no reveal.
+    player.set_playhead(4)
+    assert player.current_index == 4
+    assert player.playback_progress() == (5, 0.0)
+
+    # Stepping onto the final cut reveals everything up to it.
+    player.set_playhead(5)
+    assert player.current_index == 5
+    assert player.state.axes[Axis.Y] == 10.0
+    p, frac = player.playback_progress()
+    assert (p, frac) == (6, 0.0)
+
+
+def test_set_playhead_backwards_recovers_state():
+    ops = _make_ops()
+    player = OpPlayer(ops, _make_machine(), Doc())
+    player.set_playhead(5)
+    player.set_playhead(2)
+    assert player.current_index == 2
+    assert player.state.axes[Axis.X] == 0.0
+    assert player.state.power == 0.5
+
+
+def test_set_progress_anchor_keeps_fraction():
+    ops = _make_ops()
+    player = OpPlayer(ops, _make_machine(), Doc())
+    t_start = player.get_cumulative_time(2)
+    t_end = player.get_cumulative_time(3)
+    mid = (t_start + t_end) / 2.0
+    player.set_progress_anchor(2, mid)
+    assert player.current_index == 2
+    p, frac = player.playback_progress()
+    assert p == 3
+    assert frac == pytest.approx(0.5)
+    # State reflects completed commands only.
+    assert player.state.axes[Axis.X] == 0.0
+
+
+def _make_step_ops():
+    """Ops mirroring a simple two-pass cut job with state changes.
+
+    Layout: preamble states, a rapid, a laser-on state, a cut, a
+    zero-duration filler, another cut, two laser-off states, and a
+    rapid home - like G-code with M3/M5 commands around moves.
+    """
+    ops = Ops()
+    ops.set_power(0.0)
+    ops.set_feed_rate(500)
+    ops.move_to(83.877, 60.0)
+    ops.set_power(0.8)
+    ops.line_to(36.123, 60.0)
+    ops.set_feed_rate(500)
+    ops.line_to(83.877, 60.0)
+    ops.set_power(0.0)
+    ops.set_power(0.0)
+    ops.move_to(0.0, 0.0)
+    return ops
+
+
+def test_set_playhead_steps_through_zero_duration_commands():
+    """Stepping must land exactly one command at a time.
+
+    Zero-duration state changes share cumulative times with their
+    neighbours; index-anchored playhead placement keeps the reveal and
+    the reported position in sync with the stepped-to command.
+    """
+    ops = _make_step_ops()
+    n = ops.len()
+    player = OpPlayer(ops, _make_machine(), Doc())
+
+    seen = []
+    for index in range(n):
+        player.set_playhead(index)
+        p, frac = player.playback_progress()
+        seen.append((index, player.current_index, p))
+        if index + 1 < n:
+            # Progress anchored to the next command, not yet revealed.
+            assert player.current_index == index
+            assert p == index + 1
+            assert frac == pytest.approx(0.0)
+    assert seen[0] == (0, 0, 1)
+
+    # On the laser-on state: neither cut may be revealed yet.
+    player.set_playhead(3)
+    p, _frac = player.playback_progress()
+    assert p == 4
+
+    # After the first cut: exactly the first cut is done, not both.
+    player.set_playhead(5)
+    p, _frac = player.playback_progress()
+    assert p == 6
+
+    # Stepping backwards lands exactly, restoring earlier state.
+    player.set_playhead(7)
+    assert player.current_index == 7
+    assert player.state.power == 0.0
+    player.set_playhead(4)
+    assert player.current_index == 4
+    assert player.state.power == 0.8
 
 
 def test_advance_out_of_range_raises():
@@ -358,7 +507,7 @@ def test_build_snapshots_targets_spaced_every_interval():
     ops = _make_long_ops(n=2500)
     snapshots = build_snapshots(ops, _make_machine(), Doc())
     assert [s[0] for s in snapshots] == [1000, 2000]
-    for target, state, source, rotary in snapshots:
+    for target, state, source, rotary, dpm in snapshots:
         assert isinstance(target, int)
         assert isinstance(state, MachineState)
         assert source == Axis.Y
@@ -391,7 +540,7 @@ def test_build_snapshots_clears_reached_textures():
 
     snapshots = build_snapshots(ops, _make_machine(), Doc())
     assert snapshots
-    for _, state, _, _ in snapshots:
+    for _, state, _, _, _ in snapshots:
         assert len(state.reached_textures) == 0
 
 
@@ -676,3 +825,328 @@ def test_render_state_laser_on_for_whole_cut():
     assert player.render_state().laser_on is True
     player.set_sim_time(0.74)
     assert player.render_state().laser_on is True
+
+
+def _make_arc_player():
+    """Player with a full-circle arc command."""
+    ops = Ops()
+    ops.set_feed_rate(600)  # 10 mm/s
+    ops.move_to(0.0, 0.0, 0.0)
+    ops.arc_to(0.0, 0.0, 10.0, 0.0, True)  # full circle CW, r=10
+    # Arc circumference = 2*pi*10 ~ 62.83mm at 10mm/s ~ 6.283s
+    return ops
+
+
+def _make_rotary_arc_player():
+    """Player with an arc in AXIS_REPLACEMENT rotary mode.
+
+    Creates a half-circle arc on a cylinder.  The arc's Y displacement
+    in Cartesian space should cause the rotary axis to oscillate.
+    """
+    machine = _make_machine()
+    rm = RotaryModule()
+    rm.set_mode(RotaryMode.AXIS_REPLACEMENT)
+    rm.set_axis(Axis.Y)
+    machine.add_rotary_module(rm)
+
+    diameter = 40.0
+
+    ops = Ops()
+    ops.set_feed_rate(600)
+    ops.move_to(0.0, 5.0, 0.0)
+    ops.layer_start("test")
+    # Half-circle arc from (0,5) to (10,5), center (5,5), radius 5,
+    # CCW.  In Cartesian space Y ranges from 5 to 10.
+    ops.arc_to(10.0, 5.0, 5.0, 0.0, False)
+    ops.layer_end("test")
+
+    mapping = KinematicMapping.from_rotary_module(rm, diameter)
+    assert mapping is not None
+    mapping.apply(ops)
+
+    doc = Doc()
+    doc.active_layer.uid = "test"
+    doc.active_layer.set_rotary_enabled(True)
+    doc.active_layer.set_rotary_diameter(diameter)
+    doc.active_layer.set_rotary_module_uid(rm.uid)
+
+    player = OpPlayer(ops, machine, doc)
+    player.set_playback_params(600.0, 3000.0, 0.0)
+    return player, diameter
+
+
+def _arc_cum(ops, idx):
+    """Cumulative time at command *idx* for feed=600, rapid=3000."""
+    return ops.get_cumulative_time_at(idx, 600.0, 3000.0, 0.0)
+
+
+def test_render_state_full_circle_interpolates_along_arc():
+    """Full circle (start == end) must trace the arc, not stay put."""
+    ops = _make_arc_player()
+    player = OpPlayer(ops, _make_machine(), Doc())
+    player.set_playback_params(600.0, 3000.0, 0.0)
+    player.seek(1)  # state at (0, 0) after move_to
+    # The arc is command 2. Its duration is cum[2]-cum[1].
+    arc_dur = _arc_cum(ops, 2) - _arc_cum(ops, 1)
+    # Quarter way through the circle.
+    player.set_sim_time(_arc_cum(ops, 1) + 0.25 * arc_dur)
+    p, _frac = player.playback_progress()
+    assert p == 2
+    state = player.render_state()
+    # Quarter CW circle from (0,0) around center (10,0):
+    # start angle = atan2(0-0, 0-10) = pi
+    # sweep = -2pi, frac=0.25 → angle = pi - pi/2 = pi/2
+    # pos = (10 + 10*cos(pi/2), 0 + 10*sin(pi/2)) = (10, 10)
+    assert state.axes[Axis.X] == pytest.approx(10.0, abs=1e-6)
+    assert state.axes[Axis.Y] == pytest.approx(10.0, abs=1e-6)
+
+
+def test_render_state_full_circle_halfway():
+    """Halfway through a full circle the head is diametrically opposite."""
+    ops = _make_arc_player()
+    player = OpPlayer(ops, _make_machine(), Doc())
+    player.set_playback_params(600.0, 3000.0, 0.0)
+    player.seek(1)
+    arc_dur = _arc_cum(ops, 2) - _arc_cum(ops, 1)
+    player.set_sim_time(_arc_cum(ops, 1) + 0.5 * arc_dur)
+    p, _frac = player.playback_progress()
+    assert p == 2
+    state = player.render_state()
+    # Half CW circle from (0,0) around center (10,0):
+    # start angle = pi, sweep = -2pi, frac=0.5 → angle = pi - pi = 0
+    # pos = (10 + 10*cos(0), 0 + 10*sin(0)) = (20, 0)
+    assert state.axes[Axis.X] == pytest.approx(20.0, abs=1e-6)
+    assert state.axes[Axis.Y] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_render_state_partial_arc_interpolates_along_curve():
+    """Full circle (start == end) must trace the arc, not stay put.
+
+    This is a regression test for the linearization bug where arc
+    commands were linearly interpolated between start and end points.
+    """
+    ops = _make_arc_player()
+    player = OpPlayer(ops, _make_machine(), Doc())
+    player.set_playback_params(600.0, 3000.0, 0.0)
+    player.seek(1)
+    arc_dur = _arc_cum(ops, 2) - _arc_cum(ops, 1)
+    # At 75% through the full circle CW:
+    # start angle = pi, sweep = -2pi, frac=0.75 → angle = pi - 3pi/2 = -pi/2
+    # pos = (10 + 10*cos(-pi/2), 0 + 10*sin(-pi/2)) = (10, -10)
+    player.set_sim_time(_arc_cum(ops, 1) + 0.75 * arc_dur)
+    state = player.render_state()
+    assert state.axes[Axis.X] == pytest.approx(10.0, abs=1e-6)
+    assert state.axes[Axis.Y] == pytest.approx(-10.0, abs=1e-6)
+
+
+def test_render_state_partial_arc_ccw():
+    """CCW partial arc interpolates along the curve."""
+    ops = Ops()
+    ops.set_feed_rate(600)
+    ops.move_to(0.0, -10.0, 0.0)
+    # Quarter circle CCW from (0,-10) to (10,0), center offset (0,10) →
+    # absolute center (0,0), radius 10.
+    ops.arc_to(10.0, 0.0, 0.0, 10.0, False)
+    player = OpPlayer(ops, _make_machine(), Doc())
+    player.set_playback_params(600.0, 3000.0, 0.0)
+    player.seek(1)
+    arc_dur = _arc_cum(ops, 2) - _arc_cum(ops, 1)
+    player.set_sim_time(_arc_cum(ops, 1) + 0.5 * arc_dur)
+    state = player.render_state()
+    # start angle: atan2(-10-0, 0-0) = -pi/2
+    # end angle: atan2(0-0, 10-0) = 0
+    # sweep_ccw = (0 - (-pi/2)) % 2pi = pi/2
+    # CCW → sweep = pi/2
+    # At frac=0.5: angle = -pi/2 + 0.5 * pi/2 = -pi/4
+    # pos = (10*cos(-pi/4), 10*sin(-pi/4)) = (7.071, -7.071)
+    assert state.axes[Axis.X] == pytest.approx(
+        10.0 * math.cos(-math.pi / 4), abs=1e-6
+    )
+    assert state.axes[Axis.Y] == pytest.approx(
+        10.0 * math.sin(-math.pi / 4), abs=1e-6
+    )
+
+
+def test_render_state_partial_arc_cw():
+    """CW partial arc interpolates along the curve."""
+    ops = Ops()
+    ops.set_feed_rate(600)
+    ops.move_to(0.0, 10.0, 0.0)
+    # Quarter circle CW from (0,10) to (10,0), center offset (0,-10) →
+    # absolute center (0,0), radius 10.
+    ops.arc_to(10.0, 0.0, 0.0, -10.0, True)
+    player = OpPlayer(ops, _make_machine(), Doc())
+    player.set_playback_params(600.0, 3000.0, 0.0)
+    player.seek(1)
+    arc_dur = _arc_cum(ops, 2) - _arc_cum(ops, 1)
+    player.set_sim_time(_arc_cum(ops, 1) + 0.5 * arc_dur)
+    state = player.render_state()
+    # start angle: atan2(10-0, 0-0) = pi/2
+    # end angle: atan2(0-0, 10-0) = 0
+    # sweep_ccw = (0 - pi/2) % 2pi = 3pi/2
+    # CW → sweep = 3pi/2 - 2pi = -pi/2
+    # At frac=0.5: angle = pi/2 + 0.5 * (-pi/2) = pi/4
+    # pos = (10*cos(pi/4), 10*sin(pi/4)) = (7.071, 7.071)
+    assert state.axes[Axis.X] == pytest.approx(
+        10.0 * math.cos(math.pi / 4), abs=1e-6
+    )
+    assert state.axes[Axis.Y] == pytest.approx(
+        10.0 * math.sin(math.pi / 4), abs=1e-6
+    )
+
+
+def test_render_state_rotary_arc_rotation_oscillates():
+    """Rotary axis changes during an arc on a cylinder.
+
+    Regression test: the rotary angle was constant during arcs because
+    the arc geometry mixed Cartesian Y with the rotary angle.  The
+    rotation should follow the arc's Cartesian Y displacement,
+    converted via the degrees-per-mm factor.
+    """
+    player, _diameter = _make_rotary_arc_player()
+    # Arc is command index 3 (after set_feed_rate, move_to, layer_start).
+    cum2 = _arc_cum(player.ops, 2)
+    cum3 = _arc_cum(player.ops, 3)
+    arc_dur = cum3 - cum2
+    # The arc is a half-circle CCW from (0,5) to (10,5) around
+    # center (5,5).  At the midpoint (frac=0.5), the arc passes
+    # through Y=0 (bottom of circle), so the rotary angle should
+    # be LOWER than at the start.
+    player.seek(2)
+    t_mid = cum2 + 0.5 * arc_dur
+    player.set_sim_time(t_mid)
+    state_mid = player.render_state()
+    rot_mid = state_mid.axes[Axis.Y]
+
+    # At start (frac=0), rotation should be at the initial value.
+    player.set_sim_time(cum2 + 0.01 * arc_dur)
+    state_start = player.render_state()
+    rot_start = state_start.axes[Axis.Y]
+
+    # The arc dips to Y=0 at the midpoint, so rotary angle is lower.
+    assert rot_mid < rot_start
+
+
+def _make_true4th_broken_frame_player():
+    """Player over TRUE_4TH_AXIS mapped ops whose arcs lost their frame.
+
+    Mirrors a wrapped-cylinder cut with four consecutive arcs (I/J from
+    the unwrapped geometry): mapping collapses endpoint Y onto the
+    cylinder position, detaching each stored circle from its
+    endpoints.
+    """
+    machine = _make_machine()
+    rm = RotaryModule()
+    rm.set_mode(RotaryMode.TRUE_4TH_AXIS)
+    rm.set_axis(Axis.A)
+    rm.default_diameter = 40.0
+    machine.add_rotary_module(rm)
+
+    arcs = [
+        # (x_end, a_end_deg, i, j) like the reported gcode.
+        (29.859, -110.648, 14.165, 15.021),
+        (29.522, -92.459, 75.975, 24.224),
+        (29.438, -53.874, 311.838, 26.596),
+        (29.944, -19.149, 101.253, 1.595),
+    ]
+    circumference = math.pi * 40.0
+    a_start = -128.0
+    y = a_start / 360.0 * circumference
+
+    def build():
+        seq = Ops()
+        seq.set_feed_rate(60)
+        seq.move_to(29.0, y, 0.0)
+        seq.layer_start("test")
+        for x_end, a_end, i, j in arcs:
+            seq.arc_to(x_end, a_end / 360.0 * circumference, i, j, True)
+        seq.layer_end("test")
+        return seq
+
+    # Like the pipeline: playback walks the mapped ops while the time
+    # model uses the raw unwrapped ones.
+    time_ops = build()
+    ops = build()
+    KinematicMapping(rotary_axis=Axis.A, diameter=40.0).apply(ops)
+
+    doc = Doc()
+    doc.active_layer.uid = "test"
+    doc.active_layer.set_rotary_enabled(True)
+    doc.active_layer.set_rotary_diameter(40.0)
+    doc.active_layer.set_rotary_module_uid(rm.uid)
+
+    player = OpPlayer(
+        ops, machine, doc, build_snapshots=False, time_ops=time_ops
+    )
+    player.set_playback_params(500.0, 3000.0, 0.0)
+    return player, arcs
+
+
+def test_rotary_arc_detached_frame_interpolates_linearly():
+    """Regression test for issue #370 (rotary follow-up).
+
+    Rotary mapping collapses endpoint Y, detaching the stored circles
+    from their mapped endpoints. Angle interpolation in that broken
+    frame stalled or wildly swung the rotary axis on some arcs. The
+    playhead must reconstruct each arc from the rotary axis travel:
+    X stays between the endpoints and every arc rotates through its
+    full angular travel without stalling.
+    """
+    player, arcs = _make_true4th_broken_frame_player()
+    player.seek_to_first_layer()
+    assert player._rotary_axis == Axis.A
+
+    total = player.get_cumulative_time(player.ops.len() - 1)
+    t = 0.0
+    tick = 1.0 / 60.0
+    samples = {}
+    prev_a = None
+    while t < total:
+        t = min(t + tick, total)
+        player.set_sim_time(t)
+        player.sync_state_to_playhead()
+        p, _frac = player.playback_progress()
+        if p not in (3, 4, 5, 6):
+            continue
+        st = player.render_state()
+        x = st.axes[Axis.X]
+        assert 28.0 <= x <= 30.5, f"X off path: {x}"
+        a = st.axes[Axis.A]
+        if prev_a is not None:
+            assert a >= prev_a - 1e-6, f"A not monotonic: {prev_a} -> {a}"
+        prev_a = a
+        samples.setdefault(p, []).append(a)
+    # The rotation completes at the last arc's mapped target angle.
+    last_op = 2 + len(arcs)
+    extra = player.ops.extra_axes(last_op) or {}
+    a_target = extra.get(Axis.A)
+    assert a_target is not None
+    assert prev_a == pytest.approx(a_target, abs=0.05)
+    # No stalls: every arc sweeps at least 80% of its angular travel.
+    a_before = {3: -128.0, 4: arcs[0][1], 5: arcs[1][1], 6: arcs[2][1]}
+    for op, (_x_end, a_end, _i, _j) in enumerate(arcs, start=3):
+        values = samples.get(op, [])
+        assert values, f"arc op {op} never rendered"
+        sweep = max(values) - min(values)
+        expected = abs(a_end - a_before[op])
+        assert sweep >= 0.8 * expected, (
+            f"rotary axis stalled during op {op}: swept "
+            f"{sweep:.3f} of {expected:.3f} deg"
+        )
+
+
+def test_flat_arc_still_interpolates_along_circle():
+    """The consistency fallback must not affect healthy flat arcs."""
+    ops = _make_arc_player()
+    player = OpPlayer(ops, _make_machine(), Doc())
+    player.set_playback_params(600.0, 3000.0, 0.0)
+    player.seek(1)  # state at move_to (0,0); arc starts there
+    # Arc duration is ~6.28 s; a quarter second in, frac ~ 0.04.
+    player.set_sim_time(0.25)
+    p, _frac = player.playback_progress()
+    assert p == 2
+    st = player.render_state()
+    # The CW full circle of r=10 is centered at (10, 0): the head must
+    # stay ON the circle, not somewhere inside it.
+    dist = math.hypot(st.axes[Axis.X] - 10.0, st.axes[Axis.Y])
+    assert dist == pytest.approx(10.0, abs=1e-3)

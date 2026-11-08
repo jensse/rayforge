@@ -298,7 +298,9 @@ class TestProcessTasks:
         )
         assert "proc1" in manager._tasks
 
-        assert completion_event.wait(timeout=3), (
+        # Worker processes are spawned lazily, which can take several
+        # seconds on slow CI runners (especially Windows). Wait generously.
+        assert completion_event.wait(timeout=30), (
             "Process task did not complete"
         )
 
@@ -322,7 +324,7 @@ class TestProcessTasks:
         manager.run_process(
             failing_process_func, key="proc_fail", when_done=on_done
         )
-        assert completion_event.wait(timeout=2)
+        assert completion_event.wait(timeout=30)
 
         assert final_task is not None
         assert final_task.get_status() == "failed"
@@ -362,7 +364,7 @@ class TestProcessTasks:
 
         # The on_done callback should still be called when the worker
         # finishes, but the task status should be 'canceled'.
-        assert completion_event.wait(timeout=3), (
+        assert completion_event.wait(timeout=30), (
             "on_done was not called after process finished"
         )
         assert final_task is not None
@@ -391,7 +393,7 @@ class TestProcessTasks:
         proxy.run_process(
             simple_process_func, when_done=lambda t: completion_event.set()
         )
-        assert completion_event.wait(timeout=3), "Process task did not run"
+        assert completion_event.wait(timeout=30), "Process task did not run"
 
         # 3. Shut down to ensure all workers are finished.
         proxy.shutdown()
@@ -659,12 +661,14 @@ class TestWaitUntilSettled:
 
         # wait_until_settled should wait and return True
         start_time = time.time()
-        result = manager.wait_until_settled(1000)  # 1 second timeout
+        # Slow CI runners (especially Windows) can stall coroutine
+        # scheduling for over a second, so use a generous timeout.
+        result = manager.wait_until_settled(5000)  # 5 second timeout
         elapsed = time.time() - start_time
 
         assert result is True
         assert elapsed >= 0.3  # Should have waited at least the task duration
-        assert elapsed < 1.0  # But less than the timeout
+        assert elapsed < 5.0  # But less than the timeout
 
         # Task should be completed
         assert completion_event.is_set()
@@ -722,14 +726,16 @@ class TestWaitUntilSettled:
             )
 
         # wait_until_settled should wait for the longest task
-        result = manager.wait_until_settled(3000)  # 3 second timeout
+        # Slow CI runners (especially Windows) can stall coroutine
+        # scheduling for over a second, so use a generous timeout.
+        result = manager.wait_until_settled(8000)  # 8 second timeout
         elapsed = time.time() - start_time
 
         assert result is True
         assert (
             elapsed >= 1.2
         )  # Should have waited at least the longest task duration
-        assert elapsed < 3.0  # But less than the timeout
+        assert elapsed < 8.0  # But less than the timeout
 
         # All tasks should be completed
         for event in completion_events:

@@ -1,29 +1,37 @@
 ---
-description: "Supported file formats in Rayforge — SVG, DXF, PDF, LightBurn, Ruida, PNG, JPG, BMP and more. Import vector and raster designs for laser cutting and engraving."
+description:
+  "Supported file formats in Rayforge — SVG, DXF, PDF, LightBurn, Ruida, PNG, JPG, BMP and more.
+  Import vector and raster designs for laser cutting and engraving."
 ---
 
 # Supported File Formats
 
-This page provides detailed information about all file formats supported by
-Rayforge, including capabilities, limitations, and recommendations.
+This page provides detailed information about all file formats supported by Rayforge, including
+capabilities, limitations, and recommendations.
 
 ## Format Overview
 
 ### Quick Reference
 
-| Format               | Type    | Import           | Export          | Recommended Use               |
-| -------------------- | ------- | ---------------- | --------------- | ----------------------------- |
-| **SVG**              | Vector  | ✓ Direct / Trace | ✓ Object export | Primary design format         |
-| **DXF**              | Vector  | ✓ Direct         | ✓ Object export | CAD interchange               |
-| **PDF**              | Mixed   | ✓ Direct / Trace | –               | Documents with vector content |
-| **LightBurn**        | Vector  | ✓ Direct         | –               | LightBurn project files       |
-| **Ruida**            | Vector  | ✓ Direct         | –               | Ruida controller job files    |
-| **PNG**              | Raster  | ✓ Trace          | –               | Photos, images                |
-| **JPEG**             | Raster  | ✓ Trace          | –               | Photos                        |
-| **BMP**              | Raster  | ✓ Trace          | –               | Simple graphics               |
-| **RFS**              | Sketch  | ✓ Direct         | ✓ Object export | Parametric sketches           |
-| **G-code**           | Control | –                | ✓ Primary       | Machine output                |
-| **Rayforge Project** | Project | ✓                | ✓               | Save/load projects            |
+| Format               | Type    | Import           | Export          | Recommended Use                |
+| -------------------- | ------- | ---------------- | --------------- | ------------------------------ |
+| **SVG**              | Vector  | ✓ Direct / Trace | ✓ Object export | Primary design format          |
+| **DXF**              | Vector  | ✓ Direct         | ✓ Object export | CAD interchange                |
+| **PDF**              | Mixed   | ✓ Direct / Trace | –               | Documents with vector content  |
+| **Illustrator**      | Vector  | ✓ Direct / Trace | –               | Logos from Illustrator         |
+| **EPS**              | Vector  | ✓ Direct / Trace | –               | Logos, print artwork           |
+| **LightBurn**        | Vector  | ✓ Direct         | –               | LightBurn project files        |
+| **Ruida**            | Vector  | ✓ Direct         | –               | Ruida controller job files     |
+| **HPGL**             | Vector  | ✓ Direct         | –               | Plotter and vinyl cutter files |
+| **PNG**              | Raster  | ✓ Trace          | –               | Photos, images                 |
+| **JPEG**             | Raster  | ✓ Trace          | –               | Photos                         |
+| **BMP**              | Raster  | ✓ Trace          | –               | Simple graphics                |
+| **GIF**              | Raster  | ✓ Trace          | –               | Simple graphics, animations    |
+| **TIFF**             | Raster  | ✓ Trace          | –               | Scans, print artwork           |
+| **WebP**             | Raster  | ✓ Trace          | –               | Web images                     |
+| **RFS**              | Sketch  | ✓ Direct         | ✓ Object export | Parametric sketches            |
+| **G-code**           | Control | –                | ✓ Primary       | Machine output                 |
+| **Rayforge Project** | Project | ✓                | ✓               | Save/load projects             |
 
 ---
 
@@ -31,15 +39,16 @@ Rayforge, including capabilities, limitations, and recommendations.
 
 ### SVG (Scalable Vector Graphics)
 
-**Extension:** `.svg`
-**MIME Type:** `image/svg+xml`
-**Import:** Direct vector parsing or bitmap trace
-**Export:** Object export (geometry only)
+**Extension:** `.svg`, `.svgz` **MIME Type:** `image/svg+xml`, `image/svg+xml-compressed`
+**Import:** Direct vector parsing or bitmap trace **Export:** Object export (geometry only)
+
+Compressed SVG (`.svgz`, Inkscape's "Compressed SVG") is unpacked on import and then behaves exactly
+like a plain SVG file.
 
 **What is SVG?**
 
-SVG is an XML-based vector image format. It's the **preferred format** for
-importing designs into Rayforge.
+SVG is an XML-based vector image format. It's the **preferred format** for importing designs into
+Rayforge.
 
 **Supported Features:**
 
@@ -62,8 +71,7 @@ importing designs into Rayforge.
 
 **Export Notes:**
 
-When exporting a workpiece to SVG, Rayforge exports the geometry as vector paths
-with:
+When exporting a workpiece to SVG, Rayforge exports the geometry as vector paths with:
 
 - Stroke-only rendering (no fill)
 - Millimeter units
@@ -86,10 +94,8 @@ with:
 
 ### DXF (Drawing Exchange Format)
 
-**Extension:** `.dxf`
-**MIME Type:** `application/dxf`, `image/vnd.dxf`
-**Import:** Direct vector parsing
-**Export:** Object export (geometry only)
+**Extension:** `.dxf` **MIME Type:** `application/dxf`, `image/vnd.dxf` **Import:** Direct vector
+parsing **Export:** Object export (geometry only)
 
 **What is DXF?**
 
@@ -133,16 +139,13 @@ When exporting a workpiece to DXF, Rayforge exports:
 
 ### RFS (Rayforge Sketch)
 
-**Extension:** `.rfs`
-**MIME Type:** `application/x-rayforge-sketch`
-**Import:** Direct (sketch-based workpieces)
-**Export:** Object export (sketch-based workpieces)
+**Extension:** `.rfs` **MIME Type:** `application/x-rayforge-sketch` **Import:** Direct
+(sketch-based workpieces) **Export:** Object export (sketch-based workpieces)
 
 **What is RFS?**
 
-RFS is Rayforge's native parametric sketch format. It preserves all geometric
-elements and parametric constraints, allowing you to save and share fully
-editable sketches.
+RFS is Rayforge's native parametric sketch format. It preserves all geometric elements and
+parametric constraints, allowing you to save and share fully editable sketches.
 
 **Features:**
 
@@ -161,17 +164,14 @@ editable sketches.
 
 ### LightBurn (.lbrn / .lbrn2)
 
-**Extension:** `.lbrn`, `.lbrn2`
-**MIME Type:** `application/x-lightburn`
-**Import:** Direct vector parsing
-**Export:** Not supported
+**Extension:** `.lbrn`, `.lbrn2` **MIME Type:** `application/x-lightburn` **Import:** Direct vector
+parsing **Export:** Not supported
 
 **What is LightBurn?**
 
-LightBurn is a proprietary laser cutter software. Its `.lbrn` and `.lbrn2`
-files contain vector geometry organized in color-coded layers with laser
-settings. Rayforge can import these files directly, providing a migration path
-for users switching from LightBurn to Rayforge.
+LightBurn is a proprietary laser cutter software. Its `.lbrn` and `.lbrn2` files contain vector
+geometry organized in color-coded layers with laser settings. Rayforge can import these files
+directly, providing a migration path for users switching from LightBurn to Rayforge.
 
 **Supported Features:**
 
@@ -198,19 +198,17 @@ for users switching from LightBurn to Rayforge.
 
 ### PDF (Portable Document Format)
 
-**Extension:** `.pdf`
-**MIME Type:** `application/pdf`
-**Import:** Direct vectors (with layer support) or render-and-trace
-**Export:** Not supported
+**Extension:** `.pdf` **MIME Type:** `application/pdf` **Import:** Direct vectors (with layer
+support) or render-and-trace **Export:** Not supported
 
 **What is PDF Import?**
 
-PDF files can contain actual vector paths, and Rayforge imports them directly
-when available — giving you the same clean geometry you would get from an SVG.
-If the PDF has layers, each layer can be imported as a separate workpiece.
+PDF files can contain actual vector paths, and Rayforge imports them directly when available —
+giving you the same clean geometry you would get from an SVG. If the PDF has layers, each layer can
+be imported as a separate workpiece.
 
-For PDFs without usable vector content (scanned documents, photos), Rayforge
-falls back to rendering and tracing.
+For PDFs without usable vector content (scanned documents, photos), Rayforge falls back to rendering
+and tracing.
 
 **Capabilities:**
 
@@ -231,17 +229,61 @@ falls back to rendering and tracing.
 
 ---
 
+### Adobe Illustrator (.ai)
+
+**Extension:** `.ai` **MIME Type:** `application/illustrator` **Import:** Direct vectors or
+render-and-trace **Export:** Not supported
+
+Since version 9, Illustrator saves its files with an embedded PDF by default (the **Create PDF
+Compatible File** option). Rayforge reads that PDF, so these files import just like a PDF, layers
+included.
+
+Older Illustrator files, and files saved without PDF compatibility, are PostScript. Rayforge
+converts them with Ghostscript when it is installed. Otherwise the import dialog explains how to
+save the file again.
+
+---
+
+### EPS and PostScript (.eps / .ps)
+
+**Extension:** `.eps`, `.epsf`, `.ps` **MIME Type:** `image/x-eps`, `application/postscript`
+**Import:** Direct vectors or render-and-trace, through Ghostscript **Export:** Not supported
+
+Rayforge converts EPS and PostScript files to PDF with Ghostscript and then imports them like a PDF.
+The EPS bounding box becomes the page size, and text is converted to outlines.
+
+**Ghostscript** is an optional dependency. On Linux, install your distribution's `ghostscript`
+package. On Windows and macOS, install it from the Ghostscript website. Without Ghostscript, the
+import dialog shows a message instead of a preview. The project stores the converted PDF, so a saved
+project also opens on a computer without Ghostscript.
+
+---
+
+### HPGL (.plt / .hpgl)
+
+**Extension:** `.plt`, `.hpgl`, `.hpg`, `.hgl` **MIME Type:** `application/vnd.hp-hpgl` **Import:**
+Direct vector parsing **Export:** Not supported
+
+HPGL is the plotter language of cutting plotters, vinyl cutters and older CAD programs. Rayforge
+reads the common drawing instructions: pen moves (PU, PD, PA, PR), circles and arcs (CI, AA, AR) and
+rectangles (EA, ER, RA, RR). Each pen becomes a layer that you can pick in the import dialog.
+
+**Limitations:**
+
+- ✗ Text labels (LB) are skipped; convert text to paths before plotting
+- ✗ Scaling (SC) and rotation (RO) are ignored; the import dialog lists any skipped instructions
+- Coordinates use the standard 40 plotter units per millimetre
+
+---
+
 ## Raster Formats
 
-All raster formats are **imported by tracing** - converted to vector paths
-automatically.
+All raster formats are **imported by tracing** - converted to vector paths automatically.
 
 ### PNG (Portable Network Graphics)
 
-**Extension:** `.png`
-**MIME Type:** `image/png`
-**Import:** Trace to vectors
-**Export:** Not supported
+**Extension:** `.png` **MIME Type:** `image/png` **Import:** Trace to vectors **Export:** Not
+supported
 
 **Characteristics:**
 
@@ -249,7 +291,7 @@ automatically.
 - **Transparency support** - Alpha channel preserved
 - **Good for:** Logos, line art, screenshots, anything needing transparency
 
-**Tracing Quality:**  (Excellent for high-contrast images)
+**Tracing Quality:** (Excellent for high-contrast images)
 
 **Best Practices:**
 
@@ -261,10 +303,8 @@ automatically.
 
 ### JPEG (Joint Photographic Experts Group)
 
-**Extension:** `.jpg`, `.jpeg`
-**MIME Type:** `image/jpeg`
-**Import:** Trace to vectors
-**Export:** Not supported
+**Extension:** `.jpg`, `.jpeg` **MIME Type:** `image/jpeg` **Import:** Trace to vectors **Export:**
+Not supported
 
 **Characteristics:**
 
@@ -272,7 +312,7 @@ automatically.
 - **No transparency** - Always has background
 - **Good for:** Photos, continuous-tone images
 
-**Tracing Quality:**  (Good for photos, but complex)
+**Tracing Quality:** (Good for photos, but complex)
 
 **Best Practices:**
 
@@ -285,10 +325,8 @@ automatically.
 
 ### BMP (Bitmap)
 
-**Extension:** `.bmp`
-**MIME Type:** `image/bmp`
-**Import:** Trace to vectors
-**Export:** Not supported
+**Extension:** `.bmp` **MIME Type:** `image/bmp` **Import:** Trace to vectors **Export:** Not
+supported
 
 **Characteristics:**
 
@@ -296,12 +334,25 @@ automatically.
 - **Simple format** - Widely compatible
 - **Good for:** Simple graphics, old software output
 
-**Tracing Quality:**  (Good, but no better than PNG)
+**Tracing Quality:** (Good, but no better than PNG)
 
 **Best Practices:**
 
 - Convert to PNG for smaller file size (no quality difference)
 - Only use if source software can't export PNG/SVG
+
+---
+
+### GIF, TIFF and WebP
+
+**Extension:** `.gif`, `.tif`, `.tiff`, `.webp` **MIME Type:** `image/gif`, `image/tiff`,
+`image/webp` **Import:** Trace to vectors **Export:** Not supported
+
+These formats are traced in the same way as PNG.
+
+- **Animated GIFs** and **multi-page TIFFs** import only their first frame or page
+- **TIFF** files usually store their print resolution, which sets the physical size
+- Images without a resolution are imported at 96 DPI
 
 ---
 

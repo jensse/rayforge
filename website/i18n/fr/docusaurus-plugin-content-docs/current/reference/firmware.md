@@ -1,10 +1,12 @@
 # Compatibilité des firmwares
 
-Cette page documente la compatibilité des firmwares pour les contrôleurs laser utilisés avec Rayforge.
+Cette page documente la compatibilité des firmwares pour les contrôleurs laser utilisés avec
+Rayforge.
 
 ## Aperçu
 
-Rayforge est conçu principalement pour les **contrôleurs basés sur GRBL** mais prend également en charge Marlin, Smoothieware et d'autres types de firmware.
+Rayforge est conçu principalement pour les **contrôleurs basés sur GRBL** mais prend également en
+charge Marlin, Smoothieware et d'autres types de firmware.
 
 ### Matrice de compatibilité
 
@@ -23,15 +25,14 @@ Rayforge est conçu principalement pour les **contrôleurs basés sur GRBL** mai
 
 ## Firmware GRBL
 
-**Statut :** ✓ Entièrement pris en charge
-**Versions :** 1.1+
-**Pilote :** GRBL Serial
+**Statut :** ✓ Entièrement pris en charge **Versions :** 1.1+ **Pilote :** GRBL Serial
 
 ### GRBL 1.1 (Recommandé)
 
 **Qu'est-ce que GRBL 1.1 ?**
 
-GRBL 1.1 est le firmware le plus courant pour les machines CNC et laser de loisir. Publié en 2017, il est stable, bien documenté et largement pris en charge.
+GRBL 1.1 est le firmware le plus courant pour les machines CNC et laser de loisir. Publié en 2017,
+il est stable, bien documenté et largement pris en charge.
 
 **Fonctionnalités prises en charge par Rayforge :**
 
@@ -95,9 +96,8 @@ GRBL 0.9 est une ancienne version avec quelques problèmes de compatibilité :
 
 ### Pilote GRBL Serial Simple
 
-Rayforge inclut un second pilote série GRBL pour les appareils où le
-pilote standard à comptage de tampon provoque de fausses alarmes ou
-des erreurs de communication.
+Rayforge inclut un second pilote série GRBL pour les appareils où le pilote standard à comptage de
+tampon provoque de fausses alarmes ou des erreurs de communication.
 
 **Fonctionnement :**
 
@@ -115,17 +115,14 @@ des erreurs de communication.
 **Quand ne pas l'utiliser :**
 
 - Le pilote GRBL Serial standard fonctionne de manière fiable sur la plupart des appareils
-- Le pilote simple n'a pas de récupération d'interblocage, donc les
-  travaux peuvent s'arrêter sur une réponse « ok » perdue sans
-  récupération automatique
+- Le pilote simple n'a pas de récupération d'interblocage, donc les travaux peuvent s'arrêter sur
+  une réponse « ok » perdue sans récupération automatique
 
 ---
 
 ## grblHAL
 
-**Statut :** Compatible
-**Versions :** 2023+
-**Pilote :** GRBL Serial
+**Statut :** Compatible **Versions :** 2023+ **Pilote :** GRBL Serial
 
 ### Qu'est-ce que grblHAL ?
 
@@ -150,21 +147,20 @@ grblHAL est un fork moderne de GRBL avec des fonctionnalités améliorées :
 2. Connectez-vous via série USB (comme GRBL)
 3. Toutes les fonctionnalités fonctionnent comme documenté pour GRBL
 
-**Futur :** Rayforge pourrait ajouter le support des fonctionnalités spécifiques à grblHAL (réseau, etc.)
+**Futur :** Rayforge pourrait ajouter le support des fonctionnalités spécifiques à grblHAL (réseau,
+etc.)
 
 ---
 
 ## Pilote GRBL Telnet
 
-**Statut :** Pris en charge
-**Firmware :** grblHAL, ESP3D et autres contrôleurs GRBL réseau
-**Pilote :** GRBL Telnet
+**Statut :** Pris en charge **Firmware :** grblHAL, ESP3D et autres contrôleurs GRBL réseau **Pilote
+:** GRBL Telnet
 
 ### À propos du pilote GRBL Telnet
 
-Le pilote GRBL Telnet se connecte aux contrôleurs basés sur GRBL via le réseau
-par une interface Telnet. Idéal pour les cartes avec WiFi ou Ethernet intégré —
-pas de câble USB nécessaire.
+Le pilote GRBL Telnet se connecte aux contrôleurs basés sur GRBL via le réseau par une interface
+Telnet. Idéal pour les cartes avec WiFi ou Ethernet intégré — pas de câble USB nécessaire.
 
 **Fonctionnalités :**
 
@@ -223,13 +219,12 @@ Smoothieware utilise une syntaxe G-code différente :
 
 ## Marlin
 
-**Versions :** 2.0+ avec support laser
-**Pilote :** Marlin Serial
+**Versions :** 2.0+ avec support laser **Pilote :** Marlin Serial
 
 ### Pilote Marlin Serial
 
-Rayforge inclut un MarlinSerialDriver dédié qui se connecte au firmware Marlin
-via le port série (USB). Marlin 2.0+ peut contrôler des lasers lorsqu'il est correctement configuré.
+Rayforge inclut un MarlinSerialDriver dédié qui se connecte au firmware Marlin via le port série
+(USB). Marlin 2.0+ peut contrôler des lasers lorsqu'il est correctement configuré.
 
 **Fonctionnalités :**
 
@@ -508,36 +503,49 @@ $22=1       ; Mise à l'origine activée
 
 ---
 
-## Support futur des firmwares
+## Contrôleurs Ruida
 
-### Contrôleurs Ruida
-
-Rayforge inclut un support expérimental pour les contrôleurs basés sur Ruida (p.ex.
-RDC6442, RDC6445, Ruida R5). Le pilote Ruida se connecte via le réseau et prend en
-charge le jogging, le rapport de position, le contrôle de l'air assisté, la sélection
-de couche, la connexion automatique et l'interrogation de statut.
+Rayforge se connecte aux contrôleurs basés sur Ruida (p.ex. RDC6442, RDC6445, Ruida R5) via le
+pilote **Ruida RPA**, qui parle le protocole natif du contrôleur en USB ou UDP, ou via TUI RPC par
+l'intermédiaire du Ruida Protocol Analyzer. Les profils d'appareil Generic Ruida RPA et Monport
+MP-570 60W CO2 fournissent des points de départ pour les nouvelles machines.
 
 **Fonctionnalités :**
 
-- Connectivité réseau (Ethernet/WiFi)
-- Rapport de position
-- Commandes de jogging
-- Air assisté et sélection de couche
-- Prise en charge des points de référence
+- Connectivité USB et UDP ; lorsque les deux sont configurés, Rayforge bascule automatiquement entre
+  eux au fur et à mesure que les câbles sont branchés et débranchés
+- Envoi de travaux avec rapport de position, jogging, homing et Déplacement vers une position
+- Le cadrage trace le contour du travail avec des déplacements absolus faisceau éteint, il
+  fonctionne donc sans tirer le laser
+- Honore le réglage Power Mode de chaque étape : Dynamic active la mise à l'échelle de puissance du
+  contrôleur, Constant la désactive
+- Les ports série peuvent être liés depuis un menu déroulant de périphériques USB avec
+  correspondance VID:PID, si bien que la reconnexion automatique suit la machine après que le
+  système d'exploitation réénumère les périphériques USB
+
+**Réglages de puissance :**
+
+- **Power scaling** — relève le minimum émis lorsque la vitesse de coupe de la couche diminue
+- **VECTOR power floor** — puissance minimale pour la compensation de coupe vectorielle pendant
+  l'accélération et la décélération, réduisant la sur-combustion aux extrémités des lignes
+- **IMAGE power bias** — puissance ajoutée aux lignes de balayage raster, car les tubes CO2 ne
+  s'allument pas à très faible puissance
 
 **Limitations :**
 
-- Expérimental — pas encore totalement stable
+- Expérimental — testé jusqu'ici sur un contrôleur RDC6442S (Monport MP570 CO2)
 - Pas de génération de G-code ; Ruida utilise son propre protocole propriétaire
-- L'envoi de travaux n'est pas encore pris en charge
+- Le mode rotatif n'est pas encore pris en charge
 
 ---
 
+## Pilotes Expérimentaux
+
 ### OctoPrint
 
-Rayforge inclut un pilote OctoPrint expérimental qui soumet le G-code
-directement à un serveur OctoPrint via le réseau. Ceci est utile si ton laser
-est connecté à un Raspberry Pi ou une autre machine exécutant OctoPrint.
+Rayforge inclut un pilote OctoPrint expérimental qui soumet le G-code directement à un serveur
+OctoPrint via le réseau. Ceci est utile si ton laser est connecté à un Raspberry Pi ou une autre
+machine exécutant OctoPrint.
 
 **Fonctionnalités :**
 
@@ -553,8 +561,8 @@ est connecté à un Raspberry Pi ou une autre machine exécutant OctoPrint.
 1. Sélectionne le pilote « OctoPrint » dans les paramètres machine
 2. Entre le nom d'hôte ou l'adresse IP de ton serveur OctoPrint
 3. Définis le port (par défaut : 80)
-4. Clique sur « Demander l'accès » pour obtenir une clé API via le système
-   de clés d'application d'OctoPrint
+4. Clique sur « Demander l'accès » pour obtenir une clé API via le système de clés d'application
+   d'OctoPrint
 5. Connecte — Rayforge établira une connexion WebSocket
 
 **Limitations :**
@@ -574,7 +582,8 @@ Les utilisateurs ont demandé le support pour :
 - **ESP32 WiFi** - Connectivité réseau pour grblHAL
 - **API Laser** - API machine directe (pas de G-code)
 
-**Statut :** Actuellement non pris en charge. Les demandes de fonctionnalités sont les bienvenues sur GitHub.
+**Statut :** Actuellement non pris en charge. Les demandes de fonctionnalités sont les bienvenues
+sur GitHub.
 
 ### Contribuer
 

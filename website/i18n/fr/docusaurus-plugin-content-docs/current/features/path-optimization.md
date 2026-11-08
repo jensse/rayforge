@@ -1,19 +1,49 @@
 # Optimisation de Parcours
 
-L'optimisation de parcours réordonne les segments de coupe pour minimiser la distance de déplacement. Le laser se déplace efficacement entre les coupes au lieu de sauter aléatoirement sur la zone de travail.
+L'optimisation de parcours réordonne les segments de coupe pour minimiser la distance de
+déplacement. Le laser se déplace efficacement entre les coupes au lieu de sauter aléatoirement sur
+la zone de travail.
 
 ## Comment Ça Fonctionne
 
-Sans optimisation, les parcours sont coupés dans l'ordre où ils apparaissent dans votre fichier de design. L'optimisation analyse tous les segments de parcours et les réarrange pour que le laser parcoure la distance totale la plus courte entre les coupes.
+Sans optimisation, les parcours sont coupés dans l'ordre où ils apparaissent dans votre fichier de
+design. L'optimisation analyse tous les segments de parcours et les réarrange pour que le laser
+parcoure la distance totale la plus courte entre les coupes.
 
-**Avant optimisation :** Le laser va et vient sur le matériau
-**Après optimisation :** Le laser se déplace séquentiellement de coupe en coupe
+**Avant optimisation** — le laser va et vient sur le matériau :
+
+![Les déplacements à vide zigzaguent entre les coupes dans l'ordre de dessin](/images/path-optimization-before.webp)
+
+**Après optimisation** — le laser se déplace séquentiellement de coupe en coupe :
+
+![Les déplacements à vide relient les coupes voisines](/images/path-optimization-after.webp)
 
 ## Paramètres
+
+![Les paramètres d'Optimisation sur la page de post-traitement d'une étape de Contour](/screenshots/step-settings-contour-post-optimize.webp)
 
 ### Activer l'Optimisation
 
 Activez ou désactivez l'optimisation de parcours. Activée par défaut pour la plupart des opérations.
+
+### Choisir le Meilleur Point de Départ
+
+Démarre chaque parcours fermé au sommet le plus proche de la tête laser au lieu de l'endroit où il a
+été dessiné. Cela raccourcit les déplacements à vide. Les parcours ouverts, et ceux avec entrées,
+surcoupe ou languettes, gardent leur point de départ. Désactivé par défaut.
+
+### Préférer les Coins
+
+Disponible uniquement lorsque **Choisir le Meilleur Point de Départ** est activé. Les parcours
+fermés démarrent sur un angle vif s'ils en ont un, ce qui rend la jonction moins visible. Les
+parcours sans angle, comme les cercles, démarrent au sommet le plus proche. Désactivé par défaut.
+
+Le même parcours fermé démarré là où il a été dessiné (1), au sommet le plus proche de la tête laser
+avec **Choisir le Meilleur Point de Départ** (2), et à l'angle vif le plus proche avec **Préférer
+les Coins** (3) :
+
+![Points de départ d'un parcours fermé : tel que dessiné, au sommet le plus proche, à l'angle le
+plus proche](/images/path-optimization-start-point.webp)
 
 ## Quand Utiliser l'Optimisation
 
@@ -32,15 +62,20 @@ Activez ou désactivez l'optimisation de parcours. Activée par défaut pour la 
 
 ## Comment Ça Affecte Votre Travail
 
-**Gain de temps :** Peut réduire le temps de travail de 20-50% pour les designs avec beaucoup de coupes séparées.
+**Gain de temps :** Peut réduire le temps de travail de 20-50% pour les designs avec beaucoup de
+coupes séparées.
 
-**Efficacité de mouvement :** Moins de mouvement rapide signifie moins d'usure sur les courroies, moteurs et roulements.
+**Efficacité de mouvement :** Moins de mouvement rapide signifie moins d'usure sur les courroies,
+moteurs et roulements.
 
-**Distribution de chaleur :** Les parcours optimisés peuvent concentrer la chaleur dans une zone. Pour les matériaux sensibles à la chaleur, considérez si l'ordre compte.
+**Distribution de chaleur :** Les parcours optimisés peuvent concentrer la chaleur dans une zone.
+Pour les matériaux sensibles à la chaleur, considérez si l'ordre compte.
 
+<!-- prettier-ignore-start -->
 :::tip
 L'optimisation s'exécute automatiquement. Activez-la simplement et le logiciel gère le reste.
 :::
+<!-- prettier-ignore-end -->
 
 ---
 

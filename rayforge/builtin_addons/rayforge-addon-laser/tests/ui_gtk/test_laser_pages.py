@@ -1,7 +1,7 @@
 # flake8: noqa: E402
 """UI tests for the laser step settings pages."""
 
-from typing import Any
+from typing import Any, cast
 
 import gi
 import pytest
@@ -9,36 +9,39 @@ import pytest
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw
-from laser_essentials.widgets.contour_page import (
-    ContourStepSettingsPage,
-    ThresholdRow,
+from gi.repository import Adw, Gtk
+from laser_essentials.material_test_helpers import GridMode
+from laser_essentials.steps import (
+    EngraveStep,
+    MaterialTestStep,
+    OffsetFillStep,
 )
+from laser_essentials.widgets import ASSEMBLER_WIDGETS
+from laser_essentials.widgets.contour_page import ContourStepSettingsPage
 from laser_essentials.widgets.material_test_grid_page import (
     MaterialTestGridSettingsPage,
 )
-from laser_essentials.widgets.raster_page import RasterSettingsPage
-from laser_essentials.widgets.rows import (
-    AirAssistRow,
-    OffsetRow,
-    PowerRow,
+from laser_essentials.widgets.offset_fill_page import (
+    OffsetFillStepSettingsPage,
 )
+from laser_essentials.widgets.raster_page import RasterSettingsPage
+from laser_essentials.widgets.raster_power_widget import RasterPowerWidget
 
 from rayforge.core.step_registry import step_registry
+from rayforge.image.dither import DitherAlgorithm
+from rayforge.pipeline.stage.assembler_helpers import DepthMode
 from rayforge.ui_gtk.doceditor.step_settings.dialog import StepSettingsDialog
 from rayforge.ui_gtk.doceditor.step_settings.pages import StepSettingsPage
-from rayforge.ui_gtk.doceditor.step_settings.rows import (
-    CutSpeedRow,
-    HeadRow,
-    TravelSpeedRow,
-)
+from rayforge.ui_gtk.shared.pref_rows import LengthSpinRow, SpeedSpinRow
+from rayforge.ui_gtk.varset.adapter.combo import ComboAdapter
 
 
-def _find(widget, cls):
-    for row in widget._rows:
-        if isinstance(row, cls):
+def _row(page, key):
+    for widget, _ in page._varset_widgets:
+        row = widget.row_for(key)
+        if row is not None:
             return row
-    raise AssertionError(f"row {cls.__name__} not found in page")
+    raise AssertionError(f"row {key} not found in page")
 
 
 def _contour_step(ui_context) -> Any:
@@ -59,16 +62,29 @@ def test_contour_page_composes_step_and_laser_rows(
     assert isinstance(page, Adw.PreferencesPage)
     assert isinstance(laser_page, StepSettingsPage)
 
-    for cls in (OffsetRow, ThresholdRow):
-        _find(page, cls)
-    for cls in (
-        PowerRow,
-        CutSpeedRow,
-        TravelSpeedRow,
-        AirAssistRow,
-        HeadRow,
+    for key in ("cut_side", "offset_mm", "cut_order", "overcut"):
+        _row(page, key)
+    for key in (
+        "selected_head_uid",
+        "power",
+        "power_mode",
+        "cut_speed",
+        "travel_speed",
+        "air_assist",
     ):
-        _find(laser_page, cls)
+        _row(laser_page, key)
+
+
+@pytest.mark.ui
+def test_speed_rows_show_integer_digits(editor, laser_machine, ui_context):
+    """Speed rows must not show fractional digits (500, not 500.00)."""
+    step = _contour_step(ui_context)
+    page = ContourStepSettingsPage(editor, step)
+    laser_page = page.laser_page()
+
+    for key in ("cut_speed", "travel_speed"):
+        row = cast(SpeedSpinRow, _row(laser_page, key))
+        assert row.get_digits() == 0, f"{key} shows fractional digits"
 
 
 @pytest.mark.ui
@@ -77,14 +93,14 @@ def test_path_offset_insensitive_on_centerline(
 ):
     step = _contour_step(ui_context)
     page = ContourStepSettingsPage(editor, step)
-    offset = _find(page, OffsetRow)
+    offset = _row(page, "offset_mm")
 
     assert step.cut_side == "CENTERLINE"
-    assert offset.widget.get_sensitive() is False
+    assert offset.get_sensitive() is False
 
     step.cut_side = "OUTSIDE"
     step.updated.send(step)
-    assert offset.widget.get_sensitive() is True
+    assert offset.get_sensitive() is True
 
 
 @pytest.mark.ui
@@ -93,15 +109,15 @@ def test_threshold_visible_only_when_rescanning(
 ):
     step = _contour_step(ui_context)
     page = ContourStepSettingsPage(editor, step)
-    threshold = _find(page, ThresholdRow)
+    threshold = _row(page, "threshold")
 
     step.override_threshold = False
     step.updated.send(step)
-    assert threshold.widget.get_visible() is False
+    assert threshold.get_visible() is False
 
     step.override_threshold = True
     step.updated.send(step)
-    assert threshold.widget.get_visible() is True
+    assert threshold.get_visible() is True
 
 
 @pytest.mark.ui
@@ -112,9 +128,7 @@ def test_head_change_does_not_touch_offset(editor, laser_machine, ui_context):
     offset_before = step.offset_mm
 
     target = laser_machine.heads[1]
-    laser_page.head_row.head_changed.send(
-        laser_page.head_row, head_uid=target.uid
-    )
+    laser_page._on_head_changed(target.uid)
     assert step.selected_head_uid == target.uid
     assert step.offset_mm == offset_before
 
@@ -124,14 +138,15 @@ def test_offset_row_uses_user_units(editor, laser_machine, ui_context):
     ui_context.config.unit_preferences["length"] = "in"
     step = _contour_step(ui_context)
     page = ContourStepSettingsPage(editor, step)
-    offset = _find(page, OffsetRow)
+    offset = _row(page, "offset_mm")
 
     step.offset_mm = 25.4
     step.updated.send(step)
 
-    assert offset.widget is not None
-    assert offset.widget.get_value_in_base_units() == pytest.approx(25.4)
-    assert offset.widget.get_value() == pytest.approx(1.0, abs=1e-2)
+    offset_row = cast(LengthSpinRow, offset)
+    assert offset_row is not None
+    assert offset_row.get_value_in_base_units() == pytest.approx(25.4)
+    assert offset_row.get_value() == pytest.approx(1.0, abs=1e-2)
 
 
 @pytest.mark.ui
@@ -143,11 +158,641 @@ def test_material_test_page_builds(editor, laser_machine, ui_context):
 
 
 @pytest.mark.ui
+def test_material_test_laser_page_hides_travel_speed_without_support(
+    editor, laser_machine, ui_context
+):
+    """GRBL can't emit travel speed, so the material-test laser page
+    hides the travel speed row."""
+    step = MaterialTestStep()
+    page = MaterialTestGridSettingsPage(editor, step)
+    laser_page = page.laser_page()
+
+    assert not laser_machine.supports_travel_speed()
+    row = _row(laser_page, "travel_speed")
+    assert row.get_visible() is False
+
+
+@pytest.mark.ui
+def test_material_test_laser_page_shows_travel_speed_with_support(
+    editor, laser_machine, ui_context
+):
+    """A machine that can emit travel speed shows the material-test
+    travel speed row."""
+    laser_machine.set_dialect_uid("smoothieware")
+    step = MaterialTestStep()
+    page = MaterialTestGridSettingsPage(editor, step)
+    laser_page = page.laser_page()
+
+    assert laser_machine.supports_travel_speed()
+    row = _row(laser_page, "travel_speed")
+    assert row.get_visible() is True
+
+
+@pytest.mark.ui
+def test_material_test_tuple_rows_round_trip(
+    editor, laser_machine, ui_context
+):
+    """Tuple rows (ranges, grid dimensions) read and write tuples."""
+    step = MaterialTestStep()
+    page = MaterialTestGridSettingsPage(editor, step)
+
+    for key in ("power_range", "speed_range", "passes_range", "offset_range"):
+        row = _row(page, key)
+        assert row is not None, f"{key} row missing"
+    _row(page, "grid_dimensions")
+
+    # Programmatic push lands in the widgets.
+    page.params_widget.set_values(
+        {
+            "power_range": (20.0, 80.0),
+            "speed_range": (200.0, 900.0),
+        }
+    )
+    values = page.params_widget.get_values()
+    assert values["power_range"] == (20.0, 80.0)
+    assert values["speed_range"] == (200.0, 900.0)
+
+
+@pytest.mark.ui
+def test_material_test_speed_rows_are_unit_aware(editor, ui_context):
+    """Material-test speed rows adapt to the user's unit preference."""
+    step = MaterialTestStep()
+    page = MaterialTestGridSettingsPage(editor, step)
+
+    label = cast(SpeedSpinRow, _row(page, "label_speed"))
+    fixed = cast(SpeedSpinRow, _row(page, "fixed_speed"))
+    speed = cast(SpeedSpinRow, _row(page, "speed_range"))
+    assert isinstance(label, SpeedSpinRow)
+    assert isinstance(fixed, SpeedSpinRow)
+    assert isinstance(speed, SpeedSpinRow)
+
+    # mm/min -> mm/s: divide by 60 (mm/s precision is one digit).
+    ui_context.config.set_unit_preference("speed", "mm/s")
+    assert label.get_spin_button().get_text() == "16.7"
+    assert fixed.get_spin_button().get_text() == "16.7"
+    assert speed.get_spin_button().get_text() == "1.7"
+
+
+@pytest.mark.ui
+def test_material_test_offset_rows_are_unit_aware(editor, ui_context):
+    """Material-test offset rows adapt to the user's unit preference."""
+    step = MaterialTestStep()
+    step.grid_mode = GridMode.SPEED_VS_OFFSET.value
+    page = MaterialTestGridSettingsPage(editor, step)
+
+    offset = cast(LengthSpinRow, _row(page, "offset_range"))
+    assert isinstance(offset, LengthSpinRow)
+
+    # -0.5 mm -> -0.0197 in, rounded to three digits.
+    ui_context.config.set_unit_preference("length", "in")
+    assert offset.get_spin_button().get_text() == "-0.020"
+
+
+@pytest.mark.ui
+def test_material_test_tuple_labels_survive_config_change(editor, ui_context):
+    """A unit-preference change must not clobber tuple row labels.
+
+    Rebuilding the varsets (as a config change does) must keep the
+    component titles, not replace the first row's title with the var's
+    own label.
+    """
+    step = MaterialTestStep()
+    page = MaterialTestGridSettingsPage(editor, step)
+
+    primary = _row(page, "power_range")
+    adapter = page.params_widget.adapter_for("power_range")
+    assert adapter is not None
+    extra = adapter.extra_rows()[0]
+    assert primary.get_title() == "Minimum Power (%)"
+    assert extra.get_title() == "Maximum Power (%)"
+
+    # Changing the unit preference fires config.changed -> _on_config_changed
+    # -> populate -> adapter.update_from_var.
+    ui_context.config.set_unit_preference("speed", "mm/s")
+
+    assert primary.get_title() == "Minimum Power (%)"
+    assert extra.get_title() == "Maximum Power (%)"
+
+
+@pytest.mark.ui
+def test_material_test_grid_mode_visibility(editor, laser_machine, ui_context):
+    """Parameters rows follow the grid-mode visible_when predicates."""
+    step = MaterialTestStep()
+    page = MaterialTestGridSettingsPage(editor, step)
+
+    power = _row(page, "power_range")
+    speed = _row(page, "speed_range")
+    passes = _row(page, "passes_range")
+    offset = _row(page, "offset_range")
+    fixed_speed = _row(page, "fixed_speed")
+    fixed_power = _row(page, "fixed_power")
+
+    assert power.get_visible() is True  # Power vs Speed default
+    assert speed.get_visible() is True
+    assert passes.get_visible() is False
+    assert offset.get_visible() is False
+
+    step.grid_mode = GridMode.SPEED_VS_OFFSET.value
+    step.updated.send(step)
+    assert power.get_visible() is False
+    assert speed.get_visible() is True
+    assert passes.get_visible() is False
+    assert offset.get_visible() is True
+    assert fixed_speed.get_visible() is False
+    assert fixed_power.get_visible() is True
+
+
+@pytest.mark.ui
+def test_material_test_labels_sensitivity(editor, laser_machine, ui_context):
+    """Label rows are insensitive while labels are disabled."""
+    step = MaterialTestStep()
+    page = MaterialTestGridSettingsPage(editor, step)
+
+    label_power = _row(page, "label_power_percent")
+    label_speed = _row(page, "label_speed")
+    assert label_power.get_sensitive() is True
+
+    step.include_labels = False
+    step.updated.send(step)
+    assert label_power.get_sensitive() is False
+    assert label_speed.get_sensitive() is False
+
+
+@pytest.mark.ui
+def test_material_test_preset_applies_values(
+    editor, laser_machine, ui_context
+):
+    """Selecting a preset commits speed/power ranges and test type."""
+    step = MaterialTestStep()
+    page = MaterialTestGridSettingsPage(editor, step)
+    page.preset_row.set_selected(2)  # Diode Cut
+
+    assert step.test_type == "Cut"
+    assert step.power_range == (50.0, 100.0)
+    assert step.speed_range[0] >= 100.0
+
+
+@pytest.mark.ui
+def test_material_test_speed_bounds_follow_machine(
+    editor, laser_machine, ui_context
+):
+    """Speed range rows cap at the live machine's limit, not the
+    step's creation-time snapshot (#439)."""
+    step_cls = step_registry.get("MaterialTestStep")
+    assert step_cls is not None
+    step = step_cls.create(ui_context)
+    step.max_cut_speed = 1000  # stale snapshot from an older machine
+    page = MaterialTestGridSettingsPage(editor, step)
+
+    adapter = page.params_widget.adapter_for("speed_range")
+    assert adapter is not None
+    max_row = cast(SpeedSpinRow, adapter.extra_rows()[0])
+    assert max_row._upper == pytest.approx(5000.0)
+
+    # Raising the machine's limit while the page is open lifts the cap.
+    laser_machine.set_max_cut_speed(8000)
+    adapter = page.params_widget.adapter_for("speed_range")
+    assert adapter is not None
+    max_row = cast(SpeedSpinRow, adapter.extra_rows()[0])
+    assert max_row._upper == pytest.approx(8000.0)
+
+
+@pytest.mark.ui
+def test_material_test_preset_clamps_to_machine_limit(
+    editor, laser_machine, ui_context
+):
+    """Preset speed ranges clamp to the live machine's limit, not a
+    stale step snapshot."""
+    step = MaterialTestStep()
+    step.max_cut_speed = 1000  # stale snapshot from an older machine
+    page = MaterialTestGridSettingsPage(editor, step)
+    page.preset_row.set_selected(1)  # Diode Engrave: (1000, 10000)
+
+    assert step.speed_range == (1000.0, 5000.0)
+
+
+@pytest.mark.ui
+def test_material_test_speed_vs_offset_defaults(
+    editor, laser_machine, ui_context
+):
+    """Switching to Speed vs Offset applies engrave defaults."""
+    step = MaterialTestStep()
+    page = MaterialTestGridSettingsPage(editor, step)
+
+    mode_adapter = page.grid_widget.adapter_for("grid_mode")
+    assert mode_adapter is not None
+    mode_adapter.set_value(GridMode.SPEED_VS_OFFSET.value)
+    page._sync_grid_context()
+    page._apply_speed_vs_offset_defaults()
+
+    assert step.test_type == "Engrave"
+    assert step.line_interval_mm == 0.5
+
+
+@pytest.mark.ui
 def test_raster_page_builds(editor, laser_machine, ui_context):
     step_cls = step_registry.get("EngraveStep")
     assert step_cls is not None
     page = RasterSettingsPage(editor, step_cls.create(ui_context))
     assert isinstance(page, StepSettingsPage)
+
+
+@pytest.mark.ui
+def test_speed_above_machine_max_shows_warning(
+    editor, laser_machine, ui_context
+):
+    """A loaded speed above the machine's max is shown, not clamped.
+
+    The step's real value is displayed (matching the step box) and the
+    row is flagged with a warning explaining it exceeds the machine.
+    """
+    laser_machine.max_cut_speed = 1000
+    ui_context.config.set_machine(laser_machine)
+
+    step_cls = step_registry.get("EngraveStep")
+    assert step_cls is not None
+    step = cast(EngraveStep, step_cls.create(ui_context))
+    step.cut_speed = 24000
+    data = step.to_dict()
+    data["max_cut_speed"] = 24000
+    loaded = step_cls.from_dict(data)
+
+    page = RasterSettingsPage(editor, loaded)
+    laser_page = page.laser_page()
+    row = cast(SpeedSpinRow, _row(laser_page, "cut_speed"))
+    # The loaded value is displayed above the machine's max ...
+    assert row.get_spin_button().get_text() == "24000"
+    # ... while a read-back clamps to the machine's ceiling (an edit
+    # would commit the clamped value, not the stale loaded one).
+    assert row.get_value_in_base_units() == pytest.approx(1000.0)
+
+    icon = laser_page._speed_warning_icons.get(row)
+    assert icon is not None
+    assert icon.get_visible() is True
+    assert icon.get_tooltip_text() != ""
+
+
+@pytest.mark.ui
+def test_speed_within_machine_max_has_no_warning(
+    editor, laser_machine, ui_context
+):
+    """A speed within the machine's max shows no warning icon."""
+    step_cls = step_registry.get("EngraveStep")
+    assert step_cls is not None
+    step = cast(EngraveStep, step_cls.create(ui_context))
+    step.cut_speed = 1000  # within laser_machine's default max of 5000
+    page = RasterSettingsPage(editor, step)
+    laser_page = page.laser_page()
+    row = cast(SpeedSpinRow, _row(laser_page, "cut_speed"))
+
+    icon = laser_page._speed_warning_icons.get(row)
+    assert icon is None or icon.get_visible() is False
+
+
+@pytest.mark.ui
+def test_raster_page_mode_visibility(editor, laser_machine, ui_context):
+    """Raster rows react to the depth-mode visible_when predicates."""
+    step_cls = step_registry.get("EngraveStep")
+    assert step_cls is not None
+    step = cast(EngraveStep, step_cls.create(ui_context))
+    page = RasterSettingsPage(editor, step)
+
+    threshold = _row(page, "threshold")
+    sample_interval = _row(page, "sample_interval_mm")
+
+    step.depth_mode = "CONSTANT_POWER"
+    step.updated.send(step)
+    assert threshold.get_visible() is True
+    assert sample_interval.get_visible() is False
+
+    step.depth_mode = "POWER_MODULATION"
+    step.updated.send(step)
+    assert threshold.get_visible() is False
+    assert sample_interval.get_visible() is True
+
+
+@pytest.mark.ui
+def test_raster_page_dither_option_visibility(
+    editor, laser_machine, ui_context
+):
+    """Serpentine follows the error-diffusion algorithms, the halftone
+    rows only show for Halftone."""
+    step_cls = step_registry.get("EngraveStep")
+    assert step_cls is not None
+    step = cast(EngraveStep, step_cls.create(ui_context))
+    step.depth_mode = "DITHER"
+    page = RasterSettingsPage(editor, step)
+
+    serpentine = _row(page, "dither_serpentine")
+    cell = _row(page, "halftone_cell_mm")
+    angle = _row(page, "halftone_angle")
+
+    step.set_dither_algorithm("STUCKI")
+    assert serpentine.get_visible() is True
+    assert cell.get_visible() is False
+    assert angle.get_visible() is False
+
+    step.set_dither_algorithm("HALFTONE")
+    assert serpentine.get_visible() is False
+    assert cell.get_visible() is True
+    assert angle.get_visible() is True
+
+    step.depth_mode = "POWER_MODULATION"
+    step.updated.send(step)
+    assert serpentine.get_visible() is False
+    assert cell.get_visible() is False
+
+
+@pytest.mark.ui
+def test_raster_page_shows_the_steps_dither_algorithm(
+    editor, laser_machine, ui_context
+):
+    """The step stores the algorithm as an enum; the combo row must
+    still select it, on open and after an external change."""
+    step_cls = step_registry.get("EngraveStep")
+    assert step_cls is not None
+    step = cast(EngraveStep, step_cls.create(ui_context))
+    step.depth_mode = "DITHER"
+    step.dither_algorithm = DitherAlgorithm.BAYER4
+    page = RasterSettingsPage(editor, step)
+
+    adapter = page.engrave_widget.adapter_for("dither_algorithm")
+    assert adapter is not None
+    assert adapter.get_value() == "BAYER4"
+
+    step.set_dither_algorithm(DitherAlgorithm.STUCKI)
+    assert adapter.get_value() == "STUCKI"
+
+
+@pytest.mark.ui
+def test_raster_page_dither_algorithm_lists_new_methods(
+    editor, laser_machine, ui_context
+):
+    step_cls = step_registry.get("EngraveStep")
+    assert step_cls is not None
+    step = cast(EngraveStep, step_cls.create(ui_context))
+    step.depth_mode = "DITHER"
+    page = RasterSettingsPage(editor, step)
+
+    adapter = page.engrave_widget.adapter_for("dither_algorithm")
+    assert isinstance(adapter, ComboAdapter)
+    row = cast(Adw.ComboRow, _row(page, "dither_algorithm"))
+    model = row.get_model()
+    assert model is not None
+    labels = [
+        cast(Gtk.StringObject, model.get_item(i)).get_string()
+        for i in range(model.get_n_items())
+    ]
+    for algo in DitherAlgorithm:
+        assert algo.display_name in labels
+
+
+def _depth_mode_adapter(page: RasterSettingsPage) -> ComboAdapter:
+    adapter = page.engrave_widget.adapter_for("depth_mode")
+    assert isinstance(adapter, ComboAdapter)
+    return adapter
+
+
+@pytest.mark.ui
+def test_raster_page_multi_depth_available_by_default(
+    editor, laser_machine, ui_context
+):
+    """G-code drivers keep the multi-depth entry selectable."""
+    step_cls = step_registry.get("EngraveStep")
+    assert step_cls is not None
+    step = cast(EngraveStep, step_cls.create(ui_context))
+    step.depth_mode = "MULTI_PASS"
+    page = RasterSettingsPage(editor, step)
+
+    assert _depth_mode_adapter(page)._disabled_displays == set()
+
+    row = _row(page, "depth_mode")
+    icon = page._speed_warning_icons.get(row)
+    assert icon is None or icon.get_visible() is False
+
+
+@pytest.mark.ui
+def test_raster_page_multi_depth_disabled_on_ruida(
+    editor, laser_machine, ui_context
+):
+    """Ruida machines grey out multi-depth and flag existing usage."""
+    laser_machine.auto_connect = False
+    laser_machine.driver_name = "RuidaRPAAdapter"
+    step_cls = step_registry.get("EngraveStep")
+    assert step_cls is not None
+    step = cast(EngraveStep, step_cls.create(ui_context))
+    step.depth_mode = "MULTI_PASS"
+    page = RasterSettingsPage(editor, step)
+
+    disabled = _depth_mode_adapter(page)._disabled_displays
+    assert DepthMode.MULTI_PASS.display_name in disabled
+
+    row = _row(page, "depth_mode")
+    icon = page._speed_warning_icons.get(row)
+    assert icon is not None
+    assert icon.get_visible() is True
+    tooltip = icon.get_tooltip_text() or ""
+    assert "Multiple Depths" in tooltip
+
+
+@pytest.mark.ui
+def test_raster_page_multi_depth_no_warning_when_not_selected(
+    editor, laser_machine, ui_context
+):
+    """A Ruida machine only warns when the step uses multi-depth."""
+    laser_machine.auto_connect = False
+    laser_machine.driver_name = "RuidaRPAAdapter"
+    step_cls = step_registry.get("EngraveStep")
+    assert step_cls is not None
+    step = cast(EngraveStep, step_cls.create(ui_context))
+    assert step.depth_mode == "POWER_MODULATION"
+    page = RasterSettingsPage(editor, step)
+
+    disabled = _depth_mode_adapter(page)._disabled_displays
+    assert DepthMode.MULTI_PASS.display_name in disabled
+
+    row = _row(page, "depth_mode")
+    icon = page._speed_warning_icons.get(row)
+    assert icon is None or icon.get_visible() is False
+
+
+@pytest.mark.ui
+def test_raster_page_power_section_visible_by_default(
+    editor, laser_machine, ui_context
+):
+    """The Power section rows must be visible for the default mode.
+
+    Their visible_when predicates key off depth_mode, which lives in
+    the Engrave section; the page must feed it in as context.
+    """
+    step_cls = step_registry.get("EngraveStep")
+    assert step_cls is not None
+    step = cast(EngraveStep, step_cls.create(ui_context))
+    page = RasterSettingsPage(editor, step)
+
+    assert step.depth_mode == "POWER_MODULATION"
+    for key in (
+        "auto_levels",
+        "black_point",
+        "min_power_level",
+        "max_power_level",
+        "num_power_levels",
+    ):
+        row = _row(page, key)
+        assert row.get_visible() is True, f"{key} hidden in Power section"
+
+
+@pytest.mark.ui
+def test_raster_page_power_section_hidden_outside_grayscale(
+    editor, laser_machine, ui_context
+):
+    """Constant-power mode hides the Power section's level rows.
+
+    With no applicable rows left, the empty section hides entirely.
+    """
+    step_cls = step_registry.get("EngraveStep")
+    assert step_cls is not None
+    step = cast(EngraveStep, step_cls.create(ui_context))
+    page = RasterSettingsPage(editor, step)
+
+    mode_adapter = page.engrave_widget.adapter_for("depth_mode")
+    assert mode_adapter is not None
+    mode_adapter.set_value("CONSTANT_POWER")
+    page._sync_power_context()
+
+    for key in ("auto_levels", "black_point"):
+        row = _row(page, key)
+        assert row.get_visible() is False, f"{key} visible in CONSTANT_POWER"
+    assert page.power_widget.get_visible() is False
+
+
+@pytest.mark.ui
+def test_raster_page_power_section_levels_visible_in_dither(
+    editor, laser_machine, ui_context
+):
+    """Dither mode shows the brightness-range rows so users can
+    adapt the dither input via the histogram, but hides the
+    variable-power rows."""
+    step_cls = step_registry.get("EngraveStep")
+    assert step_cls is not None
+    step = cast(EngraveStep, step_cls.create(ui_context))
+    page = RasterSettingsPage(editor, step)
+
+    mode_adapter = page.engrave_widget.adapter_for("depth_mode")
+    assert mode_adapter is not None
+    mode_adapter.set_value("DITHER")
+    page._sync_power_context()
+
+    assert page.power_widget.get_visible() is True
+    for key in ("auto_levels", "black_point", "white_point"):
+        row = _row(page, key)
+        assert row.get_visible() is True, f"{key} hidden in DITHER mode"
+    for key in ("min_power_level", "max_power_level", "num_power_levels"):
+        row = _row(page, key)
+        assert row.get_visible() is False, f"{key} visible in DITHER mode"
+
+
+@pytest.mark.ui
+def test_raster_power_widget_titles_rows_by_area(
+    editor, laser_machine, ui_context
+):
+    """The min/max rows are titled after the areas they drive, and
+    the Engrave section no longer offers Invert."""
+    step_cls = step_registry.get("EngraveStep")
+    assert step_cls is not None
+    step = cast(EngraveStep, step_cls.create(ui_context))
+    page = RasterSettingsPage(editor, step)
+
+    assert isinstance(page.power_widget, RasterPowerWidget)
+    assert _row(page, "min_power_level").get_title() == "Min Power (White)"
+    assert _row(page, "max_power_level").get_title() == "Max Power (Black)"
+    assert page.engrave_widget.adapter_for("invert") is None
+
+
+@pytest.mark.ui
+def test_raster_page_commits_dither_algorithm(
+    editor, laser_machine, ui_context
+):
+    """dither_algorithm commits the enum through the step setter."""
+    step_cls = step_registry.get("EngraveStep")
+    assert step_cls is not None
+    step = cast(EngraveStep, step_cls.create(ui_context))
+    page = RasterSettingsPage(editor, step)
+
+    page.set_step_property("dither_algorithm", "BAYER4")
+    assert step.dither_algorithm is not None
+    assert step.dither_algorithm.name == "BAYER4"
+
+
+@pytest.mark.ui
+def test_raster_page_power_range_keeps_min_under_max(
+    editor, laser_machine, ui_context
+):
+    """Committing a power range keeps min <= max in one transaction."""
+    step_cls = step_registry.get("EngraveStep")
+    assert step_cls is not None
+    step = cast(EngraveStep, step_cls.create(ui_context))
+    page = RasterSettingsPage(editor, step)
+
+    min_adapter = page.power_widget.adapter_for("min_power_level")
+    max_adapter = page.power_widget.adapter_for("max_power_level")
+    assert min_adapter is not None
+    assert max_adapter is not None
+    max_adapter.set_value(0.8)
+    min_adapter.set_value(0.9)
+    page._on_varset_data_changed(page.power_widget, "min_power_level")
+
+    # Max follows min up so the range stays valid.
+    assert step.min_power_level == pytest.approx(0.9)
+    assert step.max_power_level == pytest.approx(0.9)
+
+
+@pytest.mark.ui
+def test_raster_page_shows_head_derived_interval_defaults(
+    editor, laser_machine, ui_context
+):
+    """Auto (None) interval rows display the laser spot-size default
+    and use 3-digit precision, like the old dialog."""
+    step_cls = step_registry.get("EngraveStep")
+    assert step_cls is not None
+    step = cast(EngraveStep, step_cls.create(ui_context))
+    assert step.line_interval_mm is None
+    page = RasterSettingsPage(editor, step)
+
+    head = laser_machine.heads[0]
+    spot_x, spot_y = head.spot_size_mm
+
+    line = cast(LengthSpinRow, _row(page, "line_interval_mm"))
+    sample = cast(LengthSpinRow, _row(page, "sample_interval_mm"))
+    dot = cast(LengthSpinRow, _row(page, "dot_width_correction_mm"))
+
+    # The step stays None (auto) until the user edits the row.
+    assert step.line_interval_mm is None
+    assert step.sample_interval_mm is None
+    assert step.dot_width_correction_mm is None
+
+    assert line.get_value_in_base_units() == pytest.approx(spot_y)
+    assert sample.get_value_in_base_units() == pytest.approx(spot_x / 2.0)
+    assert dot.get_value_in_base_units() == pytest.approx(spot_x / 2.0)
+
+    assert line.get_digits() == 3
+    assert sample.get_digits() == 3
+    assert dot.get_digits() == 3
+
+
+@pytest.mark.ui
+def test_raster_page_keeps_user_interval_values(
+    editor, laser_machine, ui_context
+):
+    """Explicit interval values are not replaced by head defaults."""
+    step_cls = step_registry.get("EngraveStep")
+    assert step_cls is not None
+    step = cast(EngraveStep, step_cls.create(ui_context))
+    step.line_interval_mm = 1.5
+    page = RasterSettingsPage(editor, step)
+
+    line = cast(LengthSpinRow, _row(page, "line_interval_mm"))
+    assert line.get_value_in_base_units() == pytest.approx(1.5)
 
 
 @pytest.mark.ui
@@ -166,3 +811,13 @@ def test_dialog_initial_laser_page(editor, laser_machine, ui_context):
     assert dialog._extra_buttons[0].get_active() is True
     assert dialog.btn_step_settings.get_active() is False
     dialog.close()
+
+
+@pytest.mark.ui
+def test_offset_fill_page_shows_fill_rows(editor, laser_machine, ui_context):
+    assert ASSEMBLER_WIDGETS["offset_fill"] is OffsetFillStepSettingsPage
+    step = OffsetFillStep.create(ui_context)
+    page = OffsetFillStepSettingsPage(editor, step)
+    for key in ("line_interval_mm", "offset_mm", "fill_direction"):
+        _row(page, key)
+    assert isinstance(_row(page, "line_interval_mm"), LengthSpinRow)

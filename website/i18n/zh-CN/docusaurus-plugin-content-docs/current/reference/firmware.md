@@ -23,9 +23,7 @@ Rayforge 主要为**基于 GRBL 的控制器**设计，但也支持 Marlin、Smo
 
 ## GRBL 固件
 
-**状态：** 完全支持
-**版本：** 1.1+
-**驱动程序：** GRBL 串口, GRBL Serial Simple
+**状态：** 完全支持 **版本：** 1.1+ **驱动程序：** GRBL 串口, GRBL Serial Simple
 
 ### GRBL 1.1（推荐）
 
@@ -95,8 +93,7 @@ GRBL 0.9 是较旧的版本，有一些兼容性问题：
 
 ### GRBL Serial Simple 驱动程序
 
-Rayforge 包含第二个串行 GRBL 驱动程序，适用于标准缓冲计数驱动程序
-导致误报或通信错误的设备。
+Rayforge 包含第二个串行 GRBL 驱动程序，适用于标准缓冲计数驱动程序导致误报或通信错误的设备。
 
 **工作原理：**
 
@@ -114,16 +111,13 @@ Rayforge 包含第二个串行 GRBL 驱动程序，适用于标准缓冲计数�
 **何时不使用：**
 
 - 标准 GRBL Serial 驱动程序在大多数设备上可靠工作
-- Simple 驱动程序缺乏死锁恢复，因此作业可能在丢失 "ok" 响应时
-  停止而无法自动恢复
+- Simple 驱动程序缺乏死锁恢复，因此作业可能在丢失 "ok" 响应时停止而无法自动恢复
 
 ---
 
 ## grblHAL
 
-**状态：** 兼容
-**版本：** 2023+
-**驱动程序：** GRBL 串口
+**状态：** 兼容 **版本：** 2023+ **驱动程序：** GRBL 串口
 
 ### 什么是 grblHAL？
 
@@ -154,13 +148,12 @@ grblHAL 是 GRBL 的现代分支，具有增强功能：
 
 ## GRBL Telnet 驱动
 
-**状态：** 支持
-**固件：** grblHAL、ESP3D 和其他网络化 GRBL 控制器
-**驱动程序：** GRBL Telnet
+**状态：** 支持 **固件：** grblHAL、ESP3D 和其他网络化 GRBL 控制器 **驱动程序：** GRBL Telnet
 
 ### 关于 GRBL Telnet 驱动
 
-GRBL Telnet 驱动通过网络 Telnet 接口连接基于 GRBL 的控制器。适用于内置 WiFi 或以太网的板子——无需 USB 电缆。
+GRBL
+Telnet 驱动通过网络 Telnet 接口连接基于 GRBL 的控制器。适用于内置 WiFi 或以太网的板子——无需 USB 电缆。
 
 **功能：**
 
@@ -219,13 +212,12 @@ Smoothieware 使用不同的 G 代码语法：
 
 ## Marlin
 
-**版本：** 2.0+ 带激光支持
-**驱动程序：** Marlin 串口
+**版本：** 2.0+ 带激光支持 **驱动程序：** Marlin 串口
 
 ### Marlin 串口驱动程序
 
-Rayforge 包含一个专用的 MarlinSerialDriver，通过串口 (USB) 连接到 Marlin 固件。
-Marlin 2.0+ 在正确配置时可以控制激光。
+Rayforge 包含一个专用的 MarlinSerialDriver，通过串口 (USB) 连接到 Marlin 固件。Marlin
+2.0+ 在正确配置时可以控制激光。
 
 **功能：**
 
@@ -504,33 +496,40 @@ $22=1       ; 归零启用
 
 ---
 
-## 未来的固件支持
+## Ruida 控制器
 
-### Ruida 控制器
-
-Rayforge 包含对基于 Ruida 的控制器的实验性支持（例如 RDC6442、RDC6445、Ruida R5）。Ruida 驱动程序通过网络连接，支持点动、位置报告、气辅控制、图层选择、自动连接和状态轮询。
+Rayforge 通过 **Ruida RPA** 驱动程序连接基于 Ruida 的控制器（例如 RDC6442、RDC6445、Ruida
+R5），该驱动程序通过 USB 或 UDP 使用控制器原生协议通信，或经由 Ruida Protocol Analyzer 通过 TUI
+RPC 连接。Generic Ruida RPA 和 Monport MP-570 60W CO2 设备配置文件为新机器提供起点。
 
 **功能：**
 
-- 网络连接（以太网/WiFi）
-- 位置报告
-- 点动控制
-- 气辅和图层选择
-- 参考点支持
+- USB 和 UDP 连接；两者都配置时，Rayforge 会在插拔线缆时自动在两者之间切换
+- 发送作业，支持位置报告、点动、回零和移动到位置
+- 边框定位以关束绝对移动描画作业轮廓，因此无需触发激光即可工作
+- 遵循每个步骤的 Power Mode 设置：Dynamic 启用控制器的功率缩放，Constant 将其禁用
+- 串口可从带 VID:PID 匹配的 USB 设备下拉列表中绑定，因此操作系统重新枚举 USB 设备后自动重连仍能跟随机器
+
+**功率调节设置：**
+
+- **Power scaling** — 在层的切割速度降低时提高发出的最小功率
+- **VECTOR power floor** — 加速和减速期间矢量切割补偿的最小功率，减少线段端部的过烧
+- **IMAGE power bias** — 加到光栅扫描线上的功率，因为 CO2 激光管在极低功率下不点火
 
 **限制：**
 
-- 实验性 — 尚未完全稳定
+- 实验性 — 目前已在 RDC6442S 控制器（Monport MP570 CO2）上测试
 - 不生成 G 代码；Ruida 使用自己的专有协议
-- 尚不支持发送作业
+- 尚不支持旋转模式
 
 ---
 
+## 实验性驱动程序
+
 ### OctoPrint
 
-Rayforge 包含一个实验性的 OctoPrint 驱动程序，可通过网络直接向 OctoPrint
-服务器提交 G 代码。如果您的激光器连接到运行 OctoPrint 的 Raspberry Pi 或其他
-计算机上，这将非常有用。
+Rayforge 包含一个实验性的 OctoPrint 驱动程序，可通过网络直接向 OctoPrint 服务器提交 G 代码。如果您的激光器连接到运行 OctoPrint 的 Raspberry
+Pi 或其他计算机上，这将非常有用。
 
 **功能：**
 

@@ -1,11 +1,25 @@
+# flake8: noqa: E402
 """Integration tests for AddEditRecipeDialog step-type targeting."""
 
+from gettext import gettext as _
+
+import gi
 import pytest
 
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+
+from gi.repository import Gio, Gtk
+
 from rayforge.core.recipe import Recipe
+from rayforge.core.step import Step
+from rayforge.core.step_registry import step_registry
+from rayforge.core.varset import IntVar, VarSet
 from rayforge.machine.models.laser import Laser
 from rayforge.machine.models.machine import Machine
-from rayforge.ui_gtk.doceditor.edit_recipe_dialog import AddEditRecipeDialog
+from rayforge.ui_gtk.doceditor.recipes.edit_recipe_dialog import (
+    AddEditRecipeDialog,
+)
 
 pytestmark = pytest.mark.ui
 
@@ -31,15 +45,6 @@ def laser_machine(ui_context_initializer):
     return machine
 
 
-def _capability_index(dialog, cap_name):
-    # Capabilities are offset by 1 in the row because index 0 is "Any".
-    page = dialog.applicability_page
-    for i, cap in enumerate(page._ui_capabilities):
-        if cap.name == cap_name:
-            return i + 1
-    raise AssertionError(f"Capability {cap_name} not found")
-
-
 def _settings_keys(dialog):
     """Collect widget keys across all settings pages."""
     keys = []
@@ -48,45 +53,13 @@ def _settings_keys(dialog):
     return keys
 
 
-def test_default_task_type_is_any_shows_all_steps(laser_machine):
-    """Opening the editor defaults to 'Any' task type, listing all steps."""
+def test_default_selection_is_generic(laser_machine):
+    """Opening the editor with no recipe defaults to a generic (any step)
+    selection and base Step settings."""
     dialog = AddEditRecipeDialog(parent=None, recipe=None)
     page = dialog.applicability_page
 
-    # Default task type is "Any" (index 0).
-    assert page.capability_row.get_selected() == 0
-    assert page.get_capability() is None
-
-    # All non-hidden step types are visible, including EngraveStep.
-    step_types = page._ui_step_types
-    assert step_types[0] is None  # "Any Type"
-    assert "EngraveStep" in step_types
-    assert "ContourStep" in step_types
-
-    dialog.close()
-
-
-def test_step_type_dropdown_filters_by_capability(laser_machine):
-    """Selecting a specific task type filters the step list to it."""
-    dialog = AddEditRecipeDialog(parent=None, recipe=None)
-    page = dialog.applicability_page
-
-    page.capability_row.set_selected(_capability_index(dialog, "CUT"))
-
-    step_types = page._ui_step_types
-    assert step_types[0] is None  # "Any Type"
-    assert "ContourStep" in step_types
-    assert "FrameStep" in step_types
-    # EngraveStep is ENGRAVE-only, so not under CUT.
-    assert "EngraveStep" not in step_types
-
-    dialog.close()
-
-
-def test_any_task_type_shows_base_step_settings(laser_machine):
-    """With 'Any' task type and no step type, base Step settings appear."""
-    recipe = Recipe(name="Generic", target_capability_name="")
-    dialog = AddEditRecipeDialog(parent=None, recipe=recipe)
+    assert page.get_step_types() == []
 
     keys = _settings_keys(dialog)
     assert "cut_speed" in keys
@@ -95,36 +68,20 @@ def test_any_task_type_shows_base_step_settings(laser_machine):
     assert "cut_side" not in keys
 
     data = dialog.get_recipe_data()
-    assert data["target_step_type"] is None
-    assert data["target_capability_name"] == ""
+    assert data["target_step_types"] == []
 
     dialog.close()
 
 
-def test_capability_task_type_uses_capability_varset(laser_machine):
-    """A specific task type with no step type uses the capability varset."""
-    recipe = Recipe(name="Generic Cut", target_capability_name="CUT")
-    dialog = AddEditRecipeDialog(parent=None, recipe=recipe)
-
-    keys = _settings_keys(dialog)
-    # The capability varset has no step-specific keys like cut_side.
-    assert "cut_side" not in keys
-    assert "power" in keys
-
-    data = dialog.get_recipe_data()
-    assert data["target_step_type"] is None
-    assert data["target_capability_name"] == "CUT"
-
-    dialog.close()
-
-
-def test_step_type_splits_into_laser_and_step_pages(laser_machine):
-    """Selecting ContourStep splits settings into Laser + Step Settings."""
+def test_single_step_type_shows_step_specific_settings(laser_machine):
+    """Selecting one step type shows that step's full settings groups."""
     recipe = Recipe(
         name="Contour Recipe",
-        target_capability_name="CUT",
-        target_step_type="ContourStep",
-        settings={"power": 0.8, "cut_side": "OUTSIDE"},
+        target_step_types=["ContourStep"],
+        setting_dicts=[
+            {"name": "power", "value": 0.8, "recipe_apply": True},
+            {"name": "cut_side", "value": "OUTSIDE", "recipe_apply": True},
+        ],
     )
     dialog = AddEditRecipeDialog(parent=None, recipe=recipe)
 
@@ -133,34 +90,360 @@ def test_step_type_splits_into_laser_and_step_pages(laser_machine):
     assert any("Laser" in t for t in titles)
     assert any("Step Settings" in t for t in titles)
 
-    # cut_side lives on the Step Settings page; power on the Laser page.
     all_keys = set(_settings_keys(dialog))
     assert "cut_side" in all_keys
     assert "cut_order" in all_keys
     assert "power" in all_keys
 
     data = dialog.get_recipe_data()
-    assert data["target_step_type"] == "ContourStep"
-    assert data["settings"]["power"] == 0.8
-    assert data["settings"]["cut_side"] == "OUTSIDE"
+    assert data["target_step_types"] == ["ContourStep"]
+    assert any(
+        d["name"] == "power" and d["value"] == 0.8
+        for d in data["setting_dicts"]
+    )
+    assert any(
+        d["name"] == "cut_side" and d["value"] == "OUTSIDE"
+        for d in data["setting_dicts"]
+    )
 
     dialog.close()
 
 
-def test_changing_capability_resets_step_type(laser_machine):
-    """Changing capability resets the step type to 'Any Type'."""
+def test_multi_step_types_show_common_settings(laser_machine):
+    """Multiple step types show only the settings common to all of them.
+
+    ContourStep and EngraveStep only share the inherited Laser group;
+    their step-specific settings (cut_side / scan_angle) are excluded.
+    """
     recipe = Recipe(
-        name="Contour Recipe",
-        target_capability_name="CUT",
-        target_step_type="ContourStep",
+        name="Multi",
+        target_step_types=["ContourStep", "EngraveStep"],
     )
     dialog = AddEditRecipeDialog(parent=None, recipe=recipe)
-    page = dialog.applicability_page
-    assert page.step_type_row.get_selected() != 0  # a step type selected
 
-    # Switch to ENGRAVE capability.
-    page.capability_row.set_selected(_capability_index(dialog, "ENGRAVE"))
-    # Step type should reset to "Any Type" (index 0).
-    assert page.step_type_row.get_selected() == 0
+    keys = _settings_keys(dialog)
+    assert "cut_speed" in keys
+    assert "travel_speed" in keys
+    assert "power" in keys
+    assert "cut_side" not in keys  # ContourStep-specific
+    assert "scan_angle" not in keys  # EngraveStep-specific
+
+    data = dialog.get_recipe_data()
+    assert data["target_step_types"] == ["ContourStep", "EngraveStep"]
+
+    dialog.close()
+
+
+def test_selecting_single_step_type_rebuilds_settings(laser_machine):
+    """Changing the selection to a single step type rebuilds the settings."""
+    dialog = AddEditRecipeDialog(parent=None, recipe=None)
+    page = dialog.applicability_page
+
+    # Simulate the StepTypeSelectionDialog callback.
+    page._on_step_types_selected(["ContourStep"])
+
+    assert page.get_step_types() == ["ContourStep"]
+    all_keys = set(_settings_keys(dialog))
+    assert "cut_side" in all_keys
+    assert "power" in all_keys
+
+    dialog.close()
+
+
+def test_mixed_laser_and_cnc_shows_neutral_settings(laser_machine):
+    """A laser + CNC selection must show only the base "Settings" group,
+    never a "CNC" or "Laser" domain tab."""
+
+    # The CNC addon may not be loaded in tests, so register a minimal
+    # local stand-in with the same varset structure.
+    class FakeCncStep(Step):
+        @classmethod
+        def recipe_varset(cls) -> VarSet:
+            return VarSet(
+                vars=[
+                    *Step.recipe_varset().vars,
+                    IntVar(
+                        key="spindle_rpm", label="Spindle RPM", default=100
+                    ),
+                ]
+            )
+
+        @classmethod
+        def recipe_varset_groups(cls):
+            return [
+                (_("CNC"), VarSet(vars=list(cls.recipe_varset()))),
+            ]
+
+    step_registry.register(FakeCncStep, addon_name="_test")
+    try:
+        dialog = AddEditRecipeDialog(parent=None, recipe=None)
+        page = dialog.applicability_page
+        page._on_step_types_selected(["ContourStep", "FakeCncStep"])
+
+        titles = [p.group_title for p in dialog._settings_pages.values()]
+        assert titles == ["Settings"], f"got group titles {titles}"
+
+        keys = _settings_keys(dialog)
+        assert "cut_speed" in keys
+        assert "travel_speed" in keys
+        assert "power" not in keys  # LaserStep-specific
+        assert "spindle_rpm" not in keys  # CncAssemblerStep-specific
+
+        dialog.close()
+    finally:
+        step_registry.unregister("FakeCncStep")
+
+
+def test_selecting_multi_step_types_shows_common(laser_machine):
+    """Changing to multiple step types shows the common settings only."""
+    dialog = AddEditRecipeDialog(parent=None, recipe=None)
+    page = dialog.applicability_page
+
+    page._on_step_types_selected(["ContourStep", "EngraveStep"])
+
+    keys = _settings_keys(dialog)
+    assert "power" in keys  # shared laser setting
+    assert "cut_side" not in keys
+    assert "scan_angle" not in keys
+
+    dialog.close()
+
+
+# --- POST-PROCESSING TAB ---
+
+
+def test_post_processing_tab_hidden_for_generic_selection(laser_machine):
+    """The base Step has no transformers, so no tab appears."""
+    dialog = AddEditRecipeDialog(parent=None, recipe=None)
+    assert dialog._post_processing_page is None
+    assert "post-processing" not in dialog._tab_buttons
+    assert "transformer_dicts" in dialog.get_recipe_data()
+    assert dialog.get_recipe_data()["transformer_dicts"] == []
+    dialog.close()
+
+
+def test_post_processing_tab_appears_for_contour(laser_machine):
+    """ContourStep has transformers, so the tab appears with them."""
+    recipe = Recipe(name="Contour", target_step_types=["ContourStep"])
+    dialog = AddEditRecipeDialog(parent=None, recipe=recipe)
+
+    assert dialog._post_processing_page is not None
+    assert "post-processing" in dialog._tab_buttons
+    names = [
+        d.get("name")
+        for d in dialog._post_processing_page.get_transformer_dicts()
+    ]
+    assert "Optimize" in names
+    assert "CropTransformer" in names
+
+    # All dicts default to "Toggle off" (recipe_apply=False).
+    assert all(
+        not d.get("recipe_apply")
+        for d in dialog._post_processing_page.get_transformer_dicts()
+    )
+
+    dialog.close()
+
+
+def test_post_processing_tab_restores_recipe_values(laser_machine):
+    """Stored recipe values are overlaid onto the common transformers."""
+    recipe = Recipe(
+        name="Contour",
+        target_step_types=["ContourStep"],
+        transformer_dicts=[
+            {
+                "name": "Optimize",
+                "recipe_apply": True,
+                "enabled": False,
+            }
+        ],
+    )
+    dialog = AddEditRecipeDialog(parent=None, recipe=recipe)
+    assert dialog._post_processing_page is not None
+
+    dicts = {
+        d.get("name"): d
+        for d in dialog._post_processing_page.get_transformer_dicts()
+    }
+    assert dicts["Optimize"]["recipe_apply"] is True
+    assert dicts["Optimize"]["enabled"] is False
+    # Other transformers default to Toggle off.
+    assert dicts["CropTransformer"]["recipe_apply"] is False
+
+    data = dialog.get_recipe_data()
+    data_dicts = {d.get("name"): d for d in data["transformer_dicts"]}
+    assert data_dicts["Optimize"]["recipe_apply"] is True
+    assert data_dicts["Optimize"]["enabled"] is False
+
+    dialog.close()
+
+
+def test_apply_toggle_and_enable_switch_update_dict(laser_machine):
+    """Flipping the apply toggle writes recipe_apply; the group's native
+    enable switch writes enabled."""
+    recipe = Recipe(name="Contour", target_step_types=["ContourStep"])
+    dialog = AddEditRecipeDialog(parent=None, recipe=recipe)
+    assert dialog._post_processing_page is not None
+    page = dialog._post_processing_page
+
+    group = _group_for_transformer(page, "Optimize")
+    dicts = {d.get("name"): d for d in page.get_transformer_dicts()}
+    optimize_dict = dicts["Optimize"]
+    assert optimize_dict["recipe_apply"] is False
+
+    # Flip the apply toggle on.
+    _set_apply_toggle(group, True)
+    assert optimize_dict["recipe_apply"] is True
+
+    # Flip the group's native enable switch off.
+    enable_switch = group.enable_switch
+    assert enable_switch is not None
+    enable_switch.set_active(False)
+    assert optimize_dict["enabled"] is False
+
+    # Flip the apply toggle off again.
+    _set_apply_toggle(group, False)
+    assert optimize_dict["recipe_apply"] is False
+
+    dialog.close()
+
+
+def test_apply_toggle_icon_and_dim_state(laser_machine):
+    """The apply toggle shows check-symbolic when on and
+    disabled-symbolic (plus a dimmed expander) when off."""
+    recipe = Recipe(name="Contour", target_step_types=["ContourStep"])
+    dialog = AddEditRecipeDialog(parent=None, recipe=recipe)
+    assert dialog._post_processing_page is not None
+    page = dialog._post_processing_page
+
+    group = _group_for_transformer(page, "Optimize")
+    toggle = group.apply_toggle
+    assert toggle is not None
+    expander = page._group_expanders[group]
+
+    def _icon_name():
+        child = toggle.get_child()
+        assert isinstance(child, Gtk.Image)
+        # Local resource icons are loaded from a Gio.FileIcon; theme
+        # icons via icon name.
+        name = child.get_icon_name()
+        if name:
+            return name
+        gicon = child.get_gicon()
+        assert isinstance(gicon, Gio.FileIcon)
+        basename = gicon.get_file().get_basename()
+        assert basename is not None
+        return basename.removesuffix(".svg")
+
+    # Default off: disabled icon + dimmed expander.
+    assert _icon_name() == "disabled-symbolic"
+    assert expander.get_opacity() == pytest.approx(0.5, abs=0.01)
+
+    # On: check icon + full opacity.
+    _set_apply_toggle(group, True)
+    assert _icon_name() == "check-symbolic"
+    assert expander.get_opacity() == pytest.approx(1.0)
+
+    # Off again.
+    _set_apply_toggle(group, False)
+    assert _icon_name() == "disabled-symbolic"
+    assert expander.get_opacity() == pytest.approx(0.5, abs=0.01)
+
+    dialog.close()
+
+
+def test_post_processing_tab_rebuilds_with_selection(laser_machine):
+    """Changing the step-type selection rebuilds the post-processing tab."""
+    dialog = AddEditRecipeDialog(parent=None, recipe=None)
+    assert dialog._post_processing_page is None
+
+    dialog.applicability_page._on_step_types_selected(["ContourStep"])
+    assert dialog._post_processing_page is not None
+
+    dialog.applicability_page._on_step_types_selected(["EngraveStep"])
+    assert dialog._post_processing_page is not None
+
+    dialog.applicability_page._on_step_types_selected([])
+    assert dialog._post_processing_page is None
+
+    dialog.close()
+
+
+def _group_for_transformer(page, name):
+    """The settings group backing the named transformer, if any."""
+    for group, t_dict in page._group_dicts.items():
+        if t_dict.get("name") == name:
+            return group
+    raise AssertionError(f"No group for transformer '{name}'")
+
+
+def _set_apply_toggle(group, active):
+    """Flip the group's apply toggle, mirroring a click."""
+    toggle = group.apply_toggle
+    assert toggle is not None
+    toggle.set_active(active)
+
+
+def _setting_dicts_by_name(dialog):
+    """Collect setting_dicts from get_recipe_data, keyed by name."""
+    data = dialog.get_recipe_data()
+    return {d["name"]: d for d in data["setting_dicts"]}
+
+
+def test_setting_apply_state_preserved_from_existing_recipe(laser_machine):
+    """Existing recipe entries with recipe_apply=True keep their toggles
+    on when loaded into the editor."""
+    recipe = Recipe(
+        name="Contour Recipe",
+        target_step_types=["ContourStep"],
+        setting_dicts=[
+            {"name": "power", "value": 0.8, "recipe_apply": True},
+            {"name": "cut_speed", "value": 300, "recipe_apply": False},
+        ],
+    )
+    dialog = AddEditRecipeDialog(parent=None, recipe=recipe)
+
+    by_name = _setting_dicts_by_name(dialog)
+    assert by_name["power"]["recipe_apply"] is True
+    assert by_name["power"]["value"] == 0.8
+    assert by_name["cut_speed"]["recipe_apply"] is False
+    assert by_name["cut_speed"]["value"] == 300
+
+    dialog.close()
+
+
+def test_new_recipe_defaults_settings_to_not_applied(laser_machine):
+    """A new recipe (no existing setting_dicts) has all toggles off."""
+    dialog = AddEditRecipeDialog(parent=None, recipe=None)
+    dialog.applicability_page._on_step_types_selected(["ContourStep"])
+
+    by_name = _setting_dicts_by_name(dialog)
+    # Every setting should default to recipe_apply=False.
+    for name, d in by_name.items():
+        assert d["recipe_apply"] is False, f"{name} should default to off"
+
+    dialog.close()
+
+
+def test_flipping_apply_toggle_changes_recipe_apply(laser_machine):
+    """Toggling a setting's apply toggle updates recipe_apply in the
+    collected data."""
+    recipe = Recipe(
+        name="Contour Recipe",
+        target_step_types=["ContourStep"],
+        setting_dicts=[
+            {"name": "power", "value": 0.8, "recipe_apply": False},
+        ],
+    )
+    dialog = AddEditRecipeDialog(parent=None, recipe=recipe)
+
+    # Find the page containing "power" and flip its toggle on.
+    for page in dialog._settings_pages.values():
+        if "power" in page.keys:
+            page._widget.set_apply_state("power", True)
+            break
+
+    by_name = _setting_dicts_by_name(dialog)
+    assert by_name["power"]["recipe_apply"] is True
 
     dialog.close()

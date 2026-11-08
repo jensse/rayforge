@@ -44,15 +44,27 @@ git rebase upstream/main
 ## Soumettre une Pull Request
 
 1. Poussez votre branche vers votre fork :
+
    ```bash
    git push origin feature/votre-nom-de-fonctionnalite
    ```
 
-2. Créez une pull request sur GitHub avec :
-   - Un titre clair décrivant le changement
-   - Une description détaillée de ce que vous avez changé et pourquoi
+2. Créez une pull request sur GitHub et remplissez le modèle de pull request :
+   - Un titre clair et une description du changement et du problème qu'il résout
+   - Pourquoi vous avez choisi votre approche architecturale et quelles alternatives vous avez
+     écartées
+   - Les étapes exactes que vous avez suivies pour tester le changement localement
    - Référence aux tickets liés le cas échéant
    - Captures d'écran si le changement affecte l'interface
+   - Toutes les cases de la liste de contrôle du modèle cochées
+
+<!-- prettier-ignore-start -->
+:::warning[Application du modèle]
+Les pull requests qui ne remplissent pas le modèle sont fermées automatiquement par un bot.
+Modifiez la description de la pull request pour répondre à chaque section et cocher chaque case ;
+la pull request est ensuite rouverte automatiquement.
+:::
+<!-- prettier-ignore-end -->
 
 ## Processus de revue de code
 
@@ -70,6 +82,16 @@ Les pull requests sont fusionnées lorsqu'elles :
 - [ ] Ont des mises à jour de documentation si nécessaire
 - [ ] Sont approuvées par au moins un mainteneur
 
+## Code assisté par IA
+
+Nous accueillons l'utilisation d'outils d'IA pour aider à écrire du code. Cependant, vous êtes
+strictement responsable du code que vous soumettez. Vous DEVEZ le comprendre entièrement et être
+capable d'expliquer les choix architecturaux.
+
+Le code généré par IA introduit souvent des bugs subtils, des inadéquations architecturales et des
+failles de sécurité. Les pull requests qui semblent être des sorties d'IA brutes et non relues
+seront fermées pour respecter le temps des mainteneurs.
+
 ## Directives supplémentaires
 
 ### Messages de commit
@@ -83,13 +105,20 @@ Utilisez des messages de commit clairs et descriptifs :
 
 ### Changements petits et ciblés
 
-Gardez les pull requests focalisées sur une seule fonctionnalité ou correction. Les grands changements devraient être divisés en morceaux plus petits et logiques.
+Gardez les pull requests focalisées sur une seule fonctionnalité ou correction. Les grands
+changements devraient être divisés en morceaux plus petits et logiques.
 
-:::tip Discutez d'abord
-Pour les changements majeurs, ouvrez d'abord un [ticket](https://github.com/barebaric/rayforge/issues) pour discuter de votre approche avant d'investir beaucoup de temps.
+<!-- prettier-ignore-start -->
+:::tip[Discutez d'abord]
+Pour les changements majeurs, ouvrez d'abord un
+[ticket](https://github.com/barebaric/rayforge/issues) pour discuter de votre approche avant
+d'investir beaucoup de temps.
 :::
+<!-- prettier-ignore-end -->
 
-
-:::note Besoin d'aide ?
-Si vous n'êtes sûr d'aucune partie du processus de contribution, n'hésitez pas à demander de l'aide dans un ticket ou une discussion.
+<!-- prettier-ignore-start -->
+:::note[Besoin d'aide ?]
+Si vous n'êtes sûr d'aucune partie du processus de contribution, n'hésitez
+pas à demander de l'aide dans un ticket ou une discussion.
 :::
+<!-- prettier-ignore-end -->

@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Rayforge\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-05-08 23:36+0200\n"
+"POT-Creation-Date: 2026-10-15 05:49+0200\n"
 "PO-Revision-Date: 2025-07-24 22:08+0200\n"
 "Last-Translator: Samuel Abels <knipknap@gmail.com>\n"
 "Language-Team: none\n"
@@ -45,13 +45,18 @@ msgstr "Parallelogramm"
 msgid "Origin at {}"
 msgstr "Ursprung bei {}"
 
-#: sketcher/core/constraints/point_on_line.py
-msgid "Point on Line"
-msgstr "Punkt auf Linie"
+#: sketcher/core/constraints/point_on_curve.py
+msgid "Point on Curve"
+msgstr "Punkt auf Kurve"
 
+#: sketcher/core/constraints/point_on_curve.py
 #: sketcher/core/constraints/point_on_line.py
 msgid "Point at {}"
 msgstr "Punkt bei {}"
+
+#: sketcher/core/constraints/point_on_line.py
+msgid "Point on Line"
+msgstr "Punkt auf Linie"
 
 #: sketcher/core/constraints/collinear.py
 msgid "Collinear"
@@ -70,7 +75,11 @@ msgstr "Tangente"
 msgid "Line to {} at {}"
 msgstr "Linie zu {} bei {}"
 
-#: sketcher/core/constraints/distance.py
+#: sketcher/core/constraints/rotational.py
+msgid "Rotational Array"
+msgstr "Rotationsarray"
+
+#: sketcher/core/constraints/distance.py sketcher/ui_gtk/tools/offset_tool.py
 #: sketcher/ui_gtk/tools/distance_constraint_tool.py
 msgid "Distance"
 msgstr "Abstand"
@@ -81,6 +90,11 @@ msgstr "Abstand"
 #: sketcher/core/constraints/aspect_ratio.py
 msgid "From {} to {}"
 msgstr "Von {} bis {}"
+
+#: sketcher/core/constraints/distance.py sketcher/core/constraints/vertical.py
+#: sketcher/core/constraints/horizontal.py
+msgid "Enter length or expression."
+msgstr "Länge oder Ausdruck eingeben."
 
 #: sketcher/core/constraints/vertical.py
 #: sketcher/ui_gtk/tools/vertical_constraint_tool.py
@@ -114,6 +128,10 @@ msgstr "Symmetrie"
 msgid "Horizontal"
 msgstr "Horizontal"
 
+#: sketcher/core/constraints/base.py
+msgid "Enter value or expression."
+msgstr "Wert oder Ausdruck eingeben."
+
 #: sketcher/core/constraints/angle.py
 #: sketcher/ui_gtk/tools/angle_constraint_tool.py
 msgid "Angle"
@@ -123,6 +141,10 @@ msgstr "Winkel"
 msgid "Between two lines"
 msgstr "Zwischen zwei Linien"
 
+#: sketcher/core/constraints/angle.py
+msgid "Enter angle in degrees or expression."
+msgstr "Winkel in Grad oder Ausdruck eingeben."
+
 #: sketcher/core/constraints/diameter.py
 #: sketcher/ui_gtk/tools/diameter_constraint_tool.py
 msgid "Diameter"
@@ -131,6 +153,10 @@ msgstr "Durchmesser"
 #: sketcher/core/constraints/diameter.py
 msgid "Circle at {}"
 msgstr "Kreis bei {}"
+
+#: sketcher/core/constraints/diameter.py
+msgid "Enter diameter or expression."
+msgstr "Durchmesser oder Ausdruck eingeben."
 
 #: sketcher/core/constraints/coincident.py
 #: sketcher/ui_gtk/tools/coincident_constraint_tool.py
@@ -142,6 +168,7 @@ msgid "At {}"
 msgstr "Bei {}"
 
 #: sketcher/core/constraints/radius.py
+#: sketcher/ui_gtk/tools/circular_array_tool.py
 #: sketcher/ui_gtk/tools/radius_constraint_tool.py
 msgid "Radius"
 msgstr "Radius"
@@ -149,6 +176,10 @@ msgstr "Radius"
 #: sketcher/core/constraints/radius.py
 msgid "{} at {}"
 msgstr "{} bei {}"
+
+#: sketcher/core/constraints/radius.py
+msgid "Enter radius or expression (e.g. 'width/2')."
+msgstr "Radius oder Ausdruck eingeben (z. B. 'Breite/2')."
 
 #: sketcher/core/constraints/aspect_ratio.py
 #: sketcher/ui_gtk/tools/aspect_ratio_constraint_tool.py
@@ -203,9 +234,17 @@ msgstr "{} hinzufügen"
 msgid "Add Grid"
 msgstr "Raster hinzufügen"
 
+#: sketcher/core/commands/edit_array.py
+msgid "Edit Array"
+msgstr "Array bearbeiten"
+
 #: sketcher/core/commands/chamfer.py
 msgid "Add Chamfer"
 msgstr "Fase hinzufügen"
+
+#: sketcher/core/commands/mirror.py
+msgid "Mirror Selection"
+msgstr "Auswahl spiegeln"
 
 #: sketcher/core/commands/arc.py
 msgid "Add Arc"
@@ -216,9 +255,21 @@ msgstr "Bogen hinzufügen"
 msgid "Straighten"
 msgstr "Geraderichten"
 
+#: sketcher/core/commands/duplicate.py
+msgid "Duplicate Selection"
+msgstr "Auswahl duplizieren"
+
+#: sketcher/core/commands/create_array.py
+msgid "Create Array"
+msgstr "Array erstellen"
+
 #: sketcher/core/commands/rounded_rect.py
 msgid "Add Rounded Rectangle"
 msgstr "Abgerundetes Rechteck hinzufügen"
+
+#: sketcher/core/commands/offset.py sketcher/ui_gtk/tools/offset_tool.py
+msgid "Offset"
+msgstr "Versatz"
 
 #: sketcher/core/commands/rectangle.py
 msgid "Add Rectangle"
@@ -232,6 +283,26 @@ msgstr "Texteigenschaft ändern"
 msgid "Set Waypoint Type"
 msgstr "Wegpunkttyp festlegen"
 
+#: sketcher/core/commands/boolean.py sketcher/ui_gtk/menu.py
+msgid "Union"
+msgstr "Vereinigung"
+
+#: sketcher/core/commands/boolean.py sketcher/ui_gtk/menu.py
+msgid "Difference"
+msgstr "Differenz"
+
+#: sketcher/core/commands/boolean.py sketcher/ui_gtk/menu.py
+msgid "Intersection"
+msgstr "Schnittmenge"
+
+#: sketcher/core/commands/boolean.py sketcher/ui_gtk/menu.py
+msgid "Exclude"
+msgstr "Ausschluss"
+
+#: sketcher/core/commands/polygon.py
+msgid "Add Polygon"
+msgstr "Polygon hinzufügen"
+
 #: sketcher/core/commands/point.py
 msgid "Move Point"
 msgstr "Punkt verschieben"
@@ -243,6 +314,10 @@ msgstr "Kontrollpunkt verschieben"
 #: sketcher/core/commands/point.py
 msgid "Unstick Junction"
 msgstr "Verbindung lösen"
+
+#: sketcher/core/commands/point.py
+msgid "Move Entities"
+msgstr "Elemente verschieben"
 
 #: sketcher/core/commands/ellipse.py
 msgid "Add Ellipse"
@@ -284,6 +359,14 @@ msgstr "Skizze bearbeiten"
 msgid "Export Object..."
 msgstr "Objekt exportieren..."
 
+#: sketcher/ui_gtk/studio.py sketcher/ui_gtk/menu.py
+msgid "Undo"
+msgstr "Rückgängig"
+
+#: sketcher/ui_gtk/studio.py sketcher/ui_gtk/menu.py
+msgid "Redo"
+msgstr "Wiederholen"
+
 #: sketcher/ui_gtk/studio.py
 msgid "Toggle constraints"
 msgstr "Bedingungen umschalten"
@@ -296,9 +379,19 @@ msgstr "Konstruktionsgeometrie umschalten"
 msgid "Fill color:"
 msgstr "Füllfarbe:"
 
+#: sketcher/ui_gtk/studio.py sketcher/ui_gtk/tools/mirror_tool.py
+#: sketcher/ui_gtk/menu.py
+msgid "Mirror Vertically"
+msgstr "Vertikal spiegeln"
+
+#: sketcher/ui_gtk/studio.py sketcher/ui_gtk/tools/mirror_tool.py
+#: sketcher/ui_gtk/menu.py
+msgid "Mirror Horizontally"
+msgstr "Horizontal spiegeln"
+
 #: sketcher/ui_gtk/studio.py sketcher/ui_gtk/tools/dimension_input.py
 #: sketcher/ui_gtk/tools/grid_tool.py sketcher/ui_gtk/tools/circle_tool.py
-#: sketcher/ui_gtk/sketchcanvas.py
+#: sketcher/ui_gtk/tools/offset_tool.py sketcher/ui_gtk/sketchcanvas.py
 msgid "Cancel"
 msgstr "Abbrechen"
 
@@ -344,7 +437,7 @@ msgstr "An Achse binden"
 
 #: sketcher/ui_gtk/tools/select_tool.py sketcher/ui_gtk/tools/path_tool.py
 #: sketcher/ui_gtk/tools/rectangle_tool.py sketcher/ui_gtk/tools/arc_tool.py
-#: sketcher/ui_gtk/tools/circle_tool.py
+#: sketcher/ui_gtk/tools/circle_tool.py sketcher/ui_gtk/tools/polygon_tool.py
 msgid "Toggle Magnetic Snap"
 msgstr "Magnetisches Einrasten umschalten"
 
@@ -357,6 +450,7 @@ msgid "Fillet"
 msgstr "Abrundung"
 
 #: sketcher/ui_gtk/tools/dimension_input.py
+#: sketcher/ui_gtk/tools/offset_tool.py
 msgid "Apply"
 msgstr "Anwenden"
 
@@ -385,7 +479,8 @@ msgstr "Am Raster ausrichten"
 msgid "Sharp"
 msgstr "Scharf"
 
-#: sketcher/ui_gtk/tools/rectangle_tool.py sketcher/ui_gtk/menu.py
+#: sketcher/ui_gtk/tools/rectangle_tool.py sketcher/ui_gtk/tools/__init__.py
+#: sketcher/ui_gtk/menu.py
 msgid "Rectangle"
 msgstr "Rechteck"
 
@@ -399,9 +494,40 @@ msgstr "B"
 msgid "H"
 msgstr "H"
 
+#: sketcher/ui_gtk/tools/rectangle_tool.py sketcher/ui_gtk/tools/circle_tool.py
+#: sketcher/ui_gtk/tools/rounded_rect_tool.py
+msgid "Center on start point"
+msgstr "Mittelpunkt auf Startpunkt"
+
+#: sketcher/ui_gtk/tools/rectangle_tool.py
+#: sketcher/ui_gtk/tools/rounded_rect_tool.py
+msgid "Constrain to square"
+msgstr "Auf Quadrat beschränken"
+
 #: sketcher/ui_gtk/tools/rectangle_tool.py
 msgid "Type dimensions (W H)"
 msgstr "Maße eingeben (B H)"
+
+#: sketcher/ui_gtk/tools/rectangle_tool.py sketcher/ui_gtk/tools/circle_tool.py
+#: sketcher/ui_gtk/tools/rounded_rect_tool.py
+msgid "Set edge point"
+msgstr "Kantenpunkt festlegen"
+
+#: sketcher/ui_gtk/tools/__init__.py
+msgid "Array"
+msgstr "Array"
+
+#: sketcher/ui_gtk/tools/__init__.py
+msgid "Constrain"
+msgstr "Beschränken"
+
+#: sketcher/ui_gtk/tools/__init__.py
+msgid "Dimension"
+msgstr "Bemaßung"
+
+#: sketcher/ui_gtk/tools/__init__.py
+msgid "Waypoint"
+msgstr "Wegpunkt"
 
 #: sketcher/ui_gtk/tools/aspect_ratio_constraint_tool.py
 msgid "Add Aspect Ratio Constraint"
@@ -415,7 +541,8 @@ msgstr "Winkelbedingung hinzufügen"
 msgid "Fill"
 msgstr "Füllung"
 
-#: sketcher/ui_gtk/tools/arc_tool.py sketcher/ui_gtk/menu.py
+#: sketcher/ui_gtk/tools/arc_tool.py
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py sketcher/ui_gtk/menu.py
 msgid "Arc"
 msgstr "Bogen"
 
@@ -452,10 +579,6 @@ msgid "Ellipse"
 msgstr "Ellipse"
 
 #: sketcher/ui_gtk/tools/circle_tool.py
-msgid "Center on start point"
-msgstr "Mittelpunkt auf Startpunkt"
-
-#: sketcher/ui_gtk/tools/circle_tool.py
 msgid "Constrain to circle"
 msgstr "Auf Kreis beschränken"
 
@@ -463,15 +586,114 @@ msgstr "Auf Kreis beschränken"
 msgid "Add Vertical Constraint"
 msgstr "Vertikale Bedingung hinzufügen"
 
+#: sketcher/ui_gtk/tools/circular_array_tool.py sketcher/ui_gtk/menu.py
+msgid "Circular Array"
+msgstr "Kreisförmiges Array"
+
+#: sketcher/ui_gtk/tools/circular_array_tool.py
+msgid "Edit Circular Array"
+msgstr "Kreisförmiges Array bearbeiten"
+
+#: sketcher/ui_gtk/tools/circular_array_tool.py
+msgid "Circular"
+msgstr "Kreisförmig"
+
+#: sketcher/ui_gtk/tools/circular_array_tool.py
+msgid "Places copies along a circular arc around a centre."
+msgstr "Platziert Kopien entlang eines Kreisbogens um einen Mittelpunkt."
+
+#: sketcher/ui_gtk/tools/circular_array_tool.py
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "Count"
+msgstr "Anzahl"
+
+#: sketcher/ui_gtk/tools/circular_array_tool.py
+msgid "Total angle (deg)"
+msgstr "Gesamtwinkel (Grad)"
+
+#: sketcher/ui_gtk/tools/circular_array_tool.py
+msgid "Center X"
+msgstr "Mittelpunkt X"
+
+#: sketcher/ui_gtk/tools/circular_array_tool.py
+msgid "Center Y"
+msgstr "Mittelpunkt Y"
+
+#: sketcher/ui_gtk/tools/circular_array_tool.py
+msgid "Rotate copies"
+msgstr "Kopien drehen"
+
+#: sketcher/ui_gtk/tools/circular_array_tool.py
+msgid "Resizes the whole array."
+msgstr "Ändert die Größe des gesamten Arrays."
+
+#: sketcher/ui_gtk/tools/circular_array_tool.py
+msgid "Derived from the template's anchor point."
+msgstr "Abgeleitet vom Ankerpunkt der Vorlage."
+
 #: sketcher/ui_gtk/tools/delete_tool.py
 msgid "Delete Selection"
 msgstr "Auswahl löschen"
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "Line"
+msgstr "Linie"
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "Bezier"
+msgstr "Bezier"
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py sketcher/ui_gtk/menu.py
+msgid "Array Along Curve"
+msgstr "Array entlang Kurve"
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "Edit Array Along Curve"
+msgstr "Array entlang Kurve bearbeiten"
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "Along Curve"
+msgstr "Entlang Kurve"
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "Distributes copies along a guide path, oriented to its tangent."
+msgstr ""
+"Verteilt Kopien entlang eines Leitpfads, orientiert an dessen Tangente."
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "Guide path"
+msgstr "Leitpfad"
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "First selected entity; the rest are repeated."
+msgstr "Erstes ausgewähltes Element; die restlichen werden wiederholt."
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "Spacing"
+msgstr "Abstand"
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid ""
+"Distance between copies. 0 derives count from the path length; >0 sets the "
+"count from the usable length."
+msgstr ""
+"Abstand zwischen Kopien. 0 leitet die Anzahl aus der Pfadlänge ab; >0 legt "
+"die Anzahl anhand der nutzbaren Länge fest."
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "Start offset"
+msgstr "Startversatz"
+
+#: sketcher/ui_gtk/tools/curve_along_array_tool.py
+msgid "Align to tangent"
+msgstr "An Tangente ausrichten"
 
 #: sketcher/ui_gtk/tools/rounded_rect_tool.py sketcher/ui_gtk/menu.py
 msgid "Rounded Rectangle"
 msgstr "Abgerundetes Rechteck"
 
 #: sketcher/ui_gtk/tools/rounded_rect_tool.py
+#: sketcher/ui_gtk/tools/polygon_tool.py
 msgid "R"
 msgstr "R"
 
@@ -491,6 +713,18 @@ msgstr "Konstruktion umschalten"
 msgid "Add Radius Constraint"
 msgstr "Radiusbedingung hinzufügen"
 
+#: sketcher/ui_gtk/tools/offset_tool.py
+msgid "Offset Contour"
+msgstr "Kontur versetzen"
+
+#: sketcher/ui_gtk/tools/offset_tool.py
+msgid ""
+"Replaces the selected contours with their offset. Positive values grow "
+"closed contours; open contours become slots."
+msgstr ""
+"Ersetzt die ausgewählten Konturen durch ihren Versatz. Positive Werte "
+"vergrößern geschlossene Konturen; offene Konturen werden zu Schlitzen."
+
 #: sketcher/ui_gtk/tools/text_box_tool.py
 msgid "Text Box"
 msgstr "Textfeld"
@@ -499,6 +733,26 @@ msgstr "Textfeld"
 msgid "Add Diameter Constraint"
 msgstr "Durchmesserbedingung hinzufügen"
 
+#: sketcher/ui_gtk/tools/polygon_tool.py sketcher/ui_gtk/menu.py
+msgid "Polygon"
+msgstr "Polygon"
+
+#: sketcher/ui_gtk/tools/polygon_tool.py
+msgid "N"
+msgstr "N"
+
+#: sketcher/ui_gtk/tools/polygon_tool.py
+msgid "Star"
+msgstr "Stern"
+
+#: sketcher/ui_gtk/tools/polygon_tool.py
+msgid "Type radius, corners and star ratio (R N Star)"
+msgstr "Radius, Ecken und Sternverhältnis eingeben (R N Stern)"
+
+#: sketcher/ui_gtk/tools/polygon_tool.py
+msgid "Set first corner"
+msgstr "Erste Ecke setzen"
+
 #: sketcher/ui_gtk/tools/waypoint_smooth_tool.py
 msgid "Smooth"
 msgstr "Glatt"
@@ -506,6 +760,10 @@ msgstr "Glatt"
 #: sketcher/ui_gtk/tools/coincident_constraint_tool.py
 msgid "Add Coincident Constraint"
 msgstr "Deckungsgleiche Bedingung hinzufügen"
+
+#: sketcher/ui_gtk/tools/coincident_constraint_tool.py
+msgid "Add Point On Curve"
+msgstr "Punkt auf Kurve hinzufügen"
 
 #: sketcher/ui_gtk/tools/coincident_constraint_tool.py
 msgid "Add Point On Shape"
@@ -534,6 +792,14 @@ msgstr "Gleiche-Länge-Bedingung hinzufügen"
 #: sketcher/ui_gtk/tools/distance_constraint_tool.py
 msgid "Add Distance Constraint"
 msgstr "Abstandsbedingung hinzufügen"
+
+#: sketcher/ui_gtk/tools/array_base.py
+msgid "_Cancel"
+msgstr "_Abbrechen"
+
+#: sketcher/ui_gtk/tools/array_base.py
+msgid "_Apply"
+msgstr "_Anwenden"
 
 #: sketcher/ui_gtk/conflicts_widget.py
 msgid "Conflicting Constraints"
@@ -572,14 +838,6 @@ msgid "_File"
 msgstr "_Datei"
 
 #: sketcher/ui_gtk/menu.py
-msgid "Undo"
-msgstr "Rückgängig"
-
-#: sketcher/ui_gtk/menu.py
-msgid "Redo"
-msgstr "Wiederholen"
-
-#: sketcher/ui_gtk/menu.py
 msgid "_Edit"
 msgstr "_Bearbeiten"
 
@@ -602,6 +860,14 @@ msgstr "Ecke abfasen"
 #: sketcher/ui_gtk/menu.py
 msgid "Modify"
 msgstr "Ändern"
+
+#: sketcher/ui_gtk/menu.py
+msgid "Boolean"
+msgstr "Boolesch"
+
+#: sketcher/ui_gtk/menu.py
+msgid "Arrays"
+msgstr "Array"
 
 #: sketcher/ui_gtk/menu.py
 msgid "_Sketch"
@@ -644,26 +910,6 @@ msgid "Select Font"
 msgstr "Schriftart auswählen"
 
 #: sketcher/ui_gtk/sketchcanvas.py
-msgid "Enter radius or expression (e.g. 'width/2')."
-msgstr "Radius oder Ausdruck eingeben (z. B. 'Breite/2')."
-
-#: sketcher/ui_gtk/sketchcanvas.py
-msgid "Enter diameter or expression."
-msgstr "Durchmesser oder Ausdruck eingeben."
-
-#: sketcher/ui_gtk/sketchcanvas.py
-msgid "Enter angle in degrees or expression."
-msgstr "Winkel in Grad oder Ausdruck eingeben."
-
-#: sketcher/ui_gtk/sketchcanvas.py
-msgid "Enter length or expression."
-msgstr "Länge oder Ausdruck eingeben."
-
-#: sketcher/ui_gtk/sketchcanvas.py
-msgid "Enter value or expression."
-msgstr "Wert oder Ausdruck eingeben."
-
-#: sketcher/ui_gtk/sketchcanvas.py
 msgid "OK"
 msgstr "OK"
 
@@ -671,3 +917,11 @@ msgstr "OK"
 #, python-brace-format
 msgid "{app_name} Sketch"
 msgstr "{app_name}-Skizze"
+
+#: sketcher/image/importer.py
+msgid "Sketch file is invalid JSON: {}"
+msgstr "Skizzen-Datei ist ungültiges JSON: {}"
+
+#: sketcher/image/importer.py
+msgid "Failed to load sketch structure: {}"
+msgstr "Fehler beim Laden der Skizzenstruktur: {}"

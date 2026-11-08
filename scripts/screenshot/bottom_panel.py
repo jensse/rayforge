@@ -12,6 +12,7 @@ import time
 from utils import (
     get_target,
     load_project,
+    restore_config,
     restore_panel_states,
     run_on_main_thread,
     save_panel_states,
@@ -19,7 +20,6 @@ from utils import (
     show_bottom_tab,
     show_panel,
     take_cropped_screenshot,
-    target_to_filename,
     wait_for_settled,
 )
 
@@ -45,6 +45,7 @@ def get_tab_name(target: str) -> str:
     return "console"
 
 
+@restore_config
 def main():
     target = get_target("bottom-panel:console")
     tab_name = get_tab_name(target)
@@ -75,7 +76,6 @@ def main():
         f"(window height={window_height}, crop_top={crop_from_top})"
     )
     take_cropped_screenshot(
-        target_to_filename(target),
         from_top=crop_from_top,
     )
 

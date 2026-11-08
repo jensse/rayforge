@@ -1,5 +1,5 @@
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from raygeo.geo import Geometry
@@ -10,14 +10,17 @@ from raygeo.geo.shape.arc import (
     is_angle_between,
 )
 from raygeo.geo.shape.rect import does_rect_contain_rect
-from raygeo.geo.types import Point, Polygon, Rect
+from raygeo.geo.types import Point as GeoPoint
+from raygeo.geo.types import Polygon, Rect
 
 from ..types import EntityID
-from .entity import Entity
+from .entity import _MIN_OFFSET_RADIUS, Entity, OffsetPlan
 
 if TYPE_CHECKING:
+    from ..commands.mirror import MirrorAxis
     from ..constraints import Constraint
     from ..registry import EntityRegistry
+    from ..sketch import Sketch
 
 
 class Arc(Entity):
@@ -47,14 +50,70 @@ class Arc(Entity):
         if "clockwise" in state:
             self.clockwise = state["clockwise"]
 
+    def mirror(self, axis: "MirrorAxis") -> None:
+        # Reflection reverses chirality: a clockwise arc becomes CCW and
+        # vice versa. Point positions are mirrored by the command.
+        self.clockwise = not self.clockwise
+
+    def geometry_signature(self, registry: "EntityRegistry") -> tuple:
+        """Extends the point signature with the arc's chirality, which
+        changes the shape without moving any defining point."""
+        return (*super().geometry_signature(registry), self.clockwise)
+
     def get_point_ids(self) -> list[EntityID]:
         return [self.start_idx, self.end_idx, self.center_idx]
 
     def get_endpoint_ids(self) -> list[EntityID]:
         return [self.start_idx, self.end_idx]
 
+    def is_edge_entity(self) -> bool:
+        return True
+
+    def is_radius_entity(self) -> bool:
+        return True
+
+    def characteristic_length_pairs(
+        self,
+    ) -> list[tuple[EntityID, EntityID]]:
+        return [(self.center_idx, self.start_idx)]
+
+    def tangent_at(
+        self, registry: "EntityRegistry", point_id: EntityID
+    ) -> tuple[float, float]:
+        start = registry.get_point(self.start_idx)
+        end = registry.get_point(self.end_idx)
+        center = registry.get_point(self.center_idx)
+        if not (start and end and center):
+            return (1.0, 0.0)
+        if point_id == start.id:
+            dx, dy = start.x - center.x, start.y - center.y
+            return (dy, -dx) if self.clockwise else (-dy, dx)
+        dx, dy = end.x - center.x, end.y - center.y
+        return (-dy, dx) if self.clockwise else (dy, -dx)
+
+    def radius(self, registry: "EntityRegistry") -> float:
+        start = registry.get_point(self.start_idx)
+        center = registry.get_point(self.center_idx)
+        if not (start and center):
+            return 0.0
+        return math.hypot(start.x - center.x, start.y - center.y)
+
+    def signed_distance_to(self, point, registry):
+        center = registry.get_point(self.center_idx)
+        start = registry.get_point(self.start_idx)
+        if not (center and start):
+            return 0.0
+        radius = math.hypot(start.x - center.x, start.y - center.y)
+        dist_to_point = math.hypot(point.x - center.x, point.y - center.y)
+        return dist_to_point - radius
+
     def get_junction_point_ids(self) -> list[EntityID]:
         return [self.start_idx, self.end_idx, self.center_idx]
+
+    def get_drag_anchor_points(self, point_id: EntityID) -> list[EntityID]:
+        if point_id in (self.start_idx, self.end_idx):
+            return [self.center_idx]
+        return []
 
     def hit_test(
         self,
@@ -182,7 +241,10 @@ class Arc(Entity):
         end_a = math.atan2(end_pt.y - center_pt.y, end_pt.x - center_pt.x)
 
         vertices: Polygon = []
+        # Scale the sample count by the swept angle so short arcs stay
+        # coarse and ~360° arcs get enough resolution.
         num_segments = 16
+        max_segments = 64
 
         if forward:
             if self.clockwise:
@@ -191,6 +253,10 @@ class Arc(Entity):
             else:
                 if end_a < start_a:
                     end_a += 2 * math.pi
+            sweep = abs(end_a - start_a)
+            num_segments = max(
+                2, min(max_segments, int(num_segments * sweep / math.pi))
+            )
             for i in range(num_segments + 1):
                 t = i / num_segments
                 a = start_a + t * (end_a - start_a)
@@ -204,6 +270,10 @@ class Arc(Entity):
             else:
                 if start_a < end_a:
                     start_a += 2 * math.pi
+            sweep = abs(start_a - end_a)
+            num_segments = max(
+                2, min(max_segments, int(num_segments * sweep / math.pi))
+            )
             for i in range(num_segments + 1):
                 t = i / num_segments
                 a = end_a + t * (start_a - end_a)
@@ -238,7 +308,7 @@ class Arc(Entity):
             construction=data.get("construction", False),
         )
 
-    def get_midpoint(self, registry: "EntityRegistry") -> Point | None:
+    def get_midpoint(self, registry: "EntityRegistry") -> GeoPoint | None:
         """
         Calculates the midpoint coordinates along the arc's circumference.
         """
@@ -250,6 +320,74 @@ class Arc(Entity):
         return get_arc_midpoint(
             start.pos(), end.pos(), center.pos(), self.clockwise
         )
+
+    def as_offset_item(self, sketch: "Sketch") -> "Arc":
+        """A lone arc offsets on its own, updated in place. Arcs that
+        belong to a chain never reach this hook."""
+        return self
+
+    def plan_offset(
+        self,
+        registry: "EntityRegistry",
+        offset: float,
+        allocate_id: Callable[[], EntityID],
+    ) -> OffsetPlan | None:
+        """Updates the arc in place: same center and angular extent,
+        start and end points move onto the ring at the offset radius."""
+        start = registry.get_point(self.start_idx)
+        end = registry.get_point(self.end_idx)
+        center = registry.get_point(self.center_idx)
+        radius = math.hypot(start.x - center.x, start.y - center.y)
+        new_radius = radius + offset
+        if new_radius <= _MIN_OFFSET_RADIUS:
+            return None
+
+        plan = OffsetPlan()
+        for pid, pt in (
+            (self.start_idx, start),
+            (self.end_idx, end),
+        ):
+            dx, dy = pt.x - center.x, pt.y - center.y
+            length = math.hypot(dx, dy)
+            if length < 1e-9:
+                ux, uy = 1.0, 0.0
+            else:
+                ux, uy = dx / length, dy / length
+            plan.point_moves[pid] = (
+                center.x + ux * new_radius,
+                center.y + uy * new_radius,
+            )
+        return plan
+
+    def preview_polylines(
+        self, registry: "EntityRegistry", offset: float
+    ) -> list[list[tuple[float, float]]]:
+        """Concentric arc at the offset radius, for live preview."""
+        start = registry.get_point(self.start_idx)
+        end = registry.get_point(self.end_idx)
+        center = registry.get_point(self.center_idx)
+        radius = math.hypot(start.x - center.x, start.y - center.y) + offset
+        if radius <= _MIN_OFFSET_RADIUS:
+            return []
+        start_angle = math.atan2(start.y - center.y, start.x - center.x)
+        end_angle = math.atan2(end.y - center.y, end.x - center.x)
+        sweep = end_angle - start_angle
+        if self.clockwise and sweep > 0:
+            sweep -= 2 * math.pi
+        elif not self.clockwise and sweep < 0:
+            sweep += 2 * math.pi
+        segments = max(8, int(abs(sweep) / math.pi * 32))
+        return [
+            [
+                (
+                    center.x
+                    + radius * math.cos(start_angle + sweep * i / segments),
+                    center.y
+                    + radius * math.sin(start_angle + sweep * i / segments),
+                )
+                for i in range(segments + 1)
+            ]
+        ]
 
     def is_angle_within_sweep(
         self, angle: float, registry: "EntityRegistry"

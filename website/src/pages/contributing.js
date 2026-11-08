@@ -9,8 +9,20 @@ import {
   mdiBookOpenPageVariantOutline,
   mdiHandCoinOutline,
   mdiGithub,
+  mdiYoutube,
+  mdiPlayCircleOutline,
+  mdiStarOutline,
+  mdiFire,
 } from '@mdi/js';
 import styles from './contributing.module.css';
+
+const wishlistTopics = [
+  'Rotary engraving setup',
+  'AI Workpiece Generator',
+  'Camera calibration',
+  'Print & Cut workflow',
+  'Material testing',
+];
 
 const quickActions = [
   {
@@ -47,7 +59,7 @@ export default function Contributing() {
   return (
     <Layout
       title="Contributing"
-      description="Learn how to contribute to Rayforge — report bugs, suggest features, submit code, improve docs, or support the project financially."
+      description="Learn how to contribute to Rayforge — report bugs, suggest features, submit code, create video tutorials, improve docs, or support the project financially."
     >
       <main className={styles.pageWrapper}>
         <section className={styles.hero}>
@@ -59,7 +71,8 @@ export default function Contributing() {
               </h1>
               <p className={styles.heroSubtitle}>
                 Help improve Rayforge: report bugs, suggest features, submit
-                code, refine docs, or support the project financially.
+                code, refine docs, create tutorials, or support the project
+                financially.
               </p>
               <div className={styles.heroCtas}>
                 <a
@@ -100,6 +113,17 @@ export default function Contributing() {
               </div>
               <div className={styles.panelLinks}>
                 <a
+                  href="https://github.com/barebaric/rayforge/discussions"
+                  className={styles.panelLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <span className={styles.panelLinkLabel}>Ask questions</span>
+                  <span className={styles.panelLinkMeta}>
+                    GitHub Discussions
+                  </span>
+                </a>
+                <a
                   href="https://github.com/barebaric/rayforge/issues"
                   className={styles.panelLink}
                   target="_blank"
@@ -117,12 +141,150 @@ export default function Contributing() {
                   <span className={styles.panelLinkLabel}>Browse source</span>
                   <span className={styles.panelLinkMeta}>GitHub repository</span>
                 </a>
+                <a
+                  href="https://github.com/barebaric/rayforge/blob/main/CONTRIBUTING.md"
+                  className={styles.panelLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <span className={styles.panelLinkLabel}>
+                    Contribution rules
+                  </span>
+                  <span className={styles.panelLinkMeta}>CONTRIBUTING.md</span>
+                </a>
                 <Link to="/sponsor" className={styles.panelLink}>
                   <span className={styles.panelLinkLabel}>
                     Become a Sponsor
                   </span>
                   <span className={styles.panelLinkMeta}>Help us Improve</span>
                 </Link>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className={styles.section}>
+          <div className={styles.sectionInner}>
+            <h2 className={styles.sectionTitle}>Make the Biggest Impact</h2>
+            <p className={styles.lead}>
+              Some contributions move the needle more than others. Right now,
+              nothing helps Rayforge grow like video tutorials — and your
+              generosity keeps the project alive.
+            </p>
+
+            <div className={styles.impactGrid}>
+              <div
+                className={`${styles.impactCard} ${styles.impactTutorial}`}
+                id="video-tutorials"
+              >
+                <div
+                  className={`${styles.impactBadge} ${styles.impactBadgeTutorial}`}
+                >
+                  <Icon path={mdiStarOutline} size={0.8} />
+                  <span>Most Wanted</span>
+                </div>
+                <div className={styles.impactCardHeader}>
+                  <div className={`${styles.blockIcon} ${styles.iconRed}`}>
+                    <Icon path={mdiYoutube} size={1.1} />
+                  </div>
+                  <h3 className={styles.impactCardTitle}>
+                    Create Video Tutorials
+                  </h3>
+                </div>
+                <p className={styles.impactCardBody}>
+                  Videos are how most people discover Rayforge — and finished
+                  tutorials get featured on the homepage with your name and
+                  channel link.
+                </p>
+                <ol className={styles.steps}>
+                  <li className={styles.step}>
+                    Pick a topic below — or choose your own.
+                  </li>
+                  <li className={styles.step}>
+                    Record a short screen capture with a voiceover, upload it
+                    to YouTube, and share the link on{' '}
+                    <a
+                      href="https://discord.gg/sTHNdTtpQJ"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Discord
+                    </a>{' '}
+                    or in{' '}
+                    <a
+                      href="https://github.com/barebaric/rayforge/discussions"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      GitHub Discussions
+                    </a>{' '}
+                    to claim your spot.
+                  </li>
+                </ol>
+                <div className={styles.wishlist}>
+                  <div className={styles.wishlistTitle}>
+                    <Icon path={mdiFire} size={0.85} />
+                    <span>Wishlist — claim a topic</span>
+                  </div>
+                  <div className={styles.wishlistChips}>
+                    {wishlistTopics.map((topic) => (
+                      <span className={styles.wishlistChip} key={topic}>
+                        {topic}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <a
+                  href="https://discord.gg/sTHNdTtpQJ"
+                  className={`rfButton rfButtonOrange ${styles.impactCta}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Icon path={mdiPlayCircleOutline} size={0.9} />
+                  <span>Share Your Tutorial</span>
+                </a>
+              </div>
+
+              <div
+                className={`${styles.impactCard} ${styles.impactSupport}`}
+              >
+                <div
+                  className={`${styles.impactBadge} ${styles.impactBadgeSupport}`}
+                >
+                  <Icon path={mdiHandCoinOutline} size={0.8} />
+                  <span>Keeps the Project Alive</span>
+                </div>
+                <div className={styles.impactCardHeader}>
+                  <div className={`${styles.blockIcon} ${styles.iconPurple}`}>
+                    <Icon path={mdiHandCoinOutline} size={1.1} />
+                  </div>
+                  <h3 className={styles.impactCardTitle}>
+                    Support Financially
+                  </h3>
+                </div>
+                <p className={styles.impactCardBody}>
+                  Rayforge is free, and it will stay free. Patreon and
+                  sponsorship money pays for servers, test hardware, and
+                  development time — it keeps the project moving forward.
+                </p>
+                <div className={styles.impactLinks}>
+                  <a
+                    href="https://www.patreon.com/c/knipknap"
+                    className={`rfButton rfButtonOrange ${styles.impactCta}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <Icon path={mdiHandCoinOutline} size={0.9} />
+                    <span>Support on Patreon</span>
+                  </a>
+                  <Link
+                    to="/sponsor"
+                    className={`rfButton rfButtonPurple ${styles.impactCta}`}
+                  >
+                    <Icon path={mdiStarOutline} size={0.9} />
+                    <span>Become a Sponsor</span>
+                  </Link>
+                </div>
               </div>
             </div>
           </div>
@@ -167,114 +329,6 @@ export default function Contributing() {
                   </a>
                 );
               })}
-            </div>
-          </div>
-        </section>
-
-        <section className={styles.section}>
-          <div className={styles.sectionInner}>
-            <h2 className={styles.sectionTitle}>Ways to Contribute</h2>
-            <p className={styles.lead}>
-              We welcome contributions of all kinds. Every bug report, PR, and
-              documentation fix makes Rayforge better for everyone.
-            </p>
-
-            <div className={styles.twoCol}>
-              <div className={styles.block}>
-                <div className={styles.blockHeader}>
-                  <div className={`${styles.blockIcon} ${styles.iconCyan}`}>
-                    <Icon path={mdiBugOutline} size={0.95} />
-                  </div>
-                  <h3 className={styles.blockTitle}>Report Bugs</h3>
-                </div>
-                <ol className={styles.steps}>
-                  <li className={styles.step}>
-                    Check{' '}
-                    <a
-                      href="https://github.com/barebaric/rayforge/issues"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      existing issues
-                    </a>{' '}
-                    to avoid duplicates.
-                  </li>
-                  <li className={styles.step}>
-                    Create a{' '}
-                    <a
-                      href="https://github.com/barebaric/rayforge/issues/new"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      new issue
-                    </a>{' '}
-                    with a clear description, steps to reproduce, expected vs.
-                    actual behavior, system info, and screenshots if applicable.
-                  </li>
-                </ol>
-              </div>
-
-              <div className={styles.block}>
-                <div className={styles.blockHeader}>
-                  <div className={`${styles.blockIcon} ${styles.iconOrange}`}>
-                    <Icon path={mdiLightbulbOnOutline} size={0.95} />
-                  </div>
-                  <h3 className={styles.blockTitle}>Suggest Features</h3>
-                </div>
-                <ol className={styles.steps}>
-                  <li className={styles.step}>
-                    Review{' '}
-                    <a
-                      href="https://github.com/barebaric/rayforge/issues?q=is%3Aissue+label%3Aenhancement"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      existing feature requests
-                    </a>
-                    .
-                  </li>
-                  <li className={styles.step}>
-                    Open a feature request describing the idea, use case,
-                    benefits, and (optionally) a possible approach.
-                  </li>
-                </ol>
-              </div>
-
-              <div className={styles.block}>
-                <div className={styles.blockHeader}>
-                  <div className={`${styles.blockIcon} ${styles.iconPurple}`}>
-                    <Icon path={mdiSourcePull} size={0.95} />
-                  </div>
-                  <h3 className={styles.blockTitle}>Submit Code</h3>
-                </div>
-                <p className={styles.blockBody}>
-                  For detailed information on submitting code contributions,
-                  follow the{' '}
-                  <Link to="/docs/developer/getting-started">
-                    Developer Documentation – Getting Started
-                  </Link>{' '}
-                  guide.
-                </p>
-              </div>
-
-              <div className={styles.block}>
-                <div className={styles.blockHeader}>
-                  <div className={`${styles.blockIcon} ${styles.iconCyan}`}>
-                    <Icon path={mdiBookOpenPageVariantOutline} size={0.95} />
-                  </div>
-                  <h3 className={styles.blockTitle}>Improve Documentation</h3>
-                </div>
-                <ul className={styles.bullets}>
-                  <li>Fix typos or unclear explanations</li>
-                  <li>Add examples and screenshots</li>
-                  <li>Improve organization</li>
-                  <li>Translate to other languages</li>
-                </ul>
-                <p className={styles.blockBody}>
-                  Use the “edit this page” button on any documentation page and
-                  submit PRs the same way as code contributions.
-                </p>
-              </div>
             </div>
           </div>
         </section>

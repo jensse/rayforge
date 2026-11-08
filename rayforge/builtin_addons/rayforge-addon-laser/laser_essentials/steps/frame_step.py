@@ -8,16 +8,20 @@ from raygeo.ops.assembly import Assembler
 from raygeo.ops.assembly.frame import FrameSpec
 from raygeo.ops.part import Part
 
-from rayforge.core.capability import MachineCapability, StepCapability
+from rayforge.core.capability import MachineCapability
 from rayforge.core.cut_side import CutSide
 from rayforge.core.step import legacy_producer_params
-from rayforge.core.varset import LabeledChoiceVar, LengthVar, VarSet
+from rayforge.core.varset import (
+    BoolVar,
+    LabeledChoiceVar,
+    LengthVar,
+    VarSet,
+)
 from rayforge.pipeline.stage.assembler_helpers import (
     build_part_vector_with_raster_fallback,
 )
 from rayforge.pipeline.transformer.registry import transformer_registry
 
-from ..capabilities import CUT, SCORE
 from .laser_step import LaserStep
 
 if TYPE_CHECKING:
@@ -35,7 +39,6 @@ if TYPE_CHECKING:
 class FrameStep(LaserStep):
     TYPELABEL = _("Frame")
     ICON = "step-frame-symbolic"
-    CAPABILITIES: tuple[StepCapability, ...] = (CUT, SCORE)
     REQUIRED_MACHINE_CAPS = frozenset({MachineCapability.LASER})
     ASSEMBLER_NAME = "frame"
 
@@ -49,6 +52,7 @@ class FrameStep(LaserStep):
                     label=_("Cut Side"),
                     choices=[(cs.label(), cs.name) for cs in CutSide],
                     default="CENTERLINE",
+                    allow_none=False,
                 ),
                 LengthVar(
                     key="offset_mm",
@@ -59,6 +63,24 @@ class FrameStep(LaserStep):
                         "compensation for the head"
                     ),
                     default=0.0,
+                    sensitive_when=lambda v: v.get("cut_side") != "CENTERLINE",
+                ),
+                BoolVar(
+                    key="round_corners",
+                    label=_("Round Corners"),
+                    description=_(
+                        "Round the frame's corners instead of cutting "
+                        "right angles"
+                    ),
+                    default=False,
+                ),
+                LengthVar(
+                    key="corner_radius_mm",
+                    label=_("Corner Radius"),
+                    description=_("Radius used to round the frame's corners"),
+                    default=5.0,
+                    min_val=0.0,
+                    visible_when=lambda v: v.get("round_corners", False),
                 ),
             ]
         )
@@ -68,6 +90,8 @@ class FrameStep(LaserStep):
         self.power = 0.8
         self.offset_mm = 0.0
         self.cut_side = "CENTERLINE"
+        self.round_corners = False
+        self.corner_radius_mm = 5.0
 
     def get_operation_mode_short(self):
         try:
@@ -83,6 +107,11 @@ class FrameStep(LaserStep):
         kwargs: dict = {}
         kwargs["cut_side"] = str(self.cut_side).lower()
         kwargs["offset_mm"] = self.offset_mm
+        kwargs["corner_radius"] = (
+            self.corner_radius_mm if self.round_corners else 0.0
+        )
+        kwargs["arc_tolerance"] = machine.arc_tolerance
+        kwargs["allow_arcs"] = machine.supports_arcs
         return kwargs
 
     def build_compute_payload(
@@ -104,6 +133,9 @@ class FrameStep(LaserStep):
         spec = FrameSpec(
             offset_mm=kwargs["offset_mm"],
             cut_side=kwargs["cut_side"],
+            corner_radius=kwargs["corner_radius"],
+            arc_tolerance=kwargs["arc_tolerance"],
+            allow_arcs=kwargs["allow_arcs"],
         )
         return part, ComputePayload(assembler=Assembler(spec))
 
@@ -120,11 +152,19 @@ class FrameStep(LaserStep):
         offset_mm = settings.get("offset_mm")
         if offset_mm is not None:
             self.offset_mm = offset_mm
+        round_corners = settings.get("round_corners")
+        if round_corners is not None:
+            self.round_corners = bool(round_corners)
+        corner_radius_mm = settings.get("corner_radius_mm")
+        if corner_radius_mm is not None:
+            self.corner_radius_mm = corner_radius_mm
 
     def to_dict(self) -> dict:
         data = super().to_dict()
         data["cut_side"] = self.cut_side
         data["offset_mm"] = self.offset_mm
+        data["round_corners"] = self.round_corners
+        data["corner_radius_mm"] = self.corner_radius_mm
         return data
 
     @classmethod
@@ -143,6 +183,12 @@ class FrameStep(LaserStep):
                 legacy.get("path_offset_mm", legacy.get("offset_mm", 0.0)),
             )
             step.offset_mm = path_offset + (data.get("kerf_mm", 0.0) / 2.0)
+        step.round_corners = data.get(
+            "round_corners", legacy.get("round_corners", False)
+        )
+        step.corner_radius_mm = data.get(
+            "corner_radius_mm", legacy.get("corner_radius_mm", 5.0)
+        )
         return step
 
     @classmethod

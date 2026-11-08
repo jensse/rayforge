@@ -44,6 +44,11 @@ class Var(Generic[T]):
         default: T | None = None,
         value: T | None = None,
         validator: Callable[[T | None], None] | None = None,
+        *,
+        optional: bool = False,
+        required_when: "Callable[[dict[str, Any]], bool] | None" = None,
+        visible_when: "Callable[[dict[str, Any]], bool] | None" = None,
+        sensitive_when: "Callable[[dict[str, Any]], bool] | None" = None,
     ):
         """
         Initializes a new Var instance.
@@ -57,6 +62,23 @@ class Var(Generic[T]):
             value: The initial value. If provided, it overrides the default.
             validator: An optional callable that raises an exception if a new
                        value is invalid.
+            optional: True when leaving the value empty is valid even
+                      without a default (e.g. one of several alternative
+                      connection parameters). Setup wizards must not
+                      require a value for it.
+            required_when: Optional callable that receives a dict of all
+                           current var values and returns True when this
+                           var's value is mandatory. When given, it decides
+                           requiredness; without it, a var is required when
+                           it has no default and is not optional.
+            visible_when: Optional callable that receives a dict of all
+                          current var values in the widget and returns True
+                          when this var's row should be visible.
+                          ``None`` means always visible.
+            sensitive_when: Optional callable that receives a dict of all
+                            current var values in the widget and returns
+                            True when this var's row should be interactive.
+                            ``None`` means always sensitive.
         """
         self._key = key
         self._label = label
@@ -64,8 +86,12 @@ class Var(Generic[T]):
         self._description = description
         self._default = default
         self.validator = validator
+        self.optional = optional
+        self.required_when = required_when
         self._value: T | None = None
         self._varset: VarSet | None = None
+        self._visible_when = visible_when
+        self._sensitive_when = sensitive_when
 
         # Signal sent when the Var's value or default value changes.
         self.value_changed = Signal()
@@ -86,6 +112,28 @@ class Var(Generic[T]):
         if self._key != new_key:
             self._key = new_key
             self.definition_changed.send(self, property="key")
+
+    @property
+    def visible_when(
+        self,
+    ) -> "Callable[[dict[str, Any]], bool] | None":
+        """Callable that decides row visibility from current var values.
+
+        ``None`` means always visible. The varset row manager evaluates
+        this after populate and after each data_changed emission.
+        """
+        return self._visible_when
+
+    @property
+    def sensitive_when(
+        self,
+    ) -> "Callable[[dict[str, Any]], bool] | None":
+        """Callable that decides row interactivity from current var values.
+
+        ``None`` means always sensitive. The varset row manager evaluates
+        this after populate and after each data_changed emission.
+        """
+        return self._sensitive_when
 
     @property
     def label(self) -> str:
@@ -127,6 +175,29 @@ class Var(Generic[T]):
                     f"Validation failed for key '{self.key}' with value "
                     f"'{self.value}': {e}"
                 ) from e
+
+    def is_visible(self, values: dict[str, Any]) -> bool:
+        """Whether the var participates given the current var values.
+
+        A hidden var is inert: wizards must not require a value for it
+        and validation must not run its validator.
+        """
+        if self._visible_when is None:
+            return True
+        return bool(self._visible_when(values))
+
+    def is_required(self, values: dict[str, Any]) -> bool:
+        """Whether a value is mandatory given the current var values.
+
+        Hidden vars are never required. ``required_when`` decides when
+        given; otherwise a var is required when it has no usable
+        default and is not marked optional.
+        """
+        if not self.is_visible(values):
+            return False
+        if self.required_when is not None:
+            return bool(self.required_when(values))
+        return self.default in (None, "") and not self.optional
 
     @property
     def default(self) -> T | None:

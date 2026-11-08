@@ -39,7 +39,11 @@ a = Analysis(
         },
     },
     runtime_hooks=[],
-    excludes=[],
+    # Pillow is not used by the application; it only appears in the
+    # module graph through optional imports of dependencies. Bundling
+    # it drags in PIL/.dylibs, whose harfbuzz shadows the GTK4 one and
+    # crashes the app at startup.
+    excludes=['PIL'],
     noarchive=False,
     optimize=0,
 )
@@ -79,5 +83,12 @@ app = BUNDLE(
     info_plist={
         **({'CFBundleIconName': 'rayforge'} if _use_car else {}),
         'LSMinimumSystemVersion': '12.0',
+        # Without this key, macOS TCC kills the process the moment any
+        # camera is opened (even just enumerating devices), so it must
+        # stay in sync with the camera sources in rayforge/camera.
+        'NSCameraUsageDescription': (
+            'Rayforge uses the camera to capture your work surface, '
+            'so it can align your design with the material.'
+        ),
     },
 )

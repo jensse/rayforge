@@ -8,7 +8,7 @@ from raygeo.ops.assembly import Assembler
 from raygeo.ops.assembly.wavefront import AdaptiveWavefrontSpec
 from raygeo.ops.part import Part
 
-from rayforge.core.capability import MachineCapability, StepCapability
+from rayforge.core.capability import MachineCapability
 from rayforge.core.step import legacy_producer_params
 from rayforge.core.varset import LengthVar, VarSet
 from rayforge.machine.models.laser import LaserHead
@@ -17,7 +17,6 @@ from rayforge.pipeline.stage.assembler_helpers import (
 )
 from rayforge.pipeline.transformer.registry import transformer_registry
 
-from ..capabilities import CUT
 from .laser_step import LaserStep
 
 if TYPE_CHECKING:
@@ -29,7 +28,6 @@ if TYPE_CHECKING:
 class WavefrontStep(LaserStep):
     TYPELABEL = _("Wavefront")
     ICON = "step-wavefront-symbolic"
-    CAPABILITIES: tuple[StepCapability, ...] = (CUT,)
     REQUIRED_MACHINE_CAPS = frozenset({MachineCapability.LASER})
     ASSEMBLER_NAME = "wavefront"
 
@@ -42,16 +40,19 @@ class WavefrontStep(LaserStep):
                     key="step_over_mm",
                     label=_("Step Over"),
                     description=_(
-                        "Distance between wavefront passes; defaults to "
-                        "the laser spot width when unset"
+                        "Lateral step-over between wavefront passes"
                     ),
                     default=None,
                     min_val=0.0,
+                    max_val=50.0,
                 ),
                 LengthVar(
                     key="offset_mm",
                     label=_("Offset"),
+                    description=_("Extra offset from walls"),
                     default=0.0,
+                    min_val=0.0,
+                    max_val=20.0,
                 ),
             ]
         )

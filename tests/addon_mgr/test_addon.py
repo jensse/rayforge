@@ -10,9 +10,12 @@ import yaml
 from rayforge.addon_mgr.addon import (
     Addon,
     AddonAuthor,
+    AddonMaturity,
     AddonMetadata,
     AddonProvides,
     AddonValidationError,
+    is_official_addon_url,
+    parse_maturity,
 )
 from rayforge.shared.util.versioning import UnknownVersion, get_git_tag_version
 
@@ -69,6 +72,79 @@ class TestAddonMetadata:
         assert meta.description == ""
         assert meta.author.name == ""
         assert meta.author.email == ""
+
+    def test_from_registry_entry_official_flag(self):
+        """The registry can mark an addon as official."""
+        data = {
+            "depends": [],
+            "author": {"name": "Test User", "email": "test@example.com"},
+            "official": True,
+        }
+        meta = AddonMetadata.from_registry_entry("my_addon", data)
+        assert meta.official is True
+        assert meta.is_official is True
+
+    def test_from_registry_entry_official_defaults_to_false(self):
+        """Addons are community addons unless marked official."""
+        data = {
+            "depends": [],
+            "author": {"name": "Test User", "email": "test@example.com"},
+        }
+        meta = AddonMetadata.from_registry_entry("my_addon", data)
+        assert meta.official is False
+        assert meta.is_official is False
+
+    def test_is_official_via_repository_url(self):
+        """Addons hosted by the Rayforge team are official."""
+        data = {
+            "depends": [],
+            "author": {"name": "Test User", "email": "test@example.com"},
+            "repository": "https://github.com/barebaric/rayforge-addon-x",
+        }
+        meta = AddonMetadata.from_registry_entry("my_addon", data)
+        assert meta.official is False
+        assert meta.is_official is True
+
+    def test_is_not_official_via_community_repository_url(self):
+        """Addons hosted elsewhere remain community addons."""
+        data = {
+            "depends": [],
+            "author": {"name": "Test User", "email": "test@example.com"},
+            "repository": "https://github.com/someone/rayforge-addon-x",
+        }
+        meta = AddonMetadata.from_registry_entry("my_addon", data)
+        assert meta.is_official is False
+
+
+class TestIsOfficialAddonUrl:
+    def test_team_repository_is_official(self):
+        assert is_official_addon_url(
+            "https://github.com/barebaric/rayforge-addon-deepnest"
+        )
+
+    def test_team_repository_with_git_suffix(self):
+        assert is_official_addon_url(
+            "https://github.com/barebaric/rayforge-addon-deepnest.git"
+        )
+
+    def test_team_repository_with_trailing_slash(self):
+        assert is_official_addon_url(
+            "https://github.com/barebaric/rayforge-addon-deepnest/"
+        )
+
+    def test_other_owner_is_not_official(self):
+        assert not is_official_addon_url(
+            "https://github.com/someone/rayforge-addon-x"
+        )
+
+    def test_similar_owner_prefix_is_not_official(self):
+        assert not is_official_addon_url(
+            "https://github.com/barebaric-evil/rayforge-addon-x"
+        )
+
+    def test_empty_url_is_not_official(self):
+        assert not is_official_addon_url("")
+        assert not is_official_addon_url(None)
 
     def test_to_dict(self):
         """Test converting metadata to dictionary."""
@@ -142,6 +218,49 @@ class TestAddonMetadata:
         meta = AddonMetadata.from_registry_entry("my_addon", data)
         assert meta.version_entries == []
 
+    def test_from_registry_entry_parses_maturity(self):
+        """Test parsing maturity from registry entry."""
+        data = {
+            "display_name": "My Addon",
+            "depends": [],
+            "author": {"name": "Test", "email": "t@t.com"},
+            "maturity": "experimental",
+        }
+        meta = AddonMetadata.from_registry_entry("my_addon", data)
+        assert meta.maturity == AddonMaturity.EXPERIMENTAL
+
+    def test_from_registry_entry_missing_maturity_defaults_to_stable(self):
+        """Test that missing maturity defaults to stable."""
+        data = {
+            "display_name": "My Addon",
+            "depends": [],
+            "author": {"name": "Test", "email": "t@t.com"},
+        }
+        meta = AddonMetadata.from_registry_entry("my_addon", data)
+        assert meta.maturity == AddonMaturity.STABLE
+
+    def test_to_dict_serializes_maturity(self):
+        """Test that to_dict serializes maturity as a lowercase string."""
+        meta = AddonMetadata(
+            name="test",
+            description="Test addon",
+            version="1.0.0",
+            depends=[],
+            author=AddonAuthor(name="Test", email="test@test.com"),
+            provides=AddonProvides(),
+            maturity=AddonMaturity.EXPERIMENTAL,
+        )
+        d = meta.to_dict()
+        assert d["maturity"] == "experimental"
+
+    def test_parse_maturity_unknown_falls_back_to_stable(self):
+        """Test that unknown maturity values fall back to stable."""
+        assert parse_maturity("broken") == AddonMaturity.STABLE
+        assert parse_maturity("") == AddonMaturity.STABLE
+        assert parse_maturity(42) == AddonMaturity.STABLE
+        assert parse_maturity(None) == AddonMaturity.STABLE
+        assert parse_maturity("EXPERIMENTAL") == AddonMaturity.EXPERIMENTAL
+
 
 class TestAddon:
     def test_load_from_directory_success(self):
@@ -161,6 +280,23 @@ class TestAddon:
             assert addon.root_path == path
             assert addon.metadata.version == TEST_VERSION
             assert addon.metadata.provides.worker == "main.py"
+            assert addon.metadata.maturity == AddonMaturity.STABLE
+
+    def test_load_from_directory_parses_maturity(self):
+        """Test loading an addon with an explicit maturity."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            data = {
+                "name": "test_pkg",
+                "author": {"name": "Me", "email": "me@me.com"},
+                "provides": {"worker": "main.py"},
+                "maturity": "experimental",
+            }
+            with open(path / "rayforge-addon.yaml", "w") as f:
+                yaml.dump(data, f)
+
+            addon = Addon.load_from_directory(path, version=TEST_VERSION)
+            assert addon.metadata.maturity == AddonMaturity.EXPERIMENTAL
 
     def test_load_missing_metadata(self):
         """Test error when metadata file is missing."""

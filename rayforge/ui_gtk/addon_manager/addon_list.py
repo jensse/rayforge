@@ -8,13 +8,14 @@ from blinker import Signal
 from gi.repository import Adw, GLib, Gtk
 
 from ... import __version__
-from ...addon_mgr.addon import Addon, AddonMetadata
+from ...addon_mgr.addon import Addon, AddonMaturity, AddonMetadata
 from ...addon_mgr.addon_manager import AddonState
 from ...context import get_context
 from ...shared.util.versioning import UnknownVersion
 from ..icons import get_icon
 from ..shared.preferences_group import PreferencesGroupWithButton
 from .addon_dialog import AddonRegistryDialog
+from .experimental_dialog import ExperimentalAddonDialog
 from .license_dialog import LicenseRequiredDialog
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,16 @@ class AddonRow(Gtk.Box):
                 )
             )
             self.append(icon)
+        elif addon.metadata.maturity == AddonMaturity.EXPERIMENTAL:
+            icon = get_icon("experimental-symbolic")
+            icon.set_valign(Gtk.Align.CENTER)
+            icon.set_tooltip_text(
+                _(
+                    "This addon is experimental and may have "
+                    "unresolved issues. Use it with caution."
+                )
+            )
+            self.append(icon)
         elif addon.metadata.license and addon.metadata.license.required:
             icon = get_icon("crown-symbolic")
             icon.set_valign(Gtk.Align.CENTER)
@@ -88,6 +99,9 @@ class AddonRow(Gtk.Box):
             if self.is_builtin:
                 icon = get_icon("addon-builtin-symbolic")
                 icon.set_tooltip_text(_("Built-in addon"))
+            elif not addon.metadata.is_official:
+                icon = get_icon("addon-community-symbolic")
+                icon.set_tooltip_text(_("Community addon"))
             else:
                 icon = get_icon("addon-symbolic")
             icon.set_valign(Gtk.Align.CENTER)
@@ -331,48 +345,11 @@ class AddonListWidget(PreferencesGroupWithButton):
         am = context.addon_mgr
 
         if enable:
-            missing = am.get_missing_dependencies(addon_name)
-            if missing:
-                missing_names = [name for name, _ in missing]
-                missing_str = ", ".join(missing_names)
-                root = cast(Gtk.Window, self.get_root())
-
-                def on_response(dialog, response):
-                    if response == "enable":
-                        success, _enabled = am.enable_addon_with_deps(
-                            addon_name
-                        )
-                        if not success:
-                            self._show_error(
-                                _(
-                                    "Failed to enable addon and its "
-                                    "dependencies."
-                                )
-                            )
-                        self.populate_addons()
-                    else:
-                        self.populate_addons()
-                    dialog.close()
-
-                dialog = Adw.MessageDialog(
-                    transient_for=root,
-                    heading=_("Enable Dependencies?"),
-                    body=_(
-                        "This addon requires: {deps}\n\nEnable them as well?"
-                    ).format(deps=missing_str),
-                )
-                dialog.add_response("cancel", _("Cancel"))
-                dialog.add_response("enable", _("Enable All"))
-                dialog.connect("response", on_response)
-                dialog.present()
-                return
-
-            success = am.enable_addon(addon_name)
-            if not success:
-                self._show_error(
-                    _("Failed to enable addon. Check the logs for details.")
-                )
-            self.populate_addons()
+            addon = am.get_installed_addon(addon_name)
+            if addon and addon.metadata.maturity == AddonMaturity.EXPERIMENTAL:
+                self._confirm_enable_experimental(addon_name, addon)
+            else:
+                self._enable_addon(addon_name)
         else:
             can_disable, reason = am.can_disable(addon_name)
             if not can_disable:
@@ -400,6 +377,60 @@ class AddonListWidget(PreferencesGroupWithButton):
                     )
 
             self.populate_addons()
+
+    def _confirm_enable_experimental(self, addon_name: str, addon: Addon):
+        """Ask for confirmation before enabling an experimental addon."""
+        display_name = addon.metadata.display_name or addon.metadata.name
+        dialog = ExperimentalAddonDialog(
+            addon_name=display_name,
+            on_enable=lambda: self._enable_addon(addon_name),
+            on_cancel=self.populate_addons,
+        )
+        root = cast(Gtk.Window, self.get_root())
+        dialog.present(root)
+
+    def _enable_addon(self, addon_name: str):
+        """Enable an addon, prompting for missing dependencies."""
+        context = get_context()
+        am = context.addon_mgr
+
+        missing = am.get_missing_dependencies(addon_name)
+        if missing:
+            missing_names = [name for name, _ in missing]
+            missing_str = ", ".join(missing_names)
+            root = cast(Gtk.Window, self.get_root())
+
+            def on_response(dialog, response):
+                if response == "enable":
+                    success, _enabled = am.enable_addon_with_deps(addon_name)
+                    if not success:
+                        self._show_error(
+                            _("Failed to enable addon and its dependencies.")
+                        )
+                    self.populate_addons()
+                else:
+                    self.populate_addons()
+                dialog.close()
+
+            dialog = Adw.MessageDialog(
+                transient_for=root,
+                heading=_("Enable Dependencies?"),
+                body=_(
+                    "This addon requires: {deps}\n\nEnable them as well?"
+                ).format(deps=missing_str),
+            )
+            dialog.add_response("cancel", _("Cancel"))
+            dialog.add_response("enable", _("Enable All"))
+            dialog.connect("response", on_response)
+            dialog.present()
+            return
+
+        success = am.enable_addon(addon_name)
+        if not success:
+            self._show_error(
+                _("Failed to enable addon. Check the logs for details.")
+            )
+        self.populate_addons()
 
     def _on_unlock_addon(self, addon: Addon):
         """Handle unlock button click for license-required addon."""

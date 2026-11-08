@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class RegistryEntry:
-    hook_name: str
+    hook_name: str | None
     param_name: str
     module_path: str
     attr_name: str
@@ -30,14 +30,6 @@ REGISTRY_TABLE = [
         "service_registry",
         "rayforge.core.service_registry",
         "service_registry",
-        worker_ok=True,
-        needs_window=False,
-    ),
-    RegistryEntry(
-        "register_step_capabilities",
-        "step_capability_registry",
-        "rayforge.core.capability_registry",
-        "step_capability_registry",
         worker_ok=True,
         needs_window=False,
     ),
@@ -90,6 +82,14 @@ REGISTRY_TABLE = [
         needs_window=False,
     ),
     RegistryEntry(
+        "register_image_edits",
+        "image_edit_registry",
+        "rayforge.core.image_edit",
+        "image_edit_registry",
+        worker_ok=True,
+        needs_window=False,
+    ),
+    RegistryEntry(
         "register_importers",
         "importer_registry",
         "rayforge.image",
@@ -110,6 +110,57 @@ REGISTRY_TABLE = [
         "settings_page_registry",
         "rayforge.ui_gtk.settings.registry",
         "settings_page_registry",
+        worker_ok=False,
+        needs_window=False,
+    ),
+    RegistryEntry(
+        "register_transformer_widgets",
+        "transformer_widget_registry",
+        "rayforge.ui_gtk.doceditor.post_processor.registry",
+        "transformer_widget_registry",
+        worker_ok=False,
+        needs_window=False,
+    ),
+    RegistryEntry(
+        "register_step_settings_pages",
+        "step_settings_page_registry",
+        "rayforge.ui_gtk.doceditor.step_settings.page_registry",
+        "step_settings_page_registry",
+        worker_ok=False,
+        needs_window=False,
+    ),
+    # Extension registries have no dedicated hook: addons populate them
+    # as a side effect of other registration hooks. They are still
+    # listed here so the addon manager can clean them up on unload.
+    RegistryEntry(
+        None,
+        "action_extension_registry",
+        "rayforge.ui_gtk.actions",
+        "action_extension_registry",
+        worker_ok=False,
+        needs_window=False,
+    ),
+    RegistryEntry(
+        None,
+        "context_menu_extension_registry",
+        "rayforge.ui_gtk.canvas2d.context_menu",
+        "context_menu_extension_registry",
+        worker_ok=False,
+        needs_window=False,
+    ),
+    RegistryEntry(
+        None,
+        "property_provider_registry",
+        "rayforge.ui_gtk.doceditor.property_providers",
+        "property_provider_registry",
+        worker_ok=False,
+        needs_window=False,
+    ),
+    RegistryEntry(
+        None,
+        "gesture_registry",
+        "rayforge.ui_gtk.gestures",
+        "gesture_registry",
         worker_ok=False,
         needs_window=False,
     ),
@@ -144,20 +195,6 @@ def get_registries(headless: bool = False) -> dict[str, Any]:
         if headless and not entry.worker_ok:
             continue
         result[entry.param_name] = _import_registry(entry)
-    if not headless:
-        from rayforge.ui_gtk.actions import action_extension_registry
-        from rayforge.ui_gtk.canvas2d.context_menu import (
-            context_menu_extension_registry,
-        )
-        from rayforge.ui_gtk.doceditor.property_providers import (
-            property_provider_registry,
-        )
-
-        result["action_extension_registry"] = action_extension_registry
-        result["context_menu_extension_registry"] = (
-            context_menu_extension_registry
-        )
-        result["property_provider_registry"] = property_provider_registry
     return result
 
 
@@ -186,6 +223,8 @@ def call_registration_hooks(
     """
     registries = registries or {}
     for entry in REGISTRY_TABLE:
+        if entry.hook_name is None:
+            continue
         if window_required and not entry.needs_window:
             continue
         if not window_required and entry.needs_window:

@@ -2,7 +2,6 @@ import asyncio
 import logging
 import multiprocessing
 import uuid
-from collections.abc import Sequence
 from enum import Enum
 from gettext import gettext as _
 from pathlib import Path
@@ -13,7 +12,7 @@ from typing import (
 )
 
 from blinker import Signal
-from raygeo.geo.types import Point3D, Rect
+from raygeo.geo.types import Point, Point3D, Rect
 from raygeo.ops.axis import Axis
 
 from ...camera.models.camera import Camera
@@ -22,27 +21,36 @@ from ...context import RayforgeContext, get_context
 from ...core.capability import MachineCapability
 from ...core.layer import Layer
 from ...core.model import Model
-from ...pipeline.coordspace import MachineSpace
 from ...shared.tasker import task_mgr
 from ...shared.units.system import UnitSystem
 from ..assembly import Assembly
 from ..driver import get_driver_cls
-from ..driver.driver import DeviceState, Pos, PWMParams, pwm_varset
+from ..driver.driver import (
+    DeviceState,
+    Pos,
+    PWMParams,
+    ZHomingMode,
+    pwm_varset,
+)
 from ..kinematics import HeadSpec, Kinematics, build_assembly
 from ..models.axis import AxisConfig, AxisDirection, AxisSet, AxisType
 from ..transport import TransportStatus
+from .bidir_offset import interpolate_bidir_offset
+from .coordspace import MachineSpace
 from .dialect import GcodeDialect
 from .head import Head, head_from_dict
-from .laser import Laser, LaserHead
+from .laser import Laser, LaserHead, effective_focal_distance
 from .machine_hours import MachineHours
+from .machine_panel import MachinePanel, PanelOrientation
 from .macro import Macro, MacroTrigger
 from .rotary_module import RotaryMode, RotaryModule
 from .zone import Zone
 
 if TYPE_CHECKING:
-    from ...core.capability import StepCapability
     from ...core.varset import VarSet
     from ..driver.driver import Driver
+    from ..job_monitor import JobMonitor
+    from ..job_status import JobStatus
     from .controller import MachineController
 from .coordinate_system import CoordinateSystem
 
@@ -69,9 +77,60 @@ logger = logging.getLogger(__name__)
 
 MACHINE_SPACE_WCS = "MACHINE"
 
+_MARGIN_EPSILON = 0.1  # mm — minimum work-area dimension after clamping
+
+
+def _clamp_margins(margins: Rect, extents: tuple[float, float]) -> Rect:
+    """Clamp margins so work-area dimensions stay >= _MARGIN_EPSILON."""
+    ml, mt, mr, mb = margins
+    w, h = extents
+    ml = min(ml, w - _MARGIN_EPSILON)
+    mr = min(mr, w - ml - _MARGIN_EPSILON)
+    mt = min(mt, h - _MARGIN_EPSILON)
+    mb = min(mb, h - mt - _MARGIN_EPSILON)
+    return (ml, mt, mr, mb)
+
+
+def _clamp_jog_distance(
+    pos: float, distance: float, lower: float, upper: float
+) -> float:
+    """Shorten a jog so it does not travel past a limit.
+
+    The result never reverses or lengthens the requested jog. When the
+    position is already beyond a limit, a jog further out becomes 0 and
+    a jog back towards the range is allowed, stopping at the far limit.
+    """
+    target = pos + distance
+    if distance > 0:
+        target = min(target, max(upper, pos))
+    elif distance < 0:
+        target = max(target, min(lower, pos))
+    return target - pos
+
 
 def _raise_error(*args, **kwargs):
     raise RuntimeError("Cannot schedule from worker process")
+
+
+def _format_usb_field(value: int | None) -> str | None:
+    """Serializes a USB vid/pid as the conventional hex string."""
+    if value is None:
+        return None
+    return f"{value:04x}"
+
+
+def _parse_usb_field(value) -> int | None:
+    """Parses a USB vid/pid from its serialized form (hex string or
+    int, for older files)."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    try:
+        return int(str(value), 16)
+    except ValueError:
+        logger.warning(f"Ignoring malformed USB id in machine data: {value}")
+        return None
 
 
 class Machine:
@@ -98,9 +157,11 @@ class Machine:
         self.job_finished = Signal()
         self.command_status_changed = Signal()
         self.wcs_updated = Signal()
+        self.pointer_alignment_changed = Signal()
 
         self.connection_status: TransportStatus = TransportStatus.DISCONNECTED
         self.device_state: DeviceState = DeviceState()
+        self._current_job_monitor = None
 
         self.driver_name: str | None = None
         self.driver_args: dict[str, Any] = {}
@@ -110,7 +171,15 @@ class Machine:
         self.auto_connect: bool = True
         self.home_on_start: bool = False
         self.clear_alarm_on_connect: bool = False
+        #: Machine-space (x, y) the head is driven to after homing all
+        #: axes, or None to not move.
+        self.park_position_after_homing: tuple[float, float] | None = None
+        # True while this machine is the auto-created placeholder that
+        # keeps the app usable before the user sets up a real machine.
+        self.placeholder: bool = False
         self.single_axis_homing_enabled: bool = True
+        # None leaves the choice to the driver's default Z homing mode.
+        self.z_homing_mode: ZHomingMode | None = None
         self.dialect_uid: str | None = "grbl"
         self.dialect_migrated: bool = False
         self._hydrated_dialect: GcodeDialect | None = None
@@ -127,6 +196,10 @@ class Machine:
         self.max_travel_speed: int = 3000  # in mm/min
         self.max_cut_speed: int = 1000  # in mm/min
         self.acceleration: int = 1000  # in mm/s²
+        self.jog_speed: int = 1000  # in mm/min
+        #: (speed mm/min, offset mm) rows, sorted by speed. Engrave
+        #: steps without their own bidirectional scan offset use it.
+        self.bidir_offset_table: list[tuple[float, float]] = []
         self.axes: AxisSet = AxisSet(
             [
                 AxisConfig(
@@ -146,6 +219,9 @@ class Machine:
                 ),
             ]
         )
+        # Stashed Z config kept when the user disables the Z axis so
+        # re-enabling restores the previous extents/direction.
+        self._stashed_z_config: AxisConfig | None = None
         self._work_margins: Rect = (
             0.0,
             0.0,
@@ -154,10 +230,19 @@ class Machine:
         )
         self._soft_limits: Rect | None = None
         self.origin: Origin = Origin.BOTTOM_LEFT
+        self.panel = MachinePanel(self)
         self.rotary_enabled_default: bool = False
         self.default_rotary_module_uid: str | None = None
         self.soft_limits_enabled: bool = True
         self.wcs_origin_is_workarea_origin: bool = False
+        self.source_profile_id: str | None = None
+        self.reviewed_profile_hash: str | None = None
+        self.device_notes: str | None = None
+        self.user_notes: str = ""
+        self.schema_version: int = 0
+        self.usb_vid: int | None = None
+        self.usb_pid: int | None = None
+        self.extra: dict[str, Any] = {}
         self._settings_lock = asyncio.Lock()
 
         # Work Coordinate System (WCS) State
@@ -169,6 +254,20 @@ class Machine:
         self.coordinate_systems: dict[str, CoordinateSystem] = (
             CoordinateSystem.defaults()
         )
+
+        # Runtime "pointer alignment" state: while on, absolute aim
+        # commands are shifted so the pointer dot lands on the aimed
+        # position (see get_command_wcs_offset()). Session-only by
+        # design: never serialized into the machine profile, and it
+        # resets naturally when the active machine is switched.
+        self.pointer_alignment_enabled: bool = False
+
+        # Transient companion to pointer_alignment_enabled: while on,
+        # job output is generated with the pointer offset added (see
+        # get_job_wcs_offset()), making the pointer dot trace the
+        # toolpath. Only set for the duration of a pointer dry-run
+        # send; never serialized.
+        self.pointer_job_shift_enabled: bool = False
 
         self.machine_hours: MachineHours = MachineHours()
         self.machine_hours.changed.connect(self._on_machine_hours_changed)
@@ -219,6 +318,27 @@ class Machine:
             head = self.heads[0]
         return bool(self.driver.supports_pwm(head))
 
+    def supports_travel_speed(self) -> bool:
+        """Whether the machine can emit travel moves at a speed.
+
+        Delegates to the driver class: non-G-code drivers always carry
+        the travel speed, G-code drivers depend on the dialect's rapid
+        move template. Drives whether step settings show the travel
+        speed row and whether travel-speed warnings are produced.
+        """
+        driver_cls = get_driver_cls(self.driver_name or "")
+        return driver_cls.supports_travel_speed(self.dialect)
+
+    def supports_multi_depth_raster(self) -> bool:
+        """Whether the machine can raster the multi-depth depth mode.
+
+        Delegates to the driver class. Drives whether the raster step
+        settings disable the multi-depth option and whether a warning
+        is produced for steps using it.
+        """
+        driver_cls = get_driver_cls(self.driver_name or "")
+        return driver_cls.supports_multi_depth_raster
+
     def get_pwm_params(self, head: Head | None = None) -> PWMParams | None:
         """
         Returns the driver-reported PWM parameters for the given head, or
@@ -239,26 +359,6 @@ class Machine:
         if params is None:
             return None
         return pwm_varset(params)
-
-    def get_usable_capabilities(
-        self,
-        step_capabilities: Sequence["StepCapability"],
-        head: Head | None = None,
-    ) -> tuple["StepCapability", ...]:
-        """
-        Filter a step's theoretical capabilities to those this machine
-        actually supports.
-
-        A capability is usable when the machine has the machine
-        capabilities it requires (e.g. a laser capability requires the
-        LASER machine capability).
-        """
-        machine_caps = self.get_capabilities()
-        return tuple(
-            cap
-            for cap in step_capabilities
-            if cap.REQUIRED_MACHINE_CAPS <= machine_caps
-        )
 
     def get_capabilities(self) -> frozenset[MachineCapability]:
         """
@@ -313,6 +413,27 @@ class Machine:
 
     def set_precheck_error(self, error: str | None):
         self.precheck_error = error
+
+    def set_current_job(self, monitor: "JobMonitor") -> None:
+        """Registers the monitor of the job now running on this
+        machine."""
+        self._current_job_monitor = monitor
+
+    def clear_current_job(self, monitor: "JobMonitor") -> None:
+        """Unregisters the job monitor if it is still the active one."""
+        if self._current_job_monitor is monitor:
+            self._current_job_monitor = None
+
+    @property
+    def current_job(self) -> Optional["JobStatus"]:
+        """
+        Returns a snapshot of the job currently running on this
+        machine, or None when no monitored job is active.
+        """
+        monitor = self._current_job_monitor
+        if monitor is None:
+            return None
+        return monitor.status
 
     def set_unit_system(self, unit_system: UnitSystem) -> None:
         """
@@ -413,14 +534,14 @@ class Machine:
 
         Does not build or mutate anything.  Each spec is a ``(model,
         transform)`` pair with the focal distance folded into the
-        transform's Z translation.
+        transform's Z translation.  The same effective focal distance
+        drives the beam renderer, so the head model always sits with
+        its nozzle exactly on top of the laser beam.
         """
         head_specs: list[HeadSpec] = []
         for h in self.heads:
             t = h.transform.copy()
-            focal_distance = getattr(h, "focal_distance", 0.0)
-            if focal_distance > 0:
-                t[2, 3] += focal_distance
+            t[2, 3] += effective_focal_distance(h)
             model = (
                 Model.from_path(Path(h.model_path)) if h.model_path else None
             )
@@ -475,6 +596,11 @@ class Machine:
 
     async def disconnect(self):
         """Public method to disconnect the driver."""
+        # Avoid lazy-creating a controller (which raises if the machine
+        # has been removed from the manager). If none exists, there is
+        # nothing to disconnect.
+        if not self.has_controller:
+            return
         await self.controller.disconnect()
 
     async def shutdown(self):
@@ -524,6 +650,16 @@ class Machine:
         self.changed.send(self)
 
     def set_driver(self, driver_cls: type["Driver"], args=None):
+        """
+        Selects a new driver class and resets its arguments, then emits
+        ``changed``. The controller listens for this signal and performs
+        the (debounced) driver rebuild.
+
+        The G-code dialect is kept in sync with the driver: drivers that
+        do not speak G-code (e.g. Ruida) get the leftover dialect
+        cleared, so no stale dialect survives a driver switch and job
+        encoding always follows the connected driver.
+        """
         new_driver_name = driver_cls.__name__
         new_args = args or {}
         if (
@@ -532,25 +668,51 @@ class Machine:
         ):
             return
 
+        # The controller subscribes to ``changed`` when it is created.
+        # Emitting the signal without one would silently drop the
+        # rebuild, so ensure it exists first (it is lazy).
+        self.context.machine_mgr.get_controller(self.id)
+
         self.driver_name = new_driver_name
         self.driver_args = new_args
+        self._sync_dialect_with_driver(driver_cls)
         self.changed.send(self)
-        task_mgr.add_coroutine(
-            self.controller.rebuild_driver,
-            key=(self.id, "rebuild-driver"),
-        )
+
+    def _sync_dialect_with_driver(self, driver_cls: type["Driver"]):
+        """
+        Aligns the dialect with the driver's G-code capability.
+
+        Non-G-code drivers must not carry a dialect: a stale one would
+        make job encoding produce G-code for a driver that cannot
+        consume it (issue #420). Switching back to a G-code driver while
+        no dialect is set restores the framework default, mirroring the
+        deserialization fallback.
+        """
+        if not driver_cls.uses_gcode:
+            if self.dialect_uid is None and self._hydrated_dialect is None:
+                return
+            self.dialect_uid = None
+            self._hydrated_dialect = None
+        elif self.dialect_uid is None:
+            self.dialect_uid = "grbl"
+            self._hydrated_dialect = None
 
     def set_driver_args(self, args=None):
+        """
+        Replaces the driver's setup arguments, then emits ``changed``.
+        The controller listens for this signal and performs the
+        (debounced) driver rebuild.
+        """
         new_args = args or {}
         if self.driver_args == new_args:
             return
 
+        # See set_driver: the controller must exist to receive the
+        # ``changed`` emission below.
+        self.context.machine_mgr.get_controller(self.id)
+
         self.driver_args = new_args
         self.changed.send(self)
-        task_mgr.add_coroutine(
-            self.controller.rebuild_driver,
-            key=(self.id, "rebuild-driver"),
-        )
 
     @property
     def dialect(self) -> Optional["GcodeDialect"]:
@@ -626,6 +788,16 @@ class Machine:
         self.home_on_start = home_on_start
         self.changed.send(self)
 
+    def set_park_position_after_homing(
+        self, position: tuple[float, float] | None
+    ):
+        if position is not None:
+            position = (float(position[0]), float(position[1]))
+        if self.park_position_after_homing == position:
+            return
+        self.park_position_after_homing = position
+        self.changed.send(self)
+
     def set_clear_alarm_on_connect(self, clear_alarm: bool = True):
         if self.clear_alarm_on_connect == clear_alarm:
             return
@@ -636,6 +808,12 @@ class Machine:
         if self.single_axis_homing_enabled == enabled:
             return
         self.single_axis_homing_enabled = enabled
+        self.changed.send(self)
+
+    def set_z_homing_mode(self, mode: ZHomingMode | None):
+        if self.z_homing_mode == mode:
+            return
+        self.z_homing_mode = mode
         self.changed.send(self)
 
     def set_max_travel_speed(self, speed: int):
@@ -655,6 +833,29 @@ class Machine:
             return
         self.acceleration = acceleration
         self.changed.send(self)
+
+    def set_jog_speed(self, speed: int):
+        if self.jog_speed == speed:
+            return
+        self.jog_speed = speed
+        self.changed.send(self)
+
+    def set_bidir_offset_table(self, table) -> None:
+        """Set the speed-dependent bidirectional scan offset table.
+
+        Rows are ``(speed mm/min, offset mm)`` pairs; they are sorted
+        by speed, and of rows with the same speed the last one wins.
+        """
+        rows = {float(speed): float(offset) for speed, offset in table}
+        normalized = sorted(rows.items())
+        if normalized == self.bidir_offset_table:
+            return
+        self.bidir_offset_table = normalized
+        self.changed.send(self)
+
+    def bidir_offset_for_speed(self, speed: float) -> float:
+        """The bidirectional scan offset in mm for a speed in mm/min."""
+        return interpolate_bidir_offset(self.bidir_offset_table, speed)
 
     @property
     def axis_extents(self) -> tuple[float, float]:
@@ -680,6 +881,28 @@ class Machine:
     def reverse_z_axis(self) -> bool:
         cfg = self.axes.get(Axis.Z)
         return cfg.direction == AxisDirection.REVERSED if cfg else False
+
+    @property
+    def has_z_axis(self) -> bool:
+        """Whether this machine has a configured Z axis.
+
+        Modelled by the presence of ``Axis.Z`` in :attr:`axes`; a
+        2-axis laser simply omits it.  Drives G-code Z emission, the
+        jog/home/zero UI, and 3D Z-layering.
+        """
+        return self.axes.get(Axis.Z) is not None
+
+    @property
+    def available_axes(self) -> Axis:
+        """Bitmask of configured axes (X | Y, plus Z when present).
+
+        Used by jog / home / zero callers so a no-Z machine never
+        targets Z.
+        """
+        axes = Axis.X | Axis.Y
+        if self.has_z_axis:
+            axes |= Axis.Z
+        return axes
 
     def _clamp_soft_limits(self):
         """Clamp soft limits to axis extents. Returns True if clamped."""
@@ -707,12 +930,14 @@ class Machine:
             x_cfg.extents = (0, width)
         if y_cfg:
             y_cfg.extents = (0, height)
-        ml, mt, mr, mb = self._work_margins
-        ml = min(ml, width - 1)
-        mr = min(mr, width - ml - 1)
-        mt = min(mt, height - 1)
-        mb = min(mb, height - mt - 1)
-        self._work_margins = (ml, mt, mr, mb)
+        clamped = _clamp_margins(self._work_margins, (width, height))
+        if clamped != self._work_margins:
+            logger.warning(
+                "Work margins exceed new bed extents (%.0f x %.0f); clamped.",
+                width,
+                height,
+            )
+            self._work_margins = clamped
         self._clamp_soft_limits()
         self.changed.send(self)
 
@@ -730,7 +955,18 @@ class Machine:
         new_margins = (left, top, right, bottom)
         if self._work_margins == new_margins:
             return
-        self._work_margins = new_margins
+        clamped = _clamp_margins(new_margins, self.axis_extents)
+        if clamped != new_margins:
+            logger.warning(
+                "Work margins (%.1f, %.1f, %.1f, %.1f) exceed bed "
+                "extents (%.0f x %.0f); clamped.",
+                left,
+                top,
+                right,
+                bottom,
+                *self.axis_extents,
+            )
+        self._work_margins = clamped
         self._soft_limits = None
         self.changed.send(self)
 
@@ -742,7 +978,7 @@ class Machine:
         """
         ml, mt, mr, mb = self._work_margins
         w, h = self.axis_extents
-        return (ml, mt, max(1.0, w - ml - mr), max(1.0, h - mt - mb))
+        return (ml, mt, w - ml - mr, h - mt - mb)
 
     @property
     def soft_limits(self) -> Rect | None:
@@ -779,6 +1015,22 @@ class Machine:
         self.origin = origin
         self.changed.send(self)
 
+    @property
+    def panel_orientation(self) -> PanelOrientation:
+        """How the native bed is presented on screen."""
+        return self.panel.orientation
+
+    def set_panel_orientation(
+        self,
+        orientation: PanelOrientation,
+        align_cameras: bool = True,
+    ) -> None:
+        """Set how the native bed is presented on screen.
+
+        See :meth:`MachinePanel.set_orientation` for details.
+        """
+        self.panel.set_orientation(orientation, align_cameras=align_cameras)
+
     def set_reverse_x_axis(self, is_reversed: bool):
         """Sets if the X-axis coordinate display is inverted."""
         if self.reverse_x_axis == is_reversed:
@@ -801,8 +1053,35 @@ class Machine:
             )
         self.changed.send(self)
 
+    def set_has_z_axis(self, enabled: bool) -> None:
+        """Enable or disable the Z axis on this machine.
+
+        Disabling stashes the current Z :class:`AxisConfig` and removes
+        it from :attr:`axes`; re-enabling restores the stashed config, or
+        adds a default linear ``(-50, 50)`` Z when none was stashed.
+        Emits :attr:`changed` so the assembly and UI rebuild.
+        """
+        if enabled == self.has_z_axis:
+            return
+        if enabled:
+            cfg = self._stashed_z_config or AxisConfig(
+                letter=Axis.Z,
+                axis_type=AxisType.LINEAR,
+                extents=(-50, 50),
+            )
+            self.axes.add_config(cfg)
+            self._stashed_z_config = None
+        else:
+            cfg = self.axes.get(Axis.Z)
+            if cfg is not None:
+                self._stashed_z_config = cfg
+                self.axes.remove_config(Axis.Z)
+        self.changed.send(self)
+
     def set_reverse_z_axis(self, is_reversed: bool):
         """Sets if the Z-axis direction is reversed."""
+        if not self.has_z_axis:
+            return
         if self.reverse_z_axis == is_reversed:
             return
         cfg = self.axes.get(Axis.Z)
@@ -810,6 +1089,28 @@ class Machine:
             cfg.direction = (
                 AxisDirection.REVERSED if is_reversed else AxisDirection.NORMAL
             )
+        self.changed.send(self)
+
+    @property
+    def z_extents(self) -> tuple[float, float] | None:
+        """The Z axis travel range (min, max) in machine coordinates.
+
+        None when the machine has no Z axis.
+        """
+        cfg = self.axes.get(Axis.Z)
+        if cfg is None:
+            return None
+        return (float(cfg.extents[0]), float(cfg.extents[1]))
+
+    def set_z_extents(self, z_min: float, z_max: float) -> None:
+        """Sets the Z axis travel range (min, max) in machine coordinates."""
+        cfg = self.axes.get(Axis.Z)
+        if cfg is None:
+            return
+        extents = (min(z_min, z_max), max(z_min, z_max))
+        if cfg.extents == extents:
+            return
+        cfg.extents = extents
         self.changed.send(self)
 
     def set_rotary_enabled_default(self, enabled: bool):
@@ -899,8 +1200,36 @@ class Machine:
         """Get the current work position of the machine."""
         return self.device_state.work_pos
 
+    def get_beam_position(self) -> Point | None:
+        """
+        Returns the position of the laser beam in machine coordinates,
+        or None when the position is unknown.
+
+        On machines whose work origin is the workarea origin, the
+        canvas and the emitted G-code are anchored to the work origin,
+        so the beam is located from the controller's work position.
+        Otherwise the canvas is machine-aligned and the machine
+        position is used directly.
+        """
+        m_pos = self.device_state.machine_pos
+        if not m_pos or m_pos[0] is None or m_pos[1] is None:
+            return None
+        if self.wcs_origin_is_workarea_origin:
+            w_pos = self.device_state.work_pos
+            if w_pos and w_pos[0] is not None and w_pos[1] is not None:
+                return self.get_coordinate_space().command_point_to_machine(
+                    w_pos[0], w_pos[1], wcs_is_workarea_origin=True
+                )
+        return m_pos[0], m_pos[1]
+
     def get_soft_limits(self) -> Rect:
-        """Get the soft limits as (x_min, y_min, x_max, y_max)."""
+        """
+        Get the soft limits as (x_min, y_min, x_max, y_max).
+
+        The rect is in machine coordinates: it is anchored to the
+        physical bed and does not move with the work origin. Configured
+        values are entered as distances from the origin corner.
+        """
         if self._soft_limits is not None:
             x_min, y_min, x_max, y_max = self._soft_limits
             if self.reverse_x_axis:
@@ -922,67 +1251,61 @@ class Machine:
         """
         Check if a jog operation would exceed soft limits.
 
+        True when the soft limits would shorten or block the jog, so the
+        warning matches what _adjust_jog_distance_for_limits() sends: a
+        jog back towards the range from outside it is not flagged.
+
         Note: The `distance` argument must be the final, signed coordinate
         delta that will be sent to the machine.
         """
         if not self.soft_limits_enabled:
             return False
-
-        current_pos = self.device_state.machine_pos
-        x_pos, y_pos = current_pos[0], current_pos[1]
-        x_min, y_min, x_max, y_max = self.get_soft_limits()
-
-        # Check X axis
-        if axis & Axis.X:
-            if x_pos is None:
-                return False  # Cannot check limits if position is unknown
-            new_x = x_pos + distance
-            if new_x < x_min or new_x > x_max:
-                return True
-
-        # Check Y axis
-        if axis & Axis.Y:
-            if y_pos is None:
-                return False  # Cannot check limits if position is unknown
-            new_y = y_pos + distance
-            if new_y < y_min or new_y > y_max:
-                return True
-
-        # Note: Z-axis soft limits are not currently implemented
-
-        return False
+        return self._adjust_jog_distance_for_limits(axis, distance) != distance
 
     def _adjust_jog_distance_for_limits(
         self, axis: Axis, distance: float
     ) -> float:
-        """Adjust jog distance to stay within soft limits."""
+        """Adjust jog distance to stay within soft limits.
+
+        The limits describe the physical bed in machine coordinates and
+        are compared against the machine position, so they hold
+        regardless of where the work origin (WCS) is zeroed.
+        """
         if not self.soft_limits_enabled:
             return distance
 
         current_pos = self.device_state.machine_pos
-        x_pos, y_pos = current_pos[0], current_pos[1]
         x_min, y_min, x_max, y_max = self.get_soft_limits()
+        x_pos = current_pos[0]
+        y_pos = current_pos[1]
         adjusted_distance = distance
 
         # Check X axis
         if axis & Axis.X:
             if x_pos is None:
                 return distance  # Cannot adjust if position is unknown
-            new_x = x_pos + distance
-            if new_x < x_min:
-                adjusted_distance = x_min - x_pos
-            elif new_x > x_max:
-                adjusted_distance = x_max - x_pos
+            adjusted_distance = _clamp_jog_distance(
+                x_pos, distance, x_min, x_max
+            )
 
         # Check Y axis
         if axis & Axis.Y:
             if y_pos is None:
                 return distance  # Cannot adjust if position is unknown
-            new_y = y_pos + distance
-            if new_y < y_min:
-                adjusted_distance = y_min - y_pos
-            elif new_y > y_max:
-                adjusted_distance = y_max - y_pos
+            adjusted_distance = _clamp_jog_distance(
+                y_pos, distance, y_min, y_max
+            )
+
+        # Adjust the Z axis against the configured Z travel range
+        if axis & Axis.Z:
+            z_extents = self.z_extents
+            if z_extents is not None:
+                z_pos = self.device_state.machine_pos[2]
+                if z_pos is not None:
+                    z_min, z_max = z_extents
+                    adjusted_distance = _clamp_jog_distance(
+                        z_pos, adjusted_distance, z_min, z_max
+                    )
 
         return adjusted_distance
 
@@ -1042,6 +1365,104 @@ class Machine:
                 return head
         return None
 
+    def get_pointer_offset(
+        self, head: LaserHead | None = None
+    ) -> tuple[float, float]:
+        """
+        The (x, y) pointer offset in machine millimeters for the given
+        laser head, defaulting to the first laser head.
+
+        Returns ``(0.0, 0.0)`` when the head has no pointer offset or
+        it is disabled, so callers can add it unconditionally.
+        """
+        if head is None:
+            head = self.get_default_laser_head()
+        if not isinstance(head, LaserHead):
+            return (0.0, 0.0)
+        return head.pointer_offset
+
+    def has_pointer_offset(self, head: LaserHead | None = None) -> bool:
+        """True while the given (or default) laser head has an enabled,
+        non-zero pointer offset."""
+        return self.get_pointer_offset(head) != (0.0, 0.0)
+
+    def set_pointer_alignment(self, enabled: bool):
+        """
+        Enables or disables runtime pointer alignment.
+
+        While enabled, absolute aim commands (Move-To, Frame,
+        Click-to-Move, Move-Head-Here, the WCS-origin shortcut) are
+        shifted so the pointer dot lands on the aimed position; jobs
+        always burn with the unshifted beam. The state is session-only
+        and requires an enabled pointer offset on the laser head.
+        """
+        if enabled and not self.has_pointer_offset():
+            logger.warning(
+                "Pointer alignment requires an enabled pointer offset "
+                "on the laser head."
+            )
+            return
+        if self.pointer_alignment_enabled == enabled:
+            return
+        self.pointer_alignment_enabled = enabled
+        self.pointer_alignment_changed.send(self)
+        self.changed.send(self)
+
+    def get_command_wcs_offset(self, head: LaserHead | None = None) -> Point3D:
+        """
+        The WCS offset for converting absolute aim targets from MACHINE
+        coordinates into COMMAND (G-code) coordinates.
+
+        This is the plain active WCS offset while pointer alignment is
+        off. While it is on, the pointer offset of the given (or
+        default) laser head is added, so that subtracting the result
+        from a machine-space aim target shifts the issued command by
+        -offset: the pointer dot lands on the target while the beam
+        ends up offset behind it.
+
+        Display-only paths (DRO position, grid origin labels) must keep
+        using get_active_wcs_offset() so they stay truthful. Jog (a
+        relative move) and jobs are never affected.
+        """
+        off_x, off_y, off_z = self.get_active_wcs_offset()
+        if self.pointer_alignment_enabled:
+            dx, dy = self.get_pointer_offset(head)
+            off_x += dx
+            off_y += dy
+        return (off_x, off_y, off_z)
+
+    def get_job_wcs_offset(self, wcs_offset: Point3D) -> Point3D:
+        """
+        The WCS offset to use when generating job output.
+
+        Normally the given offset unchanged. While a pointer dry-run is
+        requested (pointer_job_shift_enabled), the pointer offset of
+        the default laser head is added so the pointer dot traces the
+        toolpath while the beam runs displaced by the offset.
+        """
+        if not self.pointer_job_shift_enabled:
+            return wcs_offset
+        dx, dy = self.get_pointer_offset()
+        return (wcs_offset[0] + dx, wcs_offset[1] + dy, wcs_offset[2])
+
+    def get_job_power_cap(self) -> float | None:
+        """
+        The laser power fraction (0-1) encoded jobs must not exceed
+        while a pointer dry-run is requested, None otherwise.
+
+        While pointer_job_shift_enabled is set, jobs are generated for
+        the pointer dry-run, and the default head's framing power is
+        reported as the cap so the encoded trace cannot burn the
+        material. The cap is consumed by the G-code encoder via the
+        encode context.
+        """
+        if not self.pointer_job_shift_enabled:
+            return None
+        head = self.get_default_laser_head()
+        if head is None:
+            return None
+        return head.frame_power_percent
+
     def remove_head(self, head: Head):
         head.changed.disconnect(self._on_head_changed)
         self.heads.remove(head)
@@ -1050,6 +1471,10 @@ class Machine:
 
     def _on_head_changed(self, head, *args):
         self.invalidate_assembly()
+        if self.pointer_alignment_enabled and not self.has_pointer_offset():
+            # The pointer offset backing runtime alignment is gone, so
+            # alignment can no longer stay on.
+            self.set_pointer_alignment(False)
         self.changed.send(self)
 
     def add_camera(self, camera: Camera):
@@ -1220,11 +1645,10 @@ class Machine:
         self.changed.send(self)
 
     def can_frame(self):
-        return any(
-            h.frame_power_percent
-            for h in self.heads
-            if isinstance(h, LaserHead)
-        )
+        """Framing works at any frame power, including 0% (tracing
+        the outline with the beam off, e.g. for machines with an
+        auxiliary alignment laser), so any laser head qualifies."""
+        return any(isinstance(h, LaserHead) for h in self.heads)
 
     def can_focus(self):
         return any(
@@ -1317,39 +1741,6 @@ class Machine:
             return (x, y, 0.0)
         else:
             return self.get_active_wcs_offset()
-
-    def get_reference_position_world(self) -> tuple[float, float]:
-        """
-        Returns the reference origin position in WORLD coordinates.
-
-        This is used for positioning items in world space at the reference
-        origin (either workarea origin or WCS origin, depending on settings).
-
-        Returns:
-            Tuple of (x, y) in WORLD space.
-        """
-        offset_x, offset_y, _ = self.get_reference_offset()
-        machine_space = MachineSpace.from_machine(self)
-        return machine_space.machine_point_to_world(offset_x, offset_y)
-
-    def get_visual_wcs_offset(self) -> tuple[float, float]:
-        """
-        Returns the WCS offset transformed to visual coordinates.
-
-        Applies axis reversal to the WCS offset. The caller (UI layer)
-        handles origin corner transformation based on canvas dimensions.
-
-        Returns:
-            Tuple of (x, y) with axis reversal applied.
-        """
-        wcs_x, wcs_y, _ = self.get_active_wcs_offset()
-
-        if self.reverse_x_axis:
-            wcs_x = -wcs_x
-        if self.reverse_y_axis:
-            wcs_y = -wcs_y
-
-        return (wcs_x, wcs_y)
 
     def get_visual_extent_frame(self) -> Rect:
         """
@@ -1466,8 +1857,17 @@ class Machine:
                 "driver_config": self.driver_config,
                 "auto_connect": self.auto_connect,
                 "clear_alarm_on_connect": self.clear_alarm_on_connect,
+                "placeholder": self.placeholder,
                 "home_on_start": self.home_on_start,
+                "park_position_after_homing": (
+                    list(self.park_position_after_homing)
+                    if self.park_position_after_homing is not None
+                    else None
+                ),
                 "single_axis_homing_enabled": self.single_axis_homing_enabled,
+                "z_homing_mode": (
+                    self.z_homing_mode.value if self.z_homing_mode else None
+                ),
                 "dialect_uid": self.dialect_uid,
                 "active_wcs": self.active_wcs,
                 "coordinate_systems": [
@@ -1482,7 +1882,9 @@ class Machine:
                 "soft_limits": list(self._soft_limits)
                 if self._soft_limits
                 else None,
+                "soft_limits_enabled": self.soft_limits_enabled,
                 "origin": self.origin.value,
+                "panel_orientation": self.panel.orientation.value,
                 "reverse_x_axis": self.reverse_x_axis,
                 "reverse_y_axis": self.reverse_y_axis,
                 "reverse_z_axis": self.reverse_z_axis,
@@ -1491,6 +1893,13 @@ class Machine:
                 "wcs_origin_is_workarea_origin": (
                     self.wcs_origin_is_workarea_origin
                 ),
+                "source_profile_id": self.source_profile_id,
+                "reviewed_profile_hash": self.reviewed_profile_hash,
+                "device_notes": self.device_notes,
+                "user_notes": self.user_notes,
+                "schema_version": self.schema_version,
+                "usb_vid": _format_usb_field(self.usb_vid),
+                "usb_pid": _format_usb_field(self.usb_pid),
                 "heads": [head.to_dict() for head in self.heads],
                 "cameras": [camera.to_dict() for camera in self.cameras],
                 "rotary_modules": [
@@ -1518,7 +1927,12 @@ class Machine:
                     "max_cut_speed": self.max_cut_speed,
                     "max_travel_speed": self.max_travel_speed,
                     "acceleration": self.acceleration,
+                    "jog_speed": self.jog_speed,
                 },
+                "bidir_offset_table": [
+                    [speed, offset]
+                    for speed, offset in self.bidir_offset_table
+                ],
                 "gcode": {
                     "gcode_precision": self.gcode_precision,
                 },
@@ -1532,6 +1946,9 @@ class Machine:
             data["machine"]["frozen_dialect"] = (
                 self._hydrated_dialect.to_dict()
             )
+        # Re-emit keys written by newer app versions so a save never
+        # drops settings this version does not understand.
+        data["machine"].update(self.extra)
         return data
 
     @staticmethod
@@ -1623,24 +2040,41 @@ class Machine:
         if context is None:
             context = get_context()
         ma = cls(context)
-        ma_data = data.get("machine", {})
-        ma.id = ma_data.get("id", ma.id)
-        ma.name = ma_data.get("name", ma.name)
-        ma.driver_name = ma_data.get("driver")
-        ma.driver_args = ma_data.get("driver_args", {})
-        ma.driver_config = ma_data.get("driver_config", {})
-        ma.auto_connect = ma_data.get("auto_connect", ma.auto_connect)
-        ma.clear_alarm_on_connect = ma_data.get(
+        # Work on a copy: keys are popped as they are consumed so the
+        # leftovers can be preserved as forward-compatibility extras.
+        ma_data = dict(data.get("machine", {}))
+        ma.id = ma_data.pop("id", ma.id)
+        ma.name = ma_data.pop("name", ma.name)
+        ma.driver_name = ma_data.pop("driver", None)
+        ma.driver_args = ma_data.pop("driver_args", {})
+        ma.driver_config = ma_data.pop("driver_config", {})
+        ma.auto_connect = ma_data.pop("auto_connect", ma.auto_connect)
+        ma.clear_alarm_on_connect = ma_data.pop(
             "clear_alarm_on_connect",
             ma.clear_alarm_on_connect,
         )
-        ma.home_on_start = ma_data.get("home_on_start", ma.home_on_start)
-        ma.single_axis_homing_enabled = ma_data.get(
+        ma.placeholder = ma_data.pop("placeholder", ma.placeholder)
+        ma.home_on_start = ma_data.pop("home_on_start", ma.home_on_start)
+        park_position = ma_data.pop("park_position_after_homing", None)
+        if park_position is not None:
+            ma.park_position_after_homing = (
+                float(park_position[0]),
+                float(park_position[1]),
+            )
+        ma.single_axis_homing_enabled = ma_data.pop(
             "single_axis_homing_enabled",
             ma.single_axis_homing_enabled,
         )
+        z_homing_mode = ma_data.pop("z_homing_mode", None)
+        try:
+            ma.z_homing_mode = (
+                ZHomingMode(z_homing_mode) if z_homing_mode else None
+            )
+        except ValueError:
+            logger.warning(f"Unknown Z homing mode '{z_homing_mode}'")
 
-        dialect_uid = ma_data.get("dialect_uid")
+        dialect_uid = ma_data.pop("dialect_uid", None)
+        legacy_dialect = ma_data.pop("dialect", None)
         if dialect_uid is None:
             driver_cls = get_driver_cls(
                 ma.driver_name if ma.driver_name else ""
@@ -1648,9 +2082,9 @@ class Machine:
             if not driver_cls.uses_gcode:
                 dialect_uid = None
             else:
-                dialect_uid = ma_data.get("dialect", "grbl").lower()
+                dialect_uid = (legacy_dialect or "grbl").lower()
 
-        hook_data = ma_data.get("hookmacros", {})
+        hook_data = ma_data.pop("hookmacros", {})
 
         # Run the migration logic, which may update the dialect_uid and
         # hook_data
@@ -1665,33 +2099,42 @@ class Machine:
         )
         ma.dialect_migrated = migrated
         ma.dialect_uid = dialect_uid
-        ma.active_wcs = ma_data.get("active_wcs", ma.active_wcs)
-        if "coordinate_systems" in ma_data:
+        ma.active_wcs = ma_data.pop("active_wcs", ma.active_wcs)
+
+        coordinate_systems = ma_data.pop("coordinate_systems", None)
+        wcs_offsets = ma_data.pop("wcs_offsets", None)
+        if coordinate_systems is not None:
             ma.coordinate_systems = {}
-            for cs_data in ma_data["coordinate_systems"]:
+            for cs_data in coordinate_systems:
                 cs = CoordinateSystem.from_dict(cs_data)
                 ma.coordinate_systems[cs.name] = cs
-        elif "wcs_offsets" in ma_data:
-            for name, offset in ma_data["wcs_offsets"].items():
+        elif wcs_offsets is not None:
+            for name, offset in wcs_offsets.items():
                 cs = ma.coordinate_systems.get(name)
                 if cs:
                     cs.offset = tuple(offset)
 
-        if "axes" in ma_data:
-            ma.axes = AxisSet.from_dict(ma_data["axes"])
+        # Legacy keys are always popped, even when unused, so they
+        # never leak into the forward-compatibility extras below.
+        axes_data = ma_data.pop("axes", None)
+        legacy_extents = tuple(ma_data.pop("dimensions", ma.axis_extents))
+        axis_extents = ma_data.pop("axis_extents", None)
+        if axis_extents is not None:
+            legacy_extents = tuple(axis_extents)
+        legacy_reverse_x = ma_data.pop("reverse_x_axis", False)
+        legacy_reverse_y = ma_data.pop("reverse_y_axis", False)
+        legacy_reverse_z = ma_data.pop("reverse_z_axis", False)
+        x_axis_negative = ma_data.pop("x_axis_negative", None)
+        if x_axis_negative is not None:
+            logger.info("Migrating legacy 'x_axis_negative' setting.")
+            legacy_reverse_x = x_axis_negative
+        y_axis_negative = ma_data.pop("y_axis_negative", None)
+        if y_axis_negative is not None:
+            logger.info("Migrating legacy 'y_axis_negative' setting.")
+            legacy_reverse_y = y_axis_negative
+        if axes_data is not None:
+            ma.axes = AxisSet.from_dict(axes_data)
         else:
-            legacy_extents = tuple(ma_data.get("dimensions", ma.axis_extents))
-            if "axis_extents" in ma_data:
-                legacy_extents = tuple(ma_data["axis_extents"])
-            legacy_reverse_x = ma_data.get("reverse_x_axis", False)
-            legacy_reverse_y = ma_data.get("reverse_y_axis", False)
-            legacy_reverse_z = ma_data.get("reverse_z_axis", False)
-            if "x_axis_negative" in ma_data:
-                logger.info("Migrating legacy 'x_axis_negative' setting.")
-                legacy_reverse_x = ma_data["x_axis_negative"]
-            if "y_axis_negative" in ma_data:
-                logger.info("Migrating legacy 'y_axis_negative' setting.")
-                legacy_reverse_y = ma_data["y_axis_negative"]
             ma.axes = AxisSet.from_legacy(
                 axis_extents=legacy_extents,
                 reverse_x=legacy_reverse_x,
@@ -1700,37 +2143,62 @@ class Machine:
                 rotary_modules=ma.rotary_modules,
             )
 
-        if "work_margins" in ma_data:
-            ma._work_margins = tuple(ma_data["work_margins"])
-        elif "offsets" in ma_data:
-            ox, oy = ma_data["offsets"]
+        work_margins = ma_data.pop("work_margins", None)
+        offsets = ma_data.pop("offsets", None)
+        if work_margins is not None:
+            ma._work_margins = tuple(work_margins)
+        elif offsets is not None:
+            ox, oy = offsets
             ma._work_margins = (ox, 0, 0, oy)
 
-        if "soft_limits" in ma_data and ma_data["soft_limits"] is not None:
-            ma._soft_limits = tuple(ma_data["soft_limits"])
+        soft_limits = ma_data.pop("soft_limits", None)
+        if soft_limits is not None:
+            ma._soft_limits = tuple(soft_limits)
 
-        origin_value = ma_data.get("origin", None)
+        origin_value = ma_data.pop("origin", None)
         if origin_value is not None:
             ma.origin = Origin(origin_value)
         else:  # Legacy support for y_axis_down
             ma.origin = (
                 Origin.BOTTOM_LEFT
-                if ma_data.get("y_axis_down", False) is False
+                if ma_data.pop("y_axis_down", False) is False
                 else Origin.TOP_LEFT
             )
 
-        ma.rotary_enabled_default = ma_data.get(
+        ma.rotary_enabled_default = ma_data.pop(
             "rotary_enabled_default", False
         )
-        ma.default_rotary_module_uid = ma_data.get("default_rotary_module_uid")
+        ma.default_rotary_module_uid = ma_data.pop(
+            "default_rotary_module_uid", None
+        )
 
-        ma.soft_limits_enabled = ma_data.get(
+        orientation_value = ma_data.pop(
+            "panel_orientation", PanelOrientation.NATIVE.value
+        )
+        try:
+            ma.panel._orientation = PanelOrientation(orientation_value)
+        except ValueError:
+            logger.warning(
+                "Unknown panel orientation '%s'; using native",
+                orientation_value,
+            )
+            ma.panel._orientation = PanelOrientation.NATIVE
+
+        ma.soft_limits_enabled = ma_data.pop(
             "soft_limits_enabled", ma.soft_limits_enabled
         )
 
-        ma.wcs_origin_is_workarea_origin = ma_data.get(
+        ma.wcs_origin_is_workarea_origin = ma_data.pop(
             "wcs_origin_is_workarea_origin", False
         )
+        ma.source_profile_id = ma_data.pop("source_profile_id", None)
+        ma.reviewed_profile_hash = ma_data.pop("reviewed_profile_hash", None)
+        ma.device_notes = ma_data.pop("device_notes", None)
+        ma.user_notes = ma_data.pop("user_notes", "")
+        ma.schema_version = ma_data.pop("schema_version", 0)
+        ma.usb_vid = _parse_usb_field(ma_data.pop("usb_vid", None))
+        ma.usb_pid = _parse_usb_field(ma_data.pop("usb_pid", None))
+        ma_data.pop("frozen_dialect", None)
 
         # Deserialize remaining hookmacros from the (potentially cleaned) data
         for trigger_name, macro_data in hook_data.items():
@@ -1742,37 +2210,46 @@ class Machine:
                     f"Skipping unknown hook trigger '{trigger_name}'"
                 )
 
-        macros_data = ma_data.get("macros", {})
+        macros_data = ma_data.pop("macros", {})
         for uid, macro_data in macros_data.items():
             macro_data["uid"] = uid  # Ensure UID is consistent with key
             ma.macros[uid] = Macro.from_dict(macro_data)
 
+        heads_data = ma_data.pop("heads", [])
         ma.heads = []
-        for obj in ma_data.get("heads", {}):
+        for obj in heads_data:
             ma.add_head(head_from_dict(obj))
         ma._explicit_capabilities = cls._parse_capabilities(
-            ma_data.get("capabilities")
+            ma_data.pop("capabilities", None)
         )
+        cameras_data = ma_data.pop("cameras", [])
         ma.cameras = []
-        for obj in ma_data.get("cameras", {}):
+        for obj in cameras_data:
             ma.add_camera(Camera.from_dict(migrate_camera_data(obj)))
-        for obj in ma_data.get("rotary_modules", []):
+        rotary_modules_data = ma_data.pop("rotary_modules", [])
+        for obj in rotary_modules_data:
             ma.add_rotary_module(RotaryModule.from_dict(obj))
-        for obj in ma_data.get("nogo_zones", []):
+        nogo_zones_data = ma_data.pop("nogo_zones", [])
+        for obj in nogo_zones_data:
             ma.add_nogo_zone(Zone.from_dict(obj))
-        speeds = ma_data.get("speeds", {})
+        speeds = ma_data.pop("speeds", {})
         ma.max_cut_speed = speeds.get("max_cut_speed", ma.max_cut_speed)
         ma.max_travel_speed = speeds.get(
             "max_travel_speed", ma.max_travel_speed
         )
         ma.acceleration = speeds.get("acceleration", ma.acceleration)
-        gcode = ma_data.get("gcode", {})
+        ma.jog_speed = speeds.get("jog_speed", ma.jog_speed)
+        ma.bidir_offset_table = sorted(
+            (float(speed), float(offset))
+            for speed, offset in ma_data.pop("bidir_offset_table", None) or []
+        )
+        gcode = ma_data.pop("gcode", {})
         ma.gcode_precision = gcode.get("gcode_precision", ma.gcode_precision)
-        ma.supports_arcs = ma_data.get("supports_arcs", ma.supports_arcs)
-        ma.supports_curves = ma_data.get("supports_curves", ma.supports_curves)
-        ma.arc_tolerance = ma_data.get("arc_tolerance", ma.arc_tolerance)
+        ma.supports_arcs = ma_data.pop("supports_arcs", ma.supports_arcs)
+        ma.supports_curves = ma_data.pop("supports_curves", ma.supports_curves)
+        ma.arc_tolerance = ma_data.pop("arc_tolerance", ma.arc_tolerance)
 
-        units = ma_data.get("units", {})
+        units = ma_data.pop("units", {})
         unit_system_value = units.get("unit_system", "metric")
         try:
             ma.unit_system = UnitSystem(unit_system_value)
@@ -1783,8 +2260,12 @@ class Machine:
             )
             ma.unit_system = UnitSystem.METRIC
 
-        hours_data = ma_data.get("machine_hours", {})
+        hours_data = ma_data.pop("machine_hours", {})
         ma.machine_hours = MachineHours.from_dict(hours_data)
         ma.machine_hours.changed.connect(ma._on_machine_hours_changed)
+
+        # Whatever remains was written by a newer app version; keep it
+        # verbatim so a save by this version never drops those settings.
+        ma.extra = ma_data
 
         return ma

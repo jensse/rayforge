@@ -39,6 +39,7 @@ class SketchMenu(Gio.Menu):
         tools_group.append(_("Path"), "sketch.tool_path")
         tools_group.append(_("Rectangle"), "sketch.tool_rectangle")
         tools_group.append(_("Rounded Rectangle"), "sketch.tool_rounded_rect")
+        tools_group.append(_("Polygon"), "sketch.tool_polygon")
         tools_group.append(_("Fill Area"), "sketch.tool_fill")
         tools_menu.append_section(_("Tools"), tools_group)
 
@@ -47,7 +48,27 @@ class SketchMenu(Gio.Menu):
             _("Toggle Construction"), "sketch.toggle_construction"
         )
         constr_group.append(_("Chamfer Corner"), "sketch.chamfer_corner")
+        constr_group.append(
+            _("Mirror Vertically"), "sketch.tool_mirror_vertical"
+        )
+        constr_group.append(
+            _("Mirror Horizontally"), "sketch.tool_mirror_horizontal"
+        )
         tools_menu.append_section(_("Modify"), constr_group)
+
+        bool_group = Gio.Menu()
+        bool_group.append(_("Union"), "sketch.boolean_union")
+        bool_group.append(_("Difference"), "sketch.boolean_difference")
+        bool_group.append(_("Intersection"), "sketch.boolean_intersection")
+        bool_group.append(_("Exclude"), "sketch.boolean_exclude")
+        tools_menu.append_section(_("Boolean"), bool_group)
+
+        array_group = Gio.Menu()
+        array_group.append(_("Circular Array"), "sketch.tool_circular_array")
+        array_group.append(
+            _("Array Along Curve"), "sketch.tool_curve_along_array"
+        )
+        tools_menu.append_section(_("Arrays"), array_group)
 
         self.append_submenu(_("_Sketch"), tools_menu)
 

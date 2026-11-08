@@ -9,11 +9,35 @@ This module tests the MachineController which handles:
 The MachineController is the logic layer that owns and manages the driver.
 """
 
+import asyncio
+
 import pytest
 
+import rayforge.machine.driver as driver_module
+from rayforge.machine.driver.dummy import NoDeviceDriver
 from rayforge.machine.models.controller import MachineController
 from rayforge.machine.models.machine import Machine
 from rayforge.shared.tasker import task_mgr
+
+
+class OptInDriver(NoDeviceDriver):
+    """A driver that absorbs setup changes and stays alive."""
+
+    def update_settings(self, **kwargs):
+        self.accepted_args = kwargs
+        return True
+
+
+class OptOutDriver(NoDeviceDriver):
+    """A driver that uses the default rebuild-on-change behavior."""
+
+
+driver_module.register_driver(OptInDriver)
+driver_module.register_driver(OptOutDriver)
+
+
+async def wait_until_settled(task_mgr, timeout=2000):
+    await asyncio.to_thread(task_mgr.wait_until_settled, timeout)
 
 
 @pytest.mark.usefixtures("lite_context")
@@ -49,3 +73,144 @@ class TestMachineController:
         assert hasattr(controller, "job_finished")
         assert hasattr(controller, "command_status_changed")
         assert hasattr(controller, "wcs_updated")
+
+
+@pytest.mark.usefixtures("lite_context")
+class TestDriverRebuildDebounce:
+    """Rapid driver configuration changes must coalesce into a single
+    rebuild so the transport is not torn down per keystroke."""
+
+    @pytest.mark.asyncio
+    async def test_set_driver_args_burst_rebuilds_once(
+        self, machine, mocker, task_mgr
+    ):
+        await wait_until_settled(task_mgr)
+        machine.auto_connect = False
+        rebuild_spy = mocker.spy(machine.controller, "rebuild_driver")
+
+        machine.set_driver_args({"port": "/dev/one"})
+        machine.set_driver_args({"port": "/dev/one-two"})
+        machine.set_driver_args({"port": "/dev/one-two-three"})
+        await wait_until_settled(task_mgr)
+
+        assert rebuild_spy.call_count == 1
+        assert machine.driver_args == {"port": "/dev/one-two-three"}
+
+    @pytest.mark.asyncio
+    async def test_set_driver_change_triggers_single_rebuild(
+        self, machine, mocker, task_mgr
+    ):
+        from rayforge.machine.driver.dummy import NoDeviceDriver
+
+        class TestDriver(NoDeviceDriver):
+            pass
+
+        await wait_until_settled(task_mgr)
+        machine.auto_connect = False
+        rebuild_spy = mocker.spy(machine.controller, "rebuild_driver")
+
+        machine.set_driver(TestDriver, {"port": "/dev/null"})
+        await wait_until_settled(task_mgr)
+
+        assert rebuild_spy.call_count == 1
+        assert machine.driver_name == "TestDriver"
+
+
+@pytest.mark.usefixtures("lite_context")
+class TestUpdateSettingsOptIn:
+    """A driver that absorbs setup changes via update_settings keeps
+    running without being torn down; the default (opt-out) still
+    requests a rebuild."""
+
+    @pytest.mark.asyncio
+    async def test_opt_in_driver_keeps_live_instance(self, machine, task_mgr):
+        await wait_until_settled(task_mgr)
+        machine.auto_connect = False
+        machine.set_driver(OptInDriver, {"port": "/dev/old"})
+        await wait_until_settled(task_mgr)
+        live_driver = machine.driver
+
+        machine.set_driver_args({"port": "/dev/new"})
+        await wait_until_settled(task_mgr)
+
+        assert live_driver.accepted_args == {"port": "/dev/new"}
+        assert machine.driver is live_driver
+        assert machine.driver_args == {"port": "/dev/new"}
+
+    @pytest.mark.asyncio
+    async def test_opt_out_driver_is_rebuilt(self, machine, task_mgr):
+        await wait_until_settled(task_mgr)
+        machine.auto_connect = False
+        machine.set_driver(OptOutDriver, {"port": "/dev/old"})
+        await wait_until_settled(task_mgr)
+        live_driver = machine.driver
+
+        machine.set_driver_args({"port": "/dev/new"})
+        await wait_until_settled(task_mgr)
+
+        assert machine.driver is not live_driver
+
+    @pytest.mark.asyncio
+    async def test_opt_in_driver_is_rebuilt_after_disconnect(
+        self, machine, task_mgr
+    ):
+        await wait_until_settled(task_mgr)
+        machine.auto_connect = False
+        machine.set_driver(OptInDriver, {"port": "/dev/old"})
+        await wait_until_settled(task_mgr)
+        cleaned_driver = machine.driver
+
+        await machine.disconnect()
+        await wait_until_settled(task_mgr)
+
+        assert machine.driver is not cleaned_driver
+        assert not hasattr(cleaned_driver, "accepted_args")
+        assert machine.driver.did_setup
+
+
+class WcsDriver(NoDeviceDriver):
+    """A driver whose WCS names are not raw commands."""
+
+    selected: str | None = None
+    raw: tuple[str, ...] = ()
+
+    async def select_wcs(self, wcs):
+        self.selected = wcs
+
+    async def read_parser_state(self):
+        return self.selected
+
+    async def run_raw(self, machine_code):
+        self.raw = (*self.raw, machine_code)
+
+
+driver_module.register_driver(WcsDriver)
+
+
+@pytest.mark.usefixtures("lite_context")
+class TestSwitchActiveWcs:
+    """A WCS switch goes through the driver's select_wcs()."""
+
+    @pytest.mark.asyncio
+    async def test_switch_uses_select_wcs(self, machine, mocker, task_mgr):
+        await wait_until_settled(task_mgr)
+        machine.auto_connect = False
+        machine.set_driver(WcsDriver, {})
+        await wait_until_settled(task_mgr)
+        mocker.patch.object(machine, "is_connected", return_value=True)
+
+        await machine.switch_active_wcs("CURRENT")
+
+        assert machine.driver.selected == "CURRENT"
+        assert machine.driver.raw == ()
+        assert machine.active_wcs == "CURRENT"
+        assert machine.controller._confirmed_active_wcs == "CURRENT"
+
+    @pytest.mark.asyncio
+    async def test_default_select_wcs_sends_raw_command(self, machine, mocker):
+        driver = NoDeviceDriver(machine.context, machine)
+        run_raw = mocker.patch.object(driver, "run_raw")
+
+        await driver.select_wcs("G55")
+
+        run_raw.assert_awaited_once_with("G55")

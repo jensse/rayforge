@@ -2,9 +2,10 @@ from unittest.mock import MagicMock
 
 from raygeo.ops import Ops
 from raygeo.ops.convert import GcodeDialectSpec
-from raygeo.ops.state import AirAssistMode
+from raygeo.ops.state import AirAssistMode, PowerMode
 
 from rayforge.machine.models.dialect.grbl import GRBL_DIALECT
+from rayforge.machine.models.laser import LaserHead
 from rayforge.pipeline.encoder.gcode import GcodeEncoder
 from rayforge.shared.units.system import UnitSystem
 
@@ -21,15 +22,16 @@ def _make_machine_mock(dialect=GRBL_DIALECT):
     machine.axis_extents = (200.0, 200.0)
     machine.get_active_wcs_offset.return_value = (0.0, 0.0, 0.0)
     machine.get_wcs_offset.return_value = (0.0, 0.0, 0.0)
+    machine.get_job_power_cap.return_value = None
     machine.hookmacros = {}
     machine.macros = {}
-    machine.heads = [MagicMock(uid="head0", max_power=100.0, tool_number=1)]
-    machine.get_default_head.return_value = MagicMock(
-        uid="head0", max_power=100.0, tool_number=1
-    )
-    machine.get_head_by_uid.return_value = MagicMock(
-        uid="head0", max_power=100.0, tool_number=1
-    )
+    head = LaserHead()
+    head.uid = "head0"
+    head.tool_number = 1
+    machine.heads = [head]
+    machine.get_default_head.return_value = head
+    machine.get_head_by_uid.return_value = head
+    machine.has_z_axis = True
     return machine
 
 
@@ -85,6 +87,40 @@ def test_dialect_template_fields_include_spindle_coolant():
     assert "coolant_off" in keys
 
 
+def test_encodes_frame_opstream():
+    """The frame's synthetic job/layer/workpiece structure encodes.
+
+    The frame layer uid does not exist in the doc; the encoder must
+    still emit the trace with constant power (M3) and the frame speed.
+    """
+    machine = _make_machine_mock()
+    doc = _make_doc_mock()
+
+    ops = Ops()
+    ops.job_start()
+    ops.layer_start("rayforge-frame")
+    ops.workpiece_start("rayforge-frame-workpiece")
+    ops.set_head("head0")
+    ops.set_power_mode(PowerMode.CONSTANT)
+    ops.set_power(0.1)
+    ops.set_feed_rate(3000)
+    ops.move_to(10.0, 20.0, 0.0)
+    ops.line_to(10.0, 40.0, 0.0)
+    ops.line_to(30.0, 40.0, 0.0)
+    ops.line_to(30.0, 20.0, 0.0)
+    ops.line_to(10.0, 20.0, 0.0)
+    ops.workpiece_end("rayforge-frame-workpiece")
+    ops.layer_end("rayforge-frame")
+    ops.job_end()
+
+    encoder = GcodeEncoder(GRBL_DIALECT)
+    result = encoder.encode(ops, machine, doc)
+
+    assert "M3" in result.text
+    assert "F3000" in result.text
+    assert "G1 X30" in result.text
+
+
 # ── Tests for Ops.to_gcode() with typed GcodeDialectSpec ────────
 
 
@@ -102,6 +138,7 @@ def _make_context(**overrides) -> dict:
         "path_vars": {},
         "layer_path_vars": {},
         "workpiece_path_vars": {},
+        "has_z_axis": True,
     }
     defaults.update(overrides)
     return defaults
@@ -128,6 +165,46 @@ def test_rust_encode_basic_move_and_line():
     assert "G1 F1000" in text
     assert "M5" in text
     assert "M30" in text
+
+
+def test_rust_encode_no_z_machine_omits_z_from_moves():
+    """A no-Z machine (has_z_axis=False) never emits Z words."""
+    ops = Ops()
+    ops.job_start()
+    ops.set_power(1.0)
+    ops.set_feed_rate(1000)
+    ops.move_to(0.0, 0.0, 0.0)
+    ops.line_to(10.0, 20.0, 0.0)
+    # A Z change that would normally emit Z — must be suppressed.
+    ops.move_to(10.0, 20.0, 5.0)
+    ops.job_end()
+
+    dialect = GcodeDialectSpec()
+    context = _make_context(has_z_axis=False)
+    result = ops.to_gcode(dialect, context)
+    text = result["text"]
+
+    assert " Z" not in text, f"Z word found in no-Z output: {text!r}"
+    assert "G1 X10 Y20" in text
+
+
+def test_rust_encode_has_z_axis_defaults_true():
+    """Omitting has_z_axis from the context defaults to True (3D)."""
+    ops = Ops()
+    ops.job_start()
+    ops.move_to(0.0, 0.0, 0.0)
+    ops.move_to(0.0, 0.0, 5.0)
+    ops.job_end()
+
+    dialect = GcodeDialectSpec()
+    # No has_z_axis key — defaults to True via serde default.
+    context = _make_context()
+    context.pop("has_z_axis", None)
+    result = ops.to_gcode(dialect, context)
+    text = result["text"]
+
+    # Z change should be emitted when the flag defaults to True.
+    assert " Z5" in text
 
 
 def test_rust_encode_imperial_scales_coords_and_feed():
@@ -358,3 +435,41 @@ def test_rust_encode_macro_path_vars():
     )
     result = ops.to_gcode(dialect, context)
     assert "text" in result
+
+
+# ── Power mode (constant vs dynamic) ────────────────────────────
+
+
+def test_encode_dynamic_power_uses_laser_on_template():
+    machine = _make_machine_mock()
+    doc = _make_doc_mock()
+
+    ops = Ops()
+    ops.job_start()
+    ops.set_power(1.0)
+    ops.set_feed_rate(1000)
+    ops.move_to(0.0, 0.0, 0.0)
+    ops.line_to(10.0, 0.0, 0.0)
+    ops.job_end()
+
+    result = GcodeEncoder(GRBL_DIALECT).encode(ops, machine, doc)
+    assert "M4 S1000" in result.text
+    assert "M3 S1000" not in result.text
+
+
+def test_encode_constant_power_uses_focus_template():
+    machine = _make_machine_mock()
+    doc = _make_doc_mock()
+
+    ops = Ops()
+    ops.job_start()
+    ops.set_power(1.0)
+    ops.set_power_mode(PowerMode.CONSTANT)
+    ops.set_feed_rate(1000)
+    ops.move_to(0.0, 0.0, 0.0)
+    ops.line_to(10.0, 0.0, 0.0)
+    ops.job_end()
+
+    result = GcodeEncoder(GRBL_DIALECT).encode(ops, machine, doc)
+    assert "M3 S1000" in result.text
+    assert "M4 S1000" not in result.text

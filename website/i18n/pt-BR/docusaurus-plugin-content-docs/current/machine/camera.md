@@ -1,39 +1,38 @@
 ---
-description: "Configure a calibração da câmera no Rayforge para alinhamento preciso da peça de trabalho. Use sua câmera para visualizar e posicionar designs em materiais."
+description:
+  "Configure a calibração da câmera no Rayforge para alinhamento preciso da peça de trabalho. Use
+  sua câmera para visualizar e posicionar designs em materiais."
 ---
 
 # Integração com Câmera
 
-O Rayforge suporta integração com câmera USB para alinhamento e posicionamento
-preciso de materiais. O recurso de sobreposição de câmera permite ver
-exatamente onde seu laser vai cortar ou gravar no material, eliminando
-suposições e reduzindo o desperdício de material.
+O Rayforge é compatível com integração de câmeras para alinhamento e posicionamento preciso, usando
+câmeras USB locais ou câmeras de rede (instantâneo HTTP, fluxo HTTP/MJPEG ou RTSP). O recurso de
+sobreposição de câmera permite ver exatamente onde seu laser vai cortar ou gravar no material,
+eliminando suposições e reduzindo o desperdício de material.
 
-![Configurações da Câmera](/screenshots/machine-settings-camera.png)
+![Configurações da Câmera](/screenshots/machine-settings-camera.webp)
 
 ## Fluxo de trabalho de configuração
 
 A configuração de uma câmera pode ser feita por meio do
-[Assistente de Câmera](#etapa-2-assistente-de-câmera) guiado — um fluxo único
-que cobre configurações de imagem, calibração de lente e alinhamento — ou
-configurando cada área manualmente no painel de propriedades da câmera. De
-qualquer forma, a configuração cobre quatro áreas:
+[Assistente de Câmera](#etapa-2-assistente-de-câmera) guiado — um fluxo único que cobre
+configurações de imagem, calibração de lente e alinhamento — ou configurando cada área manualmente
+no painel de propriedades da câmera. De qualquer forma, a configuração cobre quatro áreas:
 
-1. **Adicionar uma câmera** — Conecte sua câmera e adicione-a à configuração
-   da máquina
-2. **Ajustar configurações de imagem** — Ajuste brilho, contraste, balanço de
-   branco e redução de ruído
-3. **Calibrar a lente** — Corrija a distorção com o assistente de calibração
-   ou coeficientes manuais
-4. **Alinhar a câmera** — Mapeie pixels da câmera para coordenadas da máquina
-   para posicionamento preciso
+1. **Adicionar uma câmera** — Conecte sua câmera e adicione-a à configuração da máquina
+2. **Ajustar configurações de imagem** — Ajuste brilho, contraste, balanço de branco e redução de
+   ruído
+3. **Calibrar a lente** — Corrija a distorção com o assistente de calibração ou coeficientes manuais
+4. **Alinhar a câmera** — Mapeie pixels da câmera para coordenadas da máquina para posicionamento
+   preciso
 
-O painel de propriedades da câmera mostra ícones de status para calibração e
-alinhamento rapidamente:
+O painel de propriedades da câmera mostra ícones de status para calibração e alinhamento
+rapidamente:
 
 - ✓ **Calibração de Lente** — A calibração foi realizada
-- ⚠ **Alinhamento de Imagem** — Aviso quando o alinhamento precisa ser refeito
-  (p. ex., após calibração de lente)
+- ⚠ **Alinhamento de Imagem** — Aviso quando o alinhamento precisa ser refeito (p. ex., após
+  calibração de lente)
 - ✓ **Alinhamento de Imagem** — O alinhamento está atual e válido
 
 ---
@@ -42,13 +41,11 @@ alinhamento rapidamente:
 
 ### Requisitos de Hardware
 
-**Câmeras compatíveis:**
+**Câmeras locais compatíveis:**
 
 - Webcams USB (mais comum)
-- Câmeras integradas de laptop (se executar Rayforge em laptop perto da
-  máquina)
-- Qualquer câmera suportada por Video4Linux2 (V4L2) no Linux ou
-  DirectShow no Windows
+- Câmeras integradas de laptop (se executar Rayforge em laptop perto da máquina)
+- Qualquer câmera suportada por Video4Linux2 (V4L2) no Linux ou DirectShow no Windows
 
 **Configuração recomendada:**
 
@@ -57,21 +54,18 @@ alinhamento rapidamente:
 - Câmera posicionada para capturar a área de trabalho do laser
 - Montagem segura para prevenir movimento da câmera
 
-### Adicionando uma Câmera
+### Adicionando uma câmera local
 
 1. **Conecte sua câmera** ao computador via USB
 
 2. **Abra Configurações da Câmera:**
-   - Navegue até **Configurações → Preferências → Câmera**
-   - Ou use o botão da câmera na barra de ferramentas
+   - Navegue até **Máquina → Configurações da Máquina → Câmera**
 
 3. **Adicione uma nova câmera:**
    - Clique no botão "+" para adicionar uma câmera
-   - Digite um nome descritivo (ex: "Câmera Superior",
-     "Câmera da Área de Trabalho")
+   - Escolha **Local camera** como tipo de fonte
+   - Digite um nome descritivo (ex: "Câmera Superior", "Câmera da Área de Trabalho")
    - Selecione o dispositivo no menu suspenso
-     - No Linux: `/dev/video0`, `/dev/video1`, etc.
-     - No Windows: Camera 0, Camera 1, etc.
 
 4. **Habilite a câmera:**
    - Ative o interruptor de habilitação da câmera
@@ -81,27 +75,23 @@ alinhamento rapidamente:
 
 ## Etapa 2: Assistente de Câmera
 
-O **Assistente de Câmera** executa a configuração completa da câmera em um
-único fluxo guiado, cobrindo as três áreas em ordem — configurações de imagem,
-calibração de lente e alinhamento de imagem. Ele é iniciado a partir de:
+O **Assistente de Câmera** executa a configuração completa da câmera em um único fluxo guiado,
+cobrindo as três áreas em ordem — configurações de imagem, calibração de lente e alinhamento de
+imagem. Ele é iniciado a partir de:
 
-- A linha **Assistente de Câmera** no painel de propriedades da câmera —
-  clique em **Start**
-- Automaticamente a partir do [assistente de
-  configuração](../getting-started/first-time-setup.md) quando você habilita
-  uma câmera em sua etapa de câmera e continua
+- A linha **Assistente de Câmera** no painel de propriedades da câmera — clique em **Start**
+- Automaticamente a partir do [assistente de configuração](../getting-started/first-time-setup.md)
+  quando você habilita uma câmera em sua etapa de câmera e continua
 
 ### Etapa 2.1: Ajustar Configurações de Imagem
 
-![Diálogo de Configurações de Imagem](/screenshots/machine-settings-camera-image-settings.png)
+![Diálogo de Configurações de Imagem](/screenshots/machine-settings-camera-image-settings.webp)
 
-As configurações de imagem são o primeiro estágio do assistente de câmera —
-ele abre nessa etapa e permite definir a resolução, o balanço de branco, o
-brilho, o contraste e a redução de ruído. Se você não executou o assistente,
-ou quer ajustar os valores que ele definiu, clique em **Configure** ao lado
-de **Configurações de Imagem** nas propriedades da câmera para abrir o
-diálogo de configurações de imagem. Ajuste estes parâmetros para obter uma
-visão clara da câmera:
+As configurações de imagem são o primeiro estágio do assistente de câmera — ele abre nessa etapa e
+permite definir a resolução, o balanço de branco, o brilho, o contraste e a redução de ruído. Se
+você não executou o assistente, ou quer ajustar os valores que ele definiu, clique em **Configure**
+ao lado de **Configurações de Imagem** nas propriedades da câmera para abrir o diálogo de
+configurações de imagem. Ajuste estes parâmetros para obter uma visão clara da câmera:
 
 | Configuração          | Descrição                                                                              |
 | --------------------- | -------------------------------------------------------------------------------------- |
@@ -112,70 +102,114 @@ visão clara da câmera:
 | **Balanço de Branco** | Correção de temperatura de cor (Auto ou 2500-10000K)                                   |
 | **Redução de Ruído**  | Redução de ruído temporal (0.0 a 0.95)                                                 |
 
-A opção YUYV é útil se sua câmera produz imagens esverdeadas com o formato
-MJPEG padrão. Note que YUYV é não comprimido e pode reduzir a resolução
-disponível ou a taxa de quadros em conexões USB 2.0.
+A opção YUYV é útil se sua câmera produz imagens esverdeadas com o formato MJPEG padrão. Note que
+YUYV é não comprimido e pode reduzir a resolução disponível ou a taxa de quadros em conexões USB
+2.0.
 
 ### Etapa 2.2: Calibração de Lente
 
-Se sua câmera tem uma lente grande-angular ou está montada em um ângulo,
-a imagem pode mostrar curvatura visível — linhas retas aparecem curvadas,
-especialmente perto das bordas do quadro. Isso é chamado de distorção de
-lente, e pode comprometer o alinhamento mesmo que seus pontos de
-alinhamento sejam cuidadosamente medidos.
+Se sua câmera tem uma lente grande-angular ou está montada em um ângulo, a imagem pode mostrar
+curvatura visível — linhas retas aparecem curvadas, especialmente perto das bordas do quadro. Isso é
+chamado de distorção de lente, e pode comprometer o alinhamento mesmo que seus pontos de alinhamento
+sejam cuidadosamente medidos.
 
-A calibração de lente é o segundo estágio do assistente de câmera. Ela
-permite escolher como corrigir a distorção:
+A calibração de lente é o segundo estágio do assistente de câmera. Ela permite escolher como
+corrigir a distorção:
 
-- **Automatic** — capture quadros de um cartão de calibração impresso; o
-  assistente calcula o modelo de distorção para você
-- **Manual** — insira os coeficientes radial (k1–k3) e tangencial (p1–p2)
-  manualmente
+- **Automatic** — capture quadros de um padrão de calibração impresso; o assistente calcula o modelo
+  de distorção para você
+- **Manual** — insira os coeficientes radial (k1–k3) e tangencial (p1–p2) manualmente
 - **Skip** — deixe a distorção sem correção; você pode calibrar mais tarde
 
 #### Calibração Automática
 
-Para a calibração **Automatic**, o assistente orienta você a capturar várias
-imagens de um cartão de calibração impresso de diferentes posições na mesa e,
-em seguida, calcula um modelo de distorção automaticamente.
+Para a calibração **Automatic**, o assistente orienta você a capturar várias imagens de um padrão de
+calibração impresso de diferentes posições na mesa e, em seguida, calcula automaticamente um modelo
+de distorção.
 
-![Assistente — Configurações do Cartão](/screenshots/machine-settings-camera-lens-calibration-wizard-card.png)
+![Assistente — Configurações do Cartão](/screenshots/machine-settings-camera-lens-calibration-wizard-card.webp)
 
-1. Defina a **Largura** e **Altura** do seu cartão impresso. A visualização
-   é atualizada em tempo real — o cartão deve cobrir cerca de 70% da vista da
-   câmera.
-2. Clique em **Save to PDF** para exportar o cartão para impressão, depois
-   imprima-o e coloque-o na mesa do laser.
+Primeiro escolha um **Pattern Type**:
 
-![Assistente — Captura](/screenshots/machine-settings-camera-lens-calibration-wizard-capture.png)
+| Padrão            | Notas                                                                        |
+| ----------------- | ---------------------------------------------------------------------------- |
+| **ChArUco Board** | Tabuleiro de xadrez com marcadores. Mais preciso; precisa de boa impressora. |
+| **Marker Grid**   | Marcadores ArUco ou AprilTag independentes. Tolera vistas parciais.          |
+| **Dot Grid**      | Pontos pretos, em fileiras ou alternadas. Barato, menos preciso.             |
 
-3. Mova o cartão para diferentes posições e ângulos dentro da vista da
-   câmera e clique em **Capture Frame** para cada posição. Procure fazer pelo
-   menos 8 capturas cobrindo todo o quadro, incluindo cantos e bordas. A
-   barra de progresso e os indicadores de status mostram a qualidade da
-   captura.
-4. Quando quadros suficientes forem capturados, o assistente calcula o modelo
-   de distorção e o aplica — a sobreposição da câmera agora mostra uma imagem
-   corrigida e reta.
+1. Defina a **Largura** e **Altura** da sua folha impressa. A visualização é atualizada em tempo
+   real — o padrão deve cobrir cerca de 70% da vista da câmera.
+2. Clique em **Save to PDF** para exportar o padrão para impressão, depois imprima-o e coloque-o na
+   mesa do laser.
+
+![Assistente — Captura](/screenshots/machine-settings-camera-lens-calibration-wizard-capture.webp)
+
+3. Mova o padrão para diferentes posições e ângulos dentro da vista da câmera e clique em **Capture
+   Frame** para cada posição. Procure fazer pelo menos 8 capturas cobrindo todo o quadro, incluindo
+   cantos e bordas. A barra de progresso e os indicadores de status mostram a qualidade da captura.
+4. Quando quadros suficientes forem capturados, o assistente calcula o modelo de distorção e o
+   aplica — a sobreposição da câmera agora mostra uma imagem corrigida e reta.
+
+#### Usando um padrão já impresso
+
+Os campos de **Pattern Geometry** descrevem a folha em unidades físicas — contagens da grade,
+tamanhos dos elementos e as distâncias entre eles. Editá-los muda o assistente para medir uma folha
+existente em vez de sugerir uma nova, permitindo calibrar com um padrão impresso antes ou que veio
+com sua máquina.
+
+Meça a folha após imprimir e informe as dimensões impressas em vez das nominais: impressoras aplicam
+escala, e alguns por cento de erro de escala aparecem diretamente no resultado. Se você alterar um
+campo de geometria, a sugestão de **Card Size** é ignorada, pois suas medidas passam a definir o
+padrão.
+
+Para um **Marker Grid**, o **Marker Dictionary** deve corresponder à família de impressão (ArUco ou
+AprilTag — o Rayforge refina os cantos de acordo). Se os ids impressos não começam em 0, por exemplo
+um bloco de um conjunto maior, informe o primeiro id da folha em **Marker ID Offset**; marcadores
+fora do intervalo descrito são ignorados.
+
+A numeração segue o canto de **ID Origin**, que contém o id de deslocamento, e o **ID Order**: ids
+consecutivos avançam primeiro ao longo das fileiras, ou primeiro ao longo das colunas. O padrão —
+canto superior esquerdo, fileiras primeiro — segue os tabuleiros do próprio OpenCV. Para descrever
+sua folha, encontre o marcador com o menor id e escolha o canto onde ele está; depois verifique se o
+próximo id está ao lado (fileiras) ou abaixo (colunas).
+
+As folhas de pontos vêm em dois arranjos, e os campos **Row Spacing** e **Row Offset** informam ao
+Rayforge qual é o seu:
+
+- **Rows in a rectangle** — cada fileira está alinhada. Deixe **Row Offset** em 0.
+- **Rows staggered** — cada segunda fileira é deslocada lateralmente, muitas vezes meio passo,
+  formando um arranjo hexagonal. Informe a distância entre fileiras em **Row Spacing** e o
+  deslocamento lateral em **Row Offset**.
+
+O Rayforge sugere uma folha alternada por padrão; se a sua for um retângulo simples, volte **Row
+Offset** para 0.
+
+:::tip
+
+Uma folha de pontos não indica para onde fica o topo; o Rayforge lê sua orientação da vista e da
+geometria do padrão. Isso vale enquanto a folha mantiver aproximadamente a mesma orientação entre
+capturas — com **Dot Grid**, não gire a folha um quarto de volta entre fotos. Fileiras alternadas
+ajudam, pois o deslocamento quebra a simetria de um retângulo simples. Padrões ChArUco e ArUco
+trazem a própria orientação e não têm essa restrição; prefira-os quando puder escolher.
+
+:::
 
 #### Calibração Manual
 
-![Diálogo de Calibração de Lente](/screenshots/machine-settings-camera-lens-calibration.png)
+![Diálogo de Calibração de Lente](/screenshots/machine-settings-camera-lens-calibration.webp)
 
-Para coeficientes manuais ou para ajuste fino do resultado após uma
-calibração automática, abra o diálogo de calibração de lente clicando em
-**Configure** ao lado de **Calibração de Lente** nas propriedades da câmera.
-A partir daqui você pode ajustar os coeficientes de distorção manualmente —
+Para coeficientes manuais ou para ajuste fino do resultado após uma calibração automática, abra o
+diálogo de calibração de lente clicando em **Configure** ao lado de **Calibração de Lente** nas
+propriedades da câmera. A partir daqui você pode ajustar os coeficientes de distorção manualmente —
 ajuste fino dos parâmetros radial (k1–k3) e tangencial (p1–p2).
 
 ### Etapa 2.3: Alinhamento de Imagem
 
-![Diálogo de Alinhamento de Imagem](/screenshots/machine-settings-camera-image-alignment.png)
+![Diálogo de Alinhamento de Imagem](/screenshots/machine-settings-camera-image-alignment.webp)
 
-O alinhamento de imagem é o estágio final do assistente de câmera. O
-alinhamento da câmera calibra a relação entre pixels da câmera e coordenadas
-do mundo real, permitindo posicionamento preciso. O assistente usa o mesmo
-procedimento descrito aqui, e aplicar o alinhamento conclui o assistente.
+O alinhamento de imagem é o estágio final do assistente de câmera. O alinhamento da câmera calibra a
+relação entre pixels da câmera e coordenadas do mundo real, permitindo posicionamento preciso. O
+assistente usa o mesmo procedimento descrito aqui, e aplicar o alinhamento conclui o assistente.
 
 #### Por Que o Alinhamento é Necessário
 
@@ -185,19 +219,17 @@ A câmera vê a área de trabalho de cima, mas a imagem pode estar:
 - Escalada de forma diferente nas direções X e Y
 - Distorcida pela perspectiva da lente
 
-O alinhamento cria uma matriz de transformação que mapeia pixels da câmera
-para coordenadas da máquina.
+O alinhamento cria uma matriz de transformação que mapeia pixels da câmera para coordenadas da
+máquina.
 
 #### Procedimento de Alinhamento
 
 1. **Abra o Diálogo de Alinhamento:**
-   - Clique no botão **Configure** ao lado de **Alinhamento de Imagem** nas
-     propriedades da câmera
+   - Clique no botão **Configure** ao lado de **Alinhamento de Imagem** nas propriedades da câmera
    - O diálogo mostra o feed da câmera com a sobreposição de alinhamento atual
 
 2. **Coloque marcadores de alinhamento:**
-   - Você precisa de pelo menos 3 pontos de referência (4 recomendados para
-     melhor precisão)
+   - Você precisa de pelo menos 3 pontos de referência (4 recomendados para melhor precisão)
    - Os pontos de alinhamento devem ser espalhados pela área de trabalho
    - Use posições conhecidas como:
      - Posição de origem da máquina
@@ -221,20 +253,17 @@ para coordenadas da máquina.
 
 6. **Verifique o alinhamento:**
    - Mova a cabeça do laser para uma posição conhecida
-   - Verifique se o ponto do laser se alinha com a posição esperada na visão
-     da câmera
+   - Verifique se o ponto do laser se alinha com a posição esperada na visão da câmera
    - Ajuste fino realinhando se necessário
 
 #### Status de Alinhamento
 
-O painel de propriedades da câmera mostra o status de alinhamento com um
-ícone:
+O painel de propriedades da câmera mostra o status de alinhamento com um ícone:
 
 - **Marca de verificação** — O alinhamento está atual e válido
-- **Aviso** — O alinhamento precisa ser refeito. Isso acontece quando a
-  calibração de lente é atualizada, porque a correção de distorção altera a
-  imagem da câmera e invalida o alinhamento existente. Seus pontos de
-  alinhamento são preservados — basta abrir o diálogo e clicar em
+- **Aviso** — O alinhamento precisa ser refeito. Isso acontece quando a calibração de lente é
+  atualizada, porque a correção de distorção altera a imagem da câmera e invalida o alinhamento
+  existente. Seus pontos de alinhamento são preservados — basta abrir o diálogo e clicar em
   **Aplicar** novamente.
 
 #### Exemplo de fluxo de trabalho
@@ -246,25 +275,43 @@ O painel de propriedades da câmera mostra o status de alinhamento com um
 5. Insira coordenadas exatas para cada ponto
 6. Aplique e verifique
 
-:::tip Melhores Práticas
-
+<!-- prettier-ignore-start -->
+:::tip[Melhores Práticas]
 - Use pontos nos cantos da sua área de trabalho para cobertura máxima
 - Evite agrupar pontos em uma área
-- Meça as coordenadas do mundo real com cuidado - a precisão aqui
-  determina a qualidade geral do
+- Meça as coordenadas do mundo real com cuidado - a precisão aqui determina a qualidade geral do
   alinhamento
 - Realinhe se você mover a câmera ou alterar a distância do foco
 - Realinhe após atualizar a calibração de lente
 - Salve seu alinhamento - ele persiste entre sessões
-  :::
+:::
+<!-- prettier-ignore-end -->
 
 ---
 
 ## Usando a Sobreposição de Câmera
 
-Uma vez alinhada, a sobreposição de câmera ajuda a posicionar trabalhos
-com precisão. Alterne clicando no ícone da câmera na barra de ferramentas
-da janela principal.
+Uma vez alinhada, a sobreposição de câmera ajuda a posicionar trabalhos com precisão. Alterne
+clicando no ícone da câmera na barra de ferramentas da janela principal.
+
+---
+
+### Visualização fora da área de trabalho
+
+A câmera geralmente vê mais do que apenas a área de trabalho. Em Configurações da máquina → Câmera →
+Visualização fora da área de trabalho, você pode exibir uma borda adicional semitransparente com a
+imagem da câmera ao redor da área de trabalho, o que facilita posicionar as peças.
+
+![Visualização da câmera fora da área de trabalho](/screenshots/main-camera-outside-view.webp)
+
+- **Mostrar fora da área de trabalho** liga ou desliga a borda. Ela fica desligada por padrão e
+  exige uma câmera alinhada.
+- **Margem** controla até onde a borda se estende além da área de trabalho, até 100 mm.
+- **Transparência** controla a visibilidade da borda.
+
+As áreas que a câmera não consegue ver permanecem transparentes em vez de aparecer em preto, e a
+borda termina no limite do que a câmera realmente cobre. Objetos que se elevam acima da mesa, como o
+pórtico, podem aparecer deslocados na borda, porque a imagem da câmera é alinhada ao plano da mesa.
 
 ---
 
@@ -290,8 +337,7 @@ O Rayforge suporta múltiplas câmeras para diferentes visões ou máquinas:
 
 **Soluções:**
 
-**Linux:**
-Verifique se a câmera é reconhecida pelo sistema:
+**Linux:** Verifique se a câmera é reconhecida pelo sistema:
 
 ```bash
 # Liste dispositivos de vídeo
@@ -313,10 +359,8 @@ sudo snap connect rayforge:camera
 
 **Windows:**
 
-- Verifique o Gerenciador de Dispositivos para câmera sob "Cameras" ou
-  "Dispositivos de imagem"
-- Certifique-se de que nenhuma outra aplicação está usando a câmera
-  (feche Zoom, Skype, etc.)
+- Verifique o Gerenciador de Dispositivos para câmera sob "Cameras" ou "Dispositivos de imagem"
+- Certifique-se de que nenhuma outra aplicação está usando a câmera (feche Zoom, Skype, etc.)
 - Tente uma porta USB diferente
 - Atualize os drivers da câmera
 
@@ -328,8 +372,8 @@ sudo snap connect rayforge:camera
 
 1. **Câmera em uso por outra aplicação** - Feche outros apps de vídeo
 2. **Dispositivo incorreto selecionado** - Tente IDs de dispositivo diferentes
-3. **Permissões da câmera** - No Linux Snap, certifique-se de que a
-   interface da câmera está conectada
+3. **Permissões da câmera** - No Linux Snap, certifique-se de que a interface da câmera está
+   conectada
 4. **Problema de hardware** - Teste a câmera com outra aplicação
 
 **Soluções:**
@@ -358,8 +402,8 @@ sudo lsof /dev/video0
 - Use mais pontos de alinhamento (6-8 para áreas muito grandes)
 - Espalhe pontos por toda a área de trabalho
 - Meça as coordenadas do mundo real com muito cuidado
-- Use comandos de movimento da máquina para posicionar precisamente o
-  laser em coordenadas conhecidas
+- Use comandos de movimento da máquina para posicionar precisamente o laser em coordenadas
+  conhecidas
 - Realinhe após qualquer ajuste da câmera
 
 ### Qualidade de Imagem Ruim
@@ -369,13 +413,10 @@ sudo lsof /dev/video0
 **Soluções:**
 
 1. **Ajuste brilho/contraste** nas configurações da câmera
-2. **Melhore a iluminação** - Adicione iluminação consistente na área de
-   trabalho
+2. **Melhore a iluminação** - Adicione iluminação consistente na área de trabalho
 3. **Limpe a lente da câmera** - Poeira e detritos reduzem a clareza
-4. **Verifique o foco** - Auto-foco pode não funcionar bem; use manual
-   se possível
-5. **Reduza a transparência** temporariamente para ver a imagem da
-   câmera mais claramente
+4. **Verifique o foco** - Auto-foco pode não funcionar bem; use manual se possível
+5. **Reduza a transparência** temporariamente para ver a imagem da câmera mais claramente
 6. **Tente diferentes configurações de balanço de branco**
 7. **Ajuste a redução de ruído** se a imagem aparecer granulada
 
@@ -391,10 +432,43 @@ sudo lsof /dev/video0
 
 ---
 
+## Câmeras de rede
+
+O Rayforge é compatível com câmeras locais e câmeras de rede por meio de instantâneos HTTP, fluxos
+HTTP/MJPEG e RTSP. Câmeras locais são detectadas automaticamente; câmeras de rede são adicionadas
+informando diretamente a URL.
+
+### Adicionar uma câmera de rede
+
+1. Abra **Máquina → Configurações da Máquina → Câmera**.
+2. Clique em **+** e escolha **HTTP snapshot URL**, **HTTP stream URL** ou **RTSP stream**.
+3. Informe um nome e a URL, por exemplo:
+   - Instantâneo HTTP: `http://192.168.1.50:8080/media/getCapturePhoto`
+   - Fluxo HTTP/MJPEG: `http://192.168.1.50/mjpeg`
+   - RTSP: `rtsp://192.168.1.50/stream`
+4. Ative a câmera. O vídeo deverá aparecer na tela.
+
+O perfil do dispositivo Creality Falcon A1 Pro já inclui uma câmera de instantâneo HTTP
+pré-configurada e desativada. Em **Máquina → Configurações da Máquina → Câmera**, selecione **Falcon
+A1 Pro Camera** e substitua `<laser-ip>` na URL do campo **Source** pelo endereço IP acessível da
+máquina. Confirme a URL válida com **Enter** ou clicando fora do campo e, em seguida, ative a câmera
+manualmente. Você também pode usar o endereço IP atribuído ao Falcon na sua rede Wi-Fi.
+
+Depois, você pode editar o campo **Source** sem perder a calibração ou o alinhamento. Ao editar a
+URL, a câmera é desativada imediatamente. O botão de ativação permanece indisponível até que uma URL
+válida seja aplicada; depois, ative a câmera novamente manualmente. O Rayforge verifica se o esquema
+da URL corresponde ao tipo de fonte (`http://`, `https://`, `rtsp://` ou `rtsps://`).
+
+### Problemas de conexão
+
+Se nenhuma imagem aparecer, verifique o endereço IP, o esquema da URL e se a câmera e o computador
+conseguem se comunicar na mesma rede. Para instantâneos HTTP, o Rayforge mantém a última imagem
+válida e tenta novamente em uma frequência reduzida.
+
+---
+
 ## Páginas Relacionadas
 
-- [Visualização 3D](../ui/3d-preview.md) — Visualizar execução com sobreposição
-  de câmera
-- [Enquadramento de Trabalhos](../features/framing-your-job.md) — Verificar
-  posição do trabalho
+- [Visualização 3D](../ui/3d-preview.md) — Visualizar execução com sobreposição de câmera
+- [Enquadramento de Trabalhos](../features/framing-your-job.md) — Verificar posição do trabalho
 - [Configurações Gerais](general) — Configuração da máquina

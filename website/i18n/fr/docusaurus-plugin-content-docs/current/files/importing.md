@@ -1,20 +1,23 @@
 # Importer des fichiers
 
-Rayforge prend en charge l'importation de divers formats de fichiers, tant
-vectoriels que matriciels. Cette page explique comment importer des fichiers et
-les optimiser pour obtenir les meilleurs résultats.
+Rayforge prend en charge l'importation de divers formats de fichiers, tant vectoriels que
+matriciels. Cette page explique comment importer des fichiers et les optimiser pour obtenir les
+meilleurs résultats.
 
 ## Formats de fichiers pris en charge
 
 ### Formats vectoriels
 
-| Format        | Extension         | Méthode d'importation             | Idéal pour                            |
-| ------------- | ----------------- | --------------------------------- | ------------------------------------- |
-| **SVG**       | `.svg`            | Vecteurs directs ou vectorisation | Graphiques vectoriels, logos, dessins |
-| **DXF**       | `.dxf`            | Vecteurs directs                  | Dessins CAO, plans techniques         |
-| **PDF**       | `.pdf`            | Vecteurs directs ou vectorisation | Documents avec contenu vectoriel      |
-| **LightBurn** | `.lbrn`, `.lbrn2` | Vecteurs directs                  | Projets LightBurn                     |
-| **Ruida**     | `.rd`             | Vecteurs directs                  | Fichiers de tâches contrôleur Ruida   |
+| Format          | Extension         | Méthode d'importation                                     | Idéal pour                                   |
+| --------------- | ----------------- | --------------------------------------------------------- | -------------------------------------------- |
+| **SVG**         | `.svg`, `.svgz`   | Vecteurs directs ou vectorisation                         | Graphiques vectoriels, logos, dessins        |
+| **DXF**         | `.dxf`            | Vecteurs directs                                          | Dessins CAO, plans techniques                |
+| **PDF**         | `.pdf`            | Vecteurs directs ou vectorisation                         | Documents avec contenu vectoriel             |
+| **LightBurn**   | `.lbrn`, `.lbrn2` | Vecteurs directs                                          | Projets LightBurn                            |
+| **Ruida**       | `.rd`             | Vecteurs directs                                          | Fichiers de tâches contrôleur Ruida          |
+| **Illustrator** | `.ai`             | Vecteurs directs ou vectorisation                         | Logos issus d'Illustrator                    |
+| **EPS**         | `.eps`, `.ps`     | Vecteurs directs ou vectorisation (nécessite Ghostscript) | Logos, fichiers d'impression                 |
+| **HPGL**        | `.plt`, `.hpgl`   | Vecteurs directs                                          | Fichiers de traceur et de plotter de découpe |
 
 ### Formats matriciels
 
@@ -23,13 +26,16 @@ les optimiser pour obtenir les meilleurs résultats.
 | **PNG**  | `.png`          | Vectorisation         | Photos, images avec transparence     |
 | **JPEG** | `.jpg`, `.jpeg` | Vectorisation         | Photos, images à tons continus       |
 | **BMP**  | `.bmp`          | Vectorisation         | Graphiques simples, captures d'écran |
+| **GIF**  | `.gif`          | Vectorisation         | Graphiques simples, animations       |
+| **TIFF** | `.tif`, `.tiff` | Vectorisation         | Numérisations, fichiers d'impression |
+| **WebP** | `.webp`         | Vectorisation         | Images web                           |
 
-:::note Importation d'images matricielles
+<!-- prettier-ignore-start -->
+:::note[Importation d'images matricielles]
+Toutes les images matricielles sont **vectorisées** pour créer des tracés vectoriels utilisables
+pour les opérations laser. La qualité dépend de la configuration de la vectorisation.
 :::
-
-Toutes les images matricielles sont **vectorisées** pour créer des tracés
-vectoriels utilisables pour les opérations laser. La qualité dépend de la
-configuration de la vectorisation.
+<!-- prettier-ignore-end -->
 
 ---
 
@@ -37,32 +43,30 @@ configuration de la vectorisation.
 
 ### La boîte de dialogue d'importation
 
-Rayforge dispose d'une boîte de dialogue d'importation unifiée offrant un
-aperçu en direct et des options de configuration pour tous les types de fichiers
-pris en charge. La boîte de dialogue permet de :
+Rayforge dispose d'une boîte de dialogue d'importation unifiée offrant un aperçu en direct et des
+options de configuration pour tous les types de fichiers pris en charge. La boîte de dialogue permet
+de :
 
 - **Prévisualiser l'importation** avant de l'ajouter au document
 - **Configurer les paramètres de vectorisation** pour les images matricielles
-- **Choisir la méthode d'importation** pour les fichiers SVG (vecteurs directs
-  ou vectorisation)
+- **Choisir la méthode d'importation** pour les fichiers SVG (vecteurs directs ou vectorisation)
 - **Ajuster les paramètres** comme le seuil, l'inversion et le seuil automatique
 
-![Boîte de dialogue d'importation](/screenshots/import-dialog.png)
+![Boîte de dialogue d'importation](/screenshots/import-dialog.webp)
 
 ### Mode d'importation des calques
 
-Lors de l'importation de fichiers contenant plusieurs calques (comme les fichiers SVG ou PDF
-avec des calques nommés), la boîte de dialogue offre trois façons de les gérer :
+Lors de l'importation de fichiers contenant plusieurs calques (comme les fichiers SVG ou PDF avec
+des calques nommés), la boîte de dialogue offre trois façons de les gérer :
 
-- **Mapper vers l'existant** : Fait correspondre les calques importés aux calques existants du document.
-  Le premier calque du document source est placé dans le premier calque
-  de ton projet, le deuxième dans le deuxième, et ainsi de suite.
-  C'est le mode par défaut et il fonctionne bien lorsque ton document a déjà
-  des calques configurés.
-- **Nouveaux calques** : Crée un nouveau calque dans le document pour chaque calque importé.
-  Cela garde le contenu importé séparé du travail existant.
-- **Aplatir** : Fusionne tous les calques importés en un seul calque. Utile lorsque
-  tu veux tout sur un seul calque quelle que soit la structure d'origine.
+- **Mapper vers l'existant** : Fait correspondre les calques importés aux calques existants du
+  document. Le premier calque du document source est placé dans le premier calque de ton projet, le
+  deuxième dans le deuxième, et ainsi de suite. C'est le mode par défaut et il fonctionne bien
+  lorsque ton document a déjà des calques configurés.
+- **Nouveaux calques** : Crée un nouveau calque dans le document pour chaque calque importé. Cela
+  garde le contenu importé séparé du travail existant.
+- **Aplatir** : Fusionne tous les calques importés en un seul calque. Utile lorsque tu veux tout sur
+  un seul calque quelle que soit la structure d'origine.
 
 ### Méthode 1 : Menu Fichier
 
@@ -70,8 +74,7 @@ avec des calques nommés), la boîte de dialogue offre trois façons de les gér
 2. **Sélectionner ton fichier** dans le sélecteur de fichiers
 3. **Configurer les paramètres d'importation** dans la boîte de dialogue
 4. **Prévisualiser** le résultat avant l'importation
-5. **Cliquer sur Importer** pour ajouter au canevas et à l'arborescence du
-   document
+5. **Cliquer sur Importer** pour ajouter au canevas et à l'arborescence du document
 
 ### Méthode 2 : Glisser-déposer
 
@@ -79,8 +82,7 @@ avec des calques nommés), la boîte de dialogue offre trois façons de les gér
 2. **Déposer sur** le canevas de Rayforge
 3. **Configurer les paramètres d'importation** dans la boîte de dialogue
 4. **Prévisualiser** le résultat avant l'importation
-5. **Cliquer sur Importer** pour ajouter au canevas et à l'arborescence du
-   document
+5. **Cliquer sur Importer** pour ajouter au canevas et à l'arborescence du document
 
 ### Méthode 3 : Ligne de commande
 
@@ -94,48 +96,92 @@ rayforge file1.svg file2.dxf
 
 ### Redimensionnement automatique à l'importation
 
-Lors de l'importation de fichiers plus grands que la zone de travail de ta
-machine, Rayforge effectuera automatiquement les actions suivantes :
+Lors de l'importation de fichiers plus grands que la zone de travail de ta machine, Rayforge
+effectuera automatiquement les actions suivantes :
 
-1. **Réduire** le contenu importé pour qu'il tienne dans les limites de la
-   machine
+1. **Réduire** le contenu importé pour qu'il tienne dans les limites de la machine
 2. **Préserver les proportions** lors de la mise à l'échelle
 3. **Centrer** le contenu mis à l'échelle dans l'espace de travail
-4. **Afficher une notification** avec la possibilité d'annuler le
-   redimensionnement
+4. **Afficher une notification** avec la possibilité d'annuler le redimensionnement
 
 La notification de redimensionnement apparaît sous forme de message toast :
 
-- ⚠️ « L'élément importé était plus grand que la zone de travail et a été
-  réduit pour s'ajuster. »
-- Inclut un bouton **« Réinitialiser »** pour annuler le redimensionnement
-  automatique
-- Le toast reste visible jusqu'à ce qu'il soit ignoré ou que l'action de
-  réinitialisation soit effectuée
+- ⚠️ « L'élément importé était plus grand que la zone de travail et a été réduit pour s'ajuster. »
+- Inclut un bouton **« Réinitialiser »** pour annuler le redimensionnement automatique
+- Le toast reste visible jusqu'à ce qu'il soit ignoré ou que l'action de réinitialisation soit
+  effectuée
 
-Cela garantit que tes dessins s'adaptent toujours aux capacités de ta machine
-tout en t'offrant la flexibilité de restaurer la taille d'origine si
-nécessaire.
+Cela garantit que tes dessins s'adaptent toujours aux capacités de ta machine tout en t'offrant la
+flexibilité de restaurer la taille d'origine si nécessaire.
+
+### Garder les fichiers importés synchronisés
+
+Lors de l'importation, Rayforge conserve un lien vers le fichier sur le disque. Si le fichier change
+plus tard — par exemple après l'avoir modifié et réenregistré dans Inkscape ou dans ton logiciel de
+CAO — Rayforge propose de recharger le contenu importé, afin que ton projet ne conserve pas une
+géométrie obsolète.
+
+![La boîte de dialogue « Fichier importé modifié »](/screenshots/source-changed-dialog.webp)
+
+Cette fonction est contrôlée par l'option **Surveiller les fichiers importés** dans Paramètres →
+Général. Lorsqu'elle est activée (valeur par défaut), Rayforge vérifie les fichiers liés tant que le
+projet est ouvert — y compris juste après son ouverture — et affiche une boîte de dialogue pour
+chaque fichier modifié sur le disque :
+
+- **Recharger** remplace le contenu importé par la nouvelle version. La position, la taille et les
+  réglages des pièces concernées sont conservés, et l'ensemble du rechargement constitue une seule
+  étape d'annulation.
+- **Ignorer** conserve le contenu actuel. Tu seras à nouveau consulté la prochaine fois que le
+  fichier changera.
+- Active **Toujours recharger ce fichier sans demander** pour recharger ce fichier automatiquement à
+  partir de maintenant. Les fichiers ainsi marqués sont rechargés sans demander.
+
+Lorsque plusieurs fichiers liés ont changé en même temps, la boîte de dialogue les liste et te
+permet de choisir ceux à recharger.
+
+<!-- prettier-ignore-start -->
+:::note[Le rechargement ajuste le document]
+Le rechargement remet le document en accord avec le fichier : les éléments qui y ont été ajoutés
+apparaissent dans le projet, les éléments qui n'en font plus partie sont supprimés, et les ponts de
+maintien qui se retrouvent à plus de 1 mm du nouveau contour sont abandonnés. Les éléments que tu
+as modifiés dans Rayforge restent inchangés. Une notification résume ce que le rechargement a
+modifié.
+:::
+<!-- prettier-ignore-end -->
+
+### Rechargement et reliaison manuels
+
+Tu peux aussi recharger ou relier manuellement à tout moment via **Fichier → Recharger depuis le
+disque** et **Fichier → Relier le fichier source…**, ou via le menu contextuel de la sélection sur
+le canevas, de la liste des calques ou du navigateur d'actifs. **Recharger depuis le disque** relit
+les fichiers derrière les pièces sélectionnées. Lorsque le fichier lié est introuvable, Rayforge
+propose de le relier à la place.
+
+**Relier le fichier source…** fait pointer une source importée vers un autre fichier. C'est utile
+lorsqu'un fichier a été déplacé ou renommé, ou lorsqu'un projet est ouvert sur un autre ordinateur
+et que le fichier lié est absent. Les pièces conservent leur position et leurs réglages et affichent
+le contenu du nouveau fichier.
 
 ---
 
 ## Importation SVG
 
-SVG (Scalable Vector Graphics) est le **format recommandé** pour les dessins
-vectoriels.
+SVG (Scalable Vector Graphics) est le **format recommandé** pour les dessins vectoriels.
 
-:::tip Automatiser l'affectation des étapes
-Tu peux configurer [Règles de couleur](../application-settings/color-rules.md)
-pour affecter automatiquement les types d'étape (Contour, Gravure, etc.) en
-fonction des couleurs de ton SVG. Lorsque des règles existent, la boîte de
-dialogue d'importation regroupe par défaut les formes par couleur afin que les
-règles prennent effet.
+<!-- prettier-ignore-start -->
+:::tip[Automatiser l'affectation des étapes]
+Tu peux configurer
+[Règles de couleur](../application-settings/color-rules.md) pour affecter automatiquement les types
+d'étape (Contour, Gravure, etc.) en fonction des couleurs de ton SVG. Lorsque des règles existent,
+la boîte de dialogue d'importation regroupe par défaut les formes par couleur afin que les règles
+prennent effet.
 :::
+<!-- prettier-ignore-end -->
 
 ### Options d'importation dans la boîte de dialogue
 
-Lors de l'importation SVG, la boîte de dialogue propose un commutateur pour
-choisir entre deux méthodes :
+Lors de l'importation SVG, la boîte de dialogue propose un commutateur pour choisir entre deux
+méthodes :
 
 #### 1. Utiliser les vecteurs originaux (Recommandé)
 
@@ -194,12 +240,10 @@ Désactive « Utiliser les vecteurs originaux » pour utiliser cette méthode.
 
 ### Aperçu en direct
 
-La boîte de dialogue d'importation affiche un aperçu en direct de l'importation
-de ton SVG :
+La boîte de dialogue d'importation affiche un aperçu en direct de l'importation de ton SVG :
 
 - Les tracés vectoriels sont affichés en surbrillance bleue
-- En mode vectorisation, l'image originale est montrée avec les tracés
-  vectorisés
+- En mode vectorisation, l'image originale est montrée avec les tracés vectorisés
 - L'aperçu se met à jour en temps réel lorsque tu modifies les paramètres
 
 ### Bonnes pratiques SVG
@@ -254,6 +298,23 @@ Rayforge prend en charge les formats DXF standard :
 
 **Astuce :** Exporte en DXF R12/LT2 pour une compatibilité maximale.
 
+### Aplatissement des coordonnées Z
+
+Certains logiciels de CAO écrivent des fichiers DXF contenant de la géométrie à différentes hauteurs
+Z — par exemple un modèle 3D exporté avec les contours des faces supérieure et inférieure d'une
+pièce. Rayforge est un programme 2D : sur une machine dotée d'un axe Z, ces valeurs Z deviennent de
+véritables mouvements en Z dans le travail, et la tête peut plonger sous la surface du matériau et
+entrer en collision.
+
+Lorsqu'un fichier DXF contient de la géométrie à plus d'une hauteur Z, la boîte de dialogue
+d'importation propose donc une option **Aplatir les coordonnées Z** (sous « Mode d'importation »).
+Elle est activée par défaut et projette toute la géométrie importée sur le plan Z=0. Tu peux la
+désactiver pour conserver les hauteurs Z d'origine — la boîte de dialogue t'avertit alors que le
+parcours de l'outil se déplacera en Z, ce qui n'est sûr que si tu sais que ton fichier en a besoin
+(par exemple pour recréer une hauteur de mise au point spécifique par forme).
+
+Pour les dessins plats, l'option n'est pas affichée ; il n'y a rien à aplatir.
+
 ### Conseils pour l'importation DXF
 
 **Avant d'exporter depuis la CAO :**
@@ -285,112 +346,109 @@ Rayforge prend en charge les formats DXF standard :
 
 ## Importation PDF
 
-Les fichiers PDF peuvent contenir des graphiques vectoriels, des images
-matricielles, ou les deux.
+Les fichiers PDF peuvent contenir des graphiques vectoriels, des images matricielles, ou les deux.
 
 ### Importation vectorielle directe
 
-Lors de l'importation d'un PDF contenant des tracés vectoriels, Rayforge peut
-les importer directement — tout comme les fichiers SVG ou DXF. Cela te donne
-une géométrie propre et redimensionnable sans perte de qualité due à la
-rastérisation.
+Lors de l'importation d'un PDF contenant des tracés vectoriels, Rayforge peut les importer
+directement — tout comme les fichiers SVG ou DXF. Cela te donne une géométrie propre et
+redimensionnable sans perte de qualité due à la rastérisation.
 
-Si le PDF contient des calques, Rayforge les détecte et te permet de choisir
-lesquels importer. Chaque calque devient une pièce distincte dans ton
-document. Cela fonctionne de la même manière que l'importation de calques SVG :
-active ou désactive les calques individuels dans la boîte de dialogue
+Si le PDF contient des calques, Rayforge les détecte et te permet de choisir lesquels importer.
+Chaque calque devient une pièce distincte dans ton document. Cela fonctionne de la même manière que
+l'importation de calques SVG : active ou désactive les calques individuels dans la boîte de dialogue
 d'importation avant d'importer.
 
-Ceci est particulièrement utile pour les PDF exportés depuis des logiciels de
-conception comme Illustrator ou Inkscape, où les tracés vectoriels sont propres
-et bien organisés.
+Ceci est particulièrement utile pour les PDF exportés depuis des logiciels de conception comme
+Illustrator ou Inkscape, où les tracés vectoriels sont propres et bien organisés.
 
 ### Repli : Rendu et vectorisation
 
-Pour les PDF qui ne contiennent pas de données vectorielles exploitables —
-documents numérisés, photos intégrées, ou PDF dont le texte n'a pas été
-converti en contours — Rayforge peut recourir au rendu du PDF en image suivi
-d'une vectorisation. Cela fonctionne comme l'importation d'images matricielles.
+Pour les PDF qui ne contiennent pas de données vectorielles exploitables — documents numérisés,
+photos intégrées, ou PDF dont le texte n'a pas été converti en contours — Rayforge peut recourir au
+rendu du PDF en image suivi d'une vectorisation. Cela fonctionne comme l'importation d'images
+matricielles.
 
 ### Conseils pour l'importation PDF
 
 **Pour de meilleurs résultats :**
 
-1. **Utiliser des PDF vectoriels** : Les PDF créés depuis des logiciels
-   vectoriels (Illustrator, Inkscape) donnent les résultats les plus propres
-   avec l'importation directe.
+1. **Utiliser des PDF vectoriels** : Les PDF créés depuis des logiciels vectoriels (Illustrator,
+   Inkscape) donnent les résultats les plus propres avec l'importation directe.
 
-2. **Vérifier les calques** : Si ton PDF comporte des calques, ils seront
-   listés dans la boîte de dialogue d'importation. Sélectionne uniquement les
-   calques dont tu as besoin.
+2. **Vérifier les calques** : Si ton PDF comporte des calques, ils seront listés dans la boîte de
+   dialogue d'importation. Sélectionne uniquement les calques dont tu as besoin.
 
-3. **Pour les documents avec du texte** : Exporte en SVG avec les polices
-   converties en tracés pour une qualité optimale, ou utilise le repli rendu et
-   vectorisation.
+3. **Pour les documents avec du texte** : Exporte en SVG avec les polices converties en tracés pour
+   une qualité optimale, ou utilise le repli rendu et vectorisation.
 
-4. **Utiliser l'aperçu de la boîte de dialogue** : Ajuste les paramètres de
-   seuil et d'inversion en mode vectorisation. L'aperçu montre exactement
-   comment le PDF sera vectorisé.
+4. **Utiliser l'aperçu de la boîte de dialogue** : Ajuste les paramètres de seuil et d'inversion en
+   mode vectorisation. L'aperçu montre exactement comment le PDF sera vectorisé.
 
 ---
 
 ## Importation Ruida
 
-Les fichiers Ruida (.rd) sont des fichiers de tâches binaires propriétaires
-utilisés par les contrôleurs Ruida dans de nombreuses machines de découpe laser.
-Ces fichiers contiennent à la fois la géométrie vectorielle et les paramètres
-laser organisés en calques (couleurs).
+Les fichiers Ruida (.rd) sont des fichiers de tâches binaires propriétaires utilisés par les
+contrôleurs Ruida dans de nombreuses machines de découpe laser. Ces fichiers contiennent à la fois
+la géométrie vectorielle et les paramètres laser organisés en calques (couleurs).
 
 **Après l'importation :**
 
-- **Vérifier l'échelle** - Confirmer que les dimensions correspondent à la
-  taille attendue
-- **Examiner les calques** - S'assurer que tous les calques ont été importés
-  correctement
+- **Vérifier l'échelle** - Confirmer que les dimensions correspondent à la taille attendue
+- **Examiner les calques** - S'assurer que tous les calques ont été importés correctement
 - **Valider les tracés** - Confirmer la présence de tous les tracés de découpe
 
 ### Limitations
 
-- **Importation en lecture seule** - Les fichiers Ruida ne peuvent être
-  qu'importés, pas exportés
-- **Format binaire** - L'édition directe des fichiers .rd originaux n'est pas
-  prise en charge
-- **Fonctionnalités propriétaires** - Certaines fonctionnalités Ruida avancées
-  peuvent ne pas être entièrement prises en charge
+- **Importation en lecture seule** - Les fichiers Ruida ne peuvent être qu'importés, pas exportés
+- **Format binaire** - L'édition directe des fichiers .rd originaux n'est pas prise en charge
+- **Fonctionnalités propriétaires** - Certaines fonctionnalités Ruida avancées peuvent ne pas être
+  entièrement prises en charge
 
 ---
 
 ## Importation LightBurn
 
-Les fichiers LightBurn (.lbrn / .lbrn2) sont des fichiers de projet
-propriétaires utilisés par le logiciel de découpe laser LightBurn. Ils
-stockent la géométrie vectorielle organisée en calques colorés avec des
-paramètres laser configurables.
+Les fichiers LightBurn (.lbrn / .lbrn2) sont des fichiers de projet propriétaires utilisés par le
+logiciel de découpe laser LightBurn. Ils stockent la géométrie vectorielle organisée en calques
+colorés avec des paramètres laser configurables.
 
 **Après l'importation :**
 
-- **Examiner les calques** — Les calques LightBurn sont mappés aux calques du
-  document avec des noms correspondants
-- **Vérifier les paramètres laser** — Les réglages de puissance, vitesse et
-  passes des calques LightBurn sont conservés
-- **Valider les tracés** — Confirmer que tous les tracés de découpe sont
-  présents et correctement positionnés
+- **Examiner les calques** — Les calques LightBurn sont mappés aux calques du document avec des noms
+  correspondants
+- **Vérifier les paramètres laser** — Les réglages de puissance, vitesse et passes des calques
+  LightBurn sont conservés
+- **Valider les tracés** — Confirmer que tous les tracés de découpe sont présents et correctement
+  positionnés
 
 ### Limitations
 
-- **Importation en lecture seule** — les fichiers LightBurn ne peuvent être
-  qu'importés, pas exportés
-- **Format binaire** — L'édition directe des fichiers .lbrn originaux n'est
-  pas prise en charge
-- **Fonctionnalités propriétaires** — Certaines fonctionnalités avancées de
-  LightBurn peuvent ne pas être entièrement prises en charge
+- **Importation en lecture seule** — les fichiers LightBurn ne peuvent être qu'importés, pas
+  exportés
+- **Format binaire** — L'édition directe des fichiers .lbrn originaux n'est pas prise en charge
+- **Fonctionnalités propriétaires** — Certaines fonctionnalités avancées de LightBurn peuvent ne pas
+  être entièrement prises en charge
 
 ---
 
-## Importation d'images matricielles (PNG, JPG, BMP)
+## Importation d'Illustrator et d'EPS
 
-Les images matricielles sont **vectorisées** pour créer des tracés vectoriels via
-la boîte de dialogue d'importation.
+Les fichiers Illustrator enregistrés avec la compatibilité PDF, le réglage par défaut depuis
+Illustrator 9, s'importent exactement comme des fichiers PDF, avec la même sélection de calques et
+les mêmes options de vectorisation.
+
+Les fichiers EPS, PostScript et Illustrator plus anciens sont d'abord convertis en PDF avec
+Ghostscript. Installez Ghostscript si la boîte de dialogue d'importation indique qu'il manque. Si
+vous ne pouvez pas l'installer, exportez le dessin en PDF ou en SVG depuis le logiciel qui l'a créé.
+
+---
+
+## Importation d'images matricielles (PNG, JPG, BMP, GIF, TIFF, WebP)
+
+Les images matricielles sont **vectorisées** pour créer des tracés vectoriels via la boîte de
+dialogue d'importation.
 
 ### Processus de vectorisation dans la boîte de dialogue
 
@@ -412,10 +470,9 @@ La boîte de dialogue d'importation fournit les paramètres ajustables suivants 
 | **Seuil**             | Coupure noir/blanc    | Plus bas = plus de détails, plus haut = plus simple |
 | **Inverser**          | Inverser les couleurs | Vectorise les objets clairs sur fond sombre         |
 
-**Les paramètres par défaut** fonctionnent bien pour la plupart des images. La
-boîte de dialogue affiche un aperçu en direct qui se met à jour lorsque tu
-ajustes ces paramètres, te permettant d'affiner la vectorisation avant
-l'importation.
+**Les paramètres par défaut** fonctionnent bien pour la plupart des images. La boîte de dialogue
+affiche un aperçu en direct qui se met à jour lorsque tu ajustes ces paramètres, te permettant
+d'affiner la vectorisation avant l'importation.
 
 ### Préparer les images pour la vectorisation
 
@@ -471,5 +528,5 @@ l'importation.
 - [Formats pris en charge](formats) - Spécifications détaillées des formats
 - [Exporter du G-code](exporting) - Options de sortie
 - [Démarrage rapide](../getting-started/quick-start.md) - Tutoriel de première importation
-- [Règles de couleur](../application-settings/color-rules.md) - Faire
-  correspondre les couleurs SVG aux types d'étape à l'importation
+- [Règles de couleur](../application-settings/color-rules.md) - Faire correspondre les couleurs SVG
+  aux types d'étape à l'importation

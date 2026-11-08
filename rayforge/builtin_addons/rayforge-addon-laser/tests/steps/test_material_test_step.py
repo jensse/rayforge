@@ -1,11 +1,17 @@
 from typing import TYPE_CHECKING, Protocol, cast
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
-from laser_essentials.capabilities import MATERIAL_TEST
+from laser_essentials.material_test_helpers import GridMode
 from laser_essentials.steps import MaterialTestStep
+from raygeo.cnc.execution.specs import ComputePayload
+from raygeo.ops.assembly import Assembler
+from raygeo.ops.assembly.material_test_grid import MaterialTestGridSpec
+from raygeo.ops.part import Part
 
+from rayforge.core.config import Config
 from rayforge.core.workpiece import WorkPiece
+from rayforge.pipeline.transformer.registry import transformer_registry
 
 if TYPE_CHECKING:
 
@@ -14,6 +20,15 @@ if TYPE_CHECKING:
         def calculate_auto_distance(
             step_speed: int, max_acceleration: int
         ) -> float: ...
+
+
+def _mock_speed_preference(unit_name: str = "mm/min"):
+    """Build a mocked context whose config prefers the given speed unit."""
+    config = Config()
+    config.unit_preferences["speed"] = unit_name
+    ctx = MagicMock()
+    ctx.config = config
+    return ctx
 
 
 @pytest.fixture
@@ -35,7 +50,6 @@ class TestMaterialTestStep:
     def test_instantiation(self):
         step = MaterialTestStep(name="Test")
         assert step.typelabel == "Material Test Grid"
-        assert step.capabilities == (MATERIAL_TEST,)
 
     def test_create(self, mock_context):
         step = MaterialTestStep.create(mock_context)
@@ -50,7 +64,11 @@ class TestMaterialTestStep:
         step = MaterialTestStep(name="Test")
         workpiece = MagicMock(spec=["size"])
         workpiece.size = (100, 100)
-        kwargs = step.get_assembler_kwargs(machine, workpiece)
+        with patch(
+            "rayforge.shared.units.formatter.get_context",
+            return_value=_mock_speed_preference(),
+        ):
+            kwargs = step.get_assembler_kwargs(machine, workpiece)
         assert isinstance(kwargs, dict)
         expected_keys = {
             "size_mm",
@@ -74,8 +92,94 @@ class TestMaterialTestStep:
             "label_power_percent",
             "label_speed",
             "line_interval_mm",
+            "speed_unit_label",
+            "speed_label_factor",
+            "speed_label_precision",
         }
         assert set(kwargs.keys()) == expected_keys
+        assert kwargs["speed_unit_label"] == "mm/min"
+        assert kwargs["speed_label_factor"] == 1.0
+        assert kwargs["speed_label_precision"] == 0
+
+    def test_get_assembler_kwargs_respects_speed_unit_preference(
+        self, machine
+    ):
+        """Assembler kwargs carry the user's preferred speed unit."""
+        step = MaterialTestStep(name="Test")
+        workpiece = MagicMock(spec=["size"])
+        workpiece.size = (100, 100)
+        with patch(
+            "rayforge.shared.units.formatter.get_context",
+            return_value=_mock_speed_preference("in/min"),
+        ):
+            kwargs = step.get_assembler_kwargs(machine, workpiece)
+        assert kwargs["speed_unit_label"] == "in/min"
+        assert kwargs["speed_label_factor"] == pytest.approx(25.4)
+        assert kwargs["speed_label_precision"] == 1
+
+    def test_get_assembler_kwargs_casts_grid_dimensions_to_int(self, machine):
+        """Grid dimensions are counts, so non-integer values are truncated
+        before they reach the material-test assembler."""
+        step = MaterialTestStep(name="Test")
+        step.grid_dimensions = cast(tuple[int, int], (5.9, 3.1))
+        workpiece = MagicMock(spec=["size"])
+        workpiece.size = (100, 100)
+
+        with patch(
+            "rayforge.shared.units.formatter.get_context",
+            return_value=_mock_speed_preference(),
+        ):
+            kwargs = step.get_assembler_kwargs(machine, workpiece)
+
+        assert kwargs["cols"] == 5
+        assert kwargs["rows"] == 3
+
+    def test_zero_line_interval_falls_back_to_spot_size(self, machine):
+        """Line Interval 0 means auto (laser spot size). Passing the 0
+        on to the assembler divides the cell height by zero, which
+        generates billions of scan lines and exhausts memory."""
+        step = MaterialTestStep(name="Test")
+        step.line_interval_mm = 0.0
+        workpiece = MagicMock(spec=["size"])
+        workpiece.size = (100, 100)
+
+        with patch(
+            "rayforge.shared.units.formatter.get_context",
+            return_value=_mock_speed_preference(),
+        ):
+            kwargs = step.get_assembler_kwargs(machine, workpiece)
+
+        assert kwargs["line_interval_mm"] == pytest.approx(0.1)
+
+    def test_none_line_interval_falls_back_to_spot_size(self, machine):
+        """An unset Line Interval resolves to the laser spot size."""
+        step = MaterialTestStep(name="Test")
+        step.line_interval_mm = None
+        workpiece = MagicMock(spec=["size"])
+        workpiece.size = (100, 100)
+
+        with patch(
+            "rayforge.shared.units.formatter.get_context",
+            return_value=_mock_speed_preference(),
+        ):
+            kwargs = step.get_assembler_kwargs(machine, workpiece)
+
+        assert kwargs["line_interval_mm"] == pytest.approx(0.1)
+
+    def test_explicit_line_interval_is_kept(self, machine):
+        """A positive Line Interval reaches the assembler unchanged."""
+        step = MaterialTestStep(name="Test")
+        step.line_interval_mm = 0.25
+        workpiece = MagicMock(spec=["size"])
+        workpiece.size = (100, 100)
+
+        with patch(
+            "rayforge.shared.units.formatter.get_context",
+            return_value=_mock_speed_preference(),
+        ):
+            kwargs = step.get_assembler_kwargs(machine, workpiece)
+
+        assert kwargs["line_interval_mm"] == pytest.approx(0.25)
 
     def test_roundtrip_serialization(self):
         step = MaterialTestStep(name="Test")
@@ -165,10 +269,6 @@ class TestMaterialTestStep:
         """Individual test blocks get double the usual auto-overscan
         distance, so backlash settling happens outside the visible
         engrave area."""
-        from rayforge.pipeline.transformer.registry import (
-            transformer_registry,
-        )
-
         OverscanTransformer = cast(
             "OverscanTransformerType",
             transformer_registry.get("OverscanTransformer"),
@@ -194,21 +294,73 @@ class TestMaterialTestStep:
         assert "BidirScanOffsetTransformer" in per_wp_names
 
 
+class TestMaterialTestCheck:
+    def test_check_ignores_unused_base_cut_speed(self, machine):
+        """The step's unused cut_speed default (500) must not trigger
+        a machine-limit warning."""
+        machine.max_cut_speed = 400
+        step = MaterialTestStep(name="mtg")
+        step.speed_range = (100.0, 400.0)
+        step.include_labels = False
+        assert step.check(machine) == []
+
+    def test_check_flags_speed_range_above_machine_max(self, machine):
+        machine.max_cut_speed = 400
+        step = MaterialTestStep(name="mtg")
+        step.speed_range = (100.0, 500.0)
+        step.include_labels = False
+        assert len(step.check(machine)) == 1
+
+    def test_check_flags_fixed_speed_mode(self, machine):
+        machine.max_cut_speed = 400
+        step = MaterialTestStep(name="mtg")
+        step.grid_mode = GridMode.POWER_VS_PASSES.value
+        step.fixed_speed = 500.0
+        step.include_labels = False
+        assert len(step.check(machine)) == 1
+
+    def test_check_ignores_fixed_speed_when_not_used(self, machine):
+        machine.max_cut_speed = 400
+        step = MaterialTestStep(name="mtg")
+        step.grid_mode = GridMode.POWER_VS_SPEED.value
+        step.speed_range = (100.0, 400.0)
+        step.fixed_speed = 500.0
+        step.include_labels = False
+        assert step.check(machine) == []
+
+    def test_check_flags_label_speed(self, machine):
+        machine.max_cut_speed = 400
+        step = MaterialTestStep(name="mtg")
+        step.speed_range = (100.0, 400.0)
+        step.include_labels = True
+        step.label_speed = 500.0
+        assert len(step.check(machine)) == 1
+
+    def test_check_skips_label_speed_when_labels_off(self, machine):
+        machine.max_cut_speed = 400
+        step = MaterialTestStep(name="mtg")
+        step.speed_range = (100.0, 400.0)
+        step.include_labels = False
+        step.label_speed = 500.0
+        assert step.check(machine) == []
+
+    def test_check_without_machine(self):
+        step = MaterialTestStep(name="mtg")
+        assert step.check(None) == []
+
+
 class TestMaterialTestComputePayload:
     def test_build_compute_payload_returns_material_test_spec(self, machine):
-        from raygeo.cnc.execution.specs import ComputePayload
-        from raygeo.ops.assembly import Assembler
-        from raygeo.ops.assembly.material_test_grid import (
-            MaterialTestGridSpec,
-        )
-        from raygeo.ops.part import Part
-
         step = MaterialTestStep(name="mtg")
         step.test_type = "Cut"
         wp = WorkPiece(name="wp")
         wp.set_size(100.0, 100.0)
 
-        part, payload = step.build_compute_payload(machine, wp)
+        with patch(
+            "rayforge.shared.units.formatter.get_context",
+            return_value=_mock_speed_preference(),
+        ):
+            part, payload = step.build_compute_payload(machine, wp)
         assert isinstance(part, Part)
         assert isinstance(payload, ComputePayload)
         assert isinstance(payload.assembler, Assembler)
@@ -216,11 +368,36 @@ class TestMaterialTestComputePayload:
         assert isinstance(spec, MaterialTestGridSpec)
         assert spec.mode == "cut"
         assert spec.size_mm == (100.0, 100.0)
+        assert spec.speed_unit_label == "mm/min"
+        assert spec.speed_label_factor == 1.0
+        assert spec.speed_label_precision == 0
+
+    def test_build_compute_payload_uses_preferred_speed_unit(self, machine):
+        """The generated spec carries the user's speed unit for labels."""
+        step = MaterialTestStep(name="mtg")
+        step.test_type = "Cut"
+        wp = WorkPiece(name="wp")
+        wp.set_size(100.0, 100.0)
+
+        with patch(
+            "rayforge.shared.units.formatter.get_context",
+            return_value=_mock_speed_preference("mm/s"),
+        ):
+            _part, payload = step.build_compute_payload(machine, wp)
+        spec = payload.assembler.spec
+        assert isinstance(spec, MaterialTestGridSpec)
+        assert spec.speed_unit_label == "mm/s"
+        assert spec.speed_label_factor == pytest.approx(60.0)
+        assert spec.speed_label_precision == 1
 
     def test_assembler_token_params_mirrors_kwargs(self, machine):
         step = MaterialTestStep(name="mtg")
         wp = WorkPiece(name="wp")
         wp.set_size(100.0, 100.0)
-        token = step.assembler_token_params(machine, wp)
-        kwargs = step.get_assembler_kwargs(machine, wp)
+        with patch(
+            "rayforge.shared.units.formatter.get_context",
+            return_value=_mock_speed_preference(),
+        ):
+            token = step.assembler_token_params(machine, wp)
+            kwargs = step.get_assembler_kwargs(machine, wp)
         assert token == kwargs

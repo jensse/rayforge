@@ -1,7 +1,16 @@
 # Support des dialectes G-code
 
-Rayforge prend en charge plusieurs dialectes G-code pour fonctionner avec
-différents firmwares de contrôleur.
+Rayforge prend en charge plusieurs dialectes G-code pour fonctionner avec différents firmwares de
+contrôleur.
+
+## Sélection automatique du dialecte
+
+Lorsqu'un appareil GRBL est découvert (via
+l'[assistant de configuration](../getting-started/first-time-setup.md) ou la découverte d'appareil),
+Rayforge lit les drapeaux de compilation `$I` du firmware et sélectionne automatiquement le dialecte
+G-code le mieux adapté — vous n'avez généralement pas besoin d'en choisir un manuellement. Vous
+pouvez toujours remplacer le choix par la suite dans les paramètres de dialecte G-code de la
+machine.
 
 ## Dialectes pris en charge
 
@@ -19,43 +28,39 @@ Rayforge prend actuellement en charge ces dialectes G-code :
 | **Smoothieware**                              | Smoothieware | Découpeurs laser, CNC                  |
 | **Marlin**                                    | Marlin 2.0+  | Imprimantes 3D avec laser              |
 
-:::note Dialectes recommandés
+<!-- prettier-ignore-start -->
+:::note[Dialectes recommandés]
+**Grbl (Compat)** est le dialecte le plus testé et recommandé pour les applications laser standard.
+
+**Grbl Raster** est optimisé pour la gravure raster sur les contrôleurs GRBL. Il garde le laser en
+mode de puissance dynamique (M4) en continu et omet les commandes de vitesse redondantes, ce qui
+produit un G-code plus fluide et plus compact.
+
+**GRBL Dynamique (sensible à la profondeur)** est recommandé pour la gravure laser sensible à la
+profondeur où la puissance varie pendant les coupes (par exemple, gravure à profondeur variable).
+
+**LinuxCNC** prend en charge les courbes Bézier cubiques natives via la commande G5, ce qui produit
+un G-code très fluide et compact pour les trajectoires courbes. Lorsque tu utilises ce dialecte,
+active l'option « Prise en charge des courbes Bézier » dans les paramètres avancés de la machine
+pour profiter de la sortie G5.
 :::
-
-**Grbl (Compat)** est le dialecte le plus testé et recommandé pour les
-applications laser standard.
-
-**Grbl Raster** est optimisé pour la gravure raster sur les contrôleurs GRBL. Il garde
-le laser en mode de puissance dynamique (M4) en continu et omet les commandes de vitesse
-redondantes, ce qui produit un G-code plus fluide et plus compact.
-
-**GRBL Dynamique (sensible à la profondeur)** est recommandé pour la gravure
-laser sensible à la profondeur où la puissance varie pendant les coupes
-(par exemple, gravure à profondeur variable).
-
-**LinuxCNC** prend en charge les courbes Bézier cubiques natives via la
-commande G5, ce qui produit un G-code très fluide et compact pour les trajectoires
-courbes. Lorsque tu utilises ce dialecte, active l'option « Prise en charge
-des courbes Bézier » dans les paramètres avancés de la machine pour profiter
-de la sortie G5.
+<!-- prettier-ignore-end -->
 
 ---
 
 ## Mach4 (M67 Analog)
 
-Le dialecte **Mach4 (M67 Analog)** est conçu pour la gravure raster haute
-vitesse avec les contrôleurs Mach4. Il utilise la commande M67 avec sortie
-analogique pour un contrôle précis de la puissance laser.
+Le dialecte **Mach4 (M67 Analog)** est conçu pour la gravure raster haute vitesse avec les
+contrôleurs Mach4. Il utilise la commande M67 avec sortie analogique pour un contrôle précis de la
+puissance laser.
 
 ### Caractéristiques principales
 
-- **Sortie analogique M67** : Utilise `M67 E0 Q<0-255>` pour la puissance
-  laser au lieu des commandes S en ligne
-- **Pression tampon réduite** : En séparant les commandes de puissance des
-  commandes de mouvement, le tampon du contrôleur est moins sollicité pendant
-  les opérations haute vitesse
-- **Raster haute vitesse** : Optimisé pour les opérations de gravure raster
-  rapides
+- **Sortie analogique M67** : Utilise `M67 E0 Q<0-255>` pour la puissance laser au lieu des
+  commandes S en ligne
+- **Pression tampon réduite** : En séparant les commandes de puissance des commandes de mouvement,
+  le tampon du contrôleur est moins sollicité pendant les opérations haute vitesse
+- **Raster haute vitesse** : Optimisé pour les opérations de gravure raster rapides
 
 ### Quand l'utiliser
 
@@ -63,8 +68,7 @@ Utilise ce dialecte lorsque :
 
 - Tu as un contrôleur Mach4 avec capacité de sortie analogique
 - Tu as besoin de gravure raster haute vitesse
-- Ton contrôleur subit des débordements de tampon avec les commandes S en
-  ligne standard
+- Ton contrôleur subit des débordements de tampon avec les commandes S en ligne standard
 
 ### Format de commande
 
@@ -83,48 +87,48 @@ M67 E0 Q0    ; Éteindre le laser
 Pour créer un dialecte G-code personnalisé basé sur un dialecte intégré :
 
 1. Ouvrez **Paramètres de la machine** → **Dialecte G-code**
-2. Cliquez sur l'icône **Copier** sur un dialecte intégré pour créer un nouveau
-   dialecte personnalisé
+2. Cliquez sur l'icône **Copier** sur un dialecte intégré pour créer un nouveau dialecte
+   personnalisé
 3. Modifiez les paramètres du dialecte selon vos besoins
 4. Enregistrez votre dialecte personnalisé
 
-Chaque dialecte personnalisé est une copie indépendante. La modification d'un
-dialecte n'affecte jamais les autres, tu peux donc expérimenter librement
-sans risquer de perturber une configuration existante. Les dialectes
-personnalisés sont stockés dans ton répertoire de configuration et peuvent
+Chaque dialecte personnalisé est une copie indépendante : la modification d'un dialecte n'affecte
+jamais les autres dialectes ni les autres machines, tu peux donc expérimenter librement sans risquer
+de perturber une configuration existante. Une copie créée à partir d'un dialecte intégré conserve un
+lien vers ce dialecte intégré : les champs de modèle que tu n'as pas explicitement modifiés suivent
+le dialecte intégré, de sorte que les améliorations des dialectes intégrés parviennent
+automatiquement à tes machines, tandis que tes propres modifications sont préservées et jamais
+écrasées. Les dialectes personnalisés sont stockés dans ton répertoire de configuration et peuvent
 être partagés.
 
 ### Paramètres du dialecte
 
 Lors de l'édition d'un dialecte personnalisé, la page Paramètres offre ces options :
 
-**Mode laser continu** garde le laser en mode de puissance dynamique (M4) actif
-pendant tout le travail au lieu de basculer M4/M5 entre les segments. C'est
-utile pour la gravure raster où le laser doit rester allumé en continu
-pendant les lignes de balayage.
+**Mode laser continu** garde le laser en mode de puissance dynamique (M4) actif pendant tout le
+travail au lieu de basculer M4/M5 entre les segments. C'est utile pour la gravure raster où le laser
+doit rester allumé en continu pendant les lignes de balayage.
 
-**Vitesse modale** omet le paramètre de vitesse (F) des commandes de mouvement lorsqu'il
-n'a pas changé depuis la dernière commande. Cela produit un G-code plus compact
-et réduit la quantité de données envoyées au contrôleur.
+**Vitesse modale** omet le paramètre de vitesse (F) des commandes de mouvement lorsqu'il n'a pas
+changé depuis la dernière commande. Cela produit un G-code plus compact et réduit la quantité de
+données envoyées au contrôleur.
 
 ### Commande d'allumage laser séparée pour la mise au point
 
-Certains dialectes prennent en charge la configuration d'une commande séparée
-pour allumer le laser à faible puissance, ce qui est utile pour le mode mise au
-point. Cela te permet d'utiliser une commande différente pour le comportement
-visuel de « pointeur laser » que celle utilisée pendant la découpe ou la gravure
-réelle. Consulte la page des paramètres de ton dialecte pour cette option.
+Certains dialectes prennent en charge la configuration d'une commande séparée pour allumer le laser
+à faible puissance, ce qui est utile pour le mode mise au point. Cela te permet d'utiliser une
+commande différente pour le comportement visuel de « pointeur laser » que celle utilisée pendant la
+découpe ou la gravure réelle. Consulte la page des paramètres de ton dialecte pour cette option.
 
 ---
 
 ## Espaces réservés des modèles
 
-Lors de la création ou de la modification d'un dialecte personnalisé, chaque
-modèle de commande utilise des
+Lors de la création ou de la modification d'un dialecte personnalisé, chaque modèle de commande
+utilise des
 [chaînes de formatage Python](https://docs.python.org/3/library/string.html#format-string-syntax)
-avec des espaces réservés pour injecter des valeurs dynamiques. Utilise la
-syntaxe `{nom}` ou `{nom:.0f}` (par ex. `{power:.0f}` pour formater en nombre
-entier sans décimales).
+avec des espaces réservés pour injecter des valeurs dynamiques. Utilise la syntaxe `{nom}` ou
+`{nom:.0f}` (par ex. `{power:.0f}` pour formater en nombre entier sans décimales).
 
 ### Espaces réservés disponibles par modèle
 
@@ -199,18 +203,39 @@ entier sans décimales).
 | `seconds`      | Durée de temporisation en secondes en virgule flottante (par ex. `1.5`)   |
 | `milliseconds` | Durée de temporisation en millisecondes en nombre entier (par ex. `1500`) |
 
+#### Préambule et Postscript
+
+Les scripts **Préambule** et **Postscript** prennent en charge un ensemble distinct d'espaces
+réservés décrivant la machine et le travail en cours :
+
+| Espace réservé                      | Description                                               |
+| ----------------------------------- | --------------------------------------------------------- |
+| `machine.name`                      | Nom de la machine                                         |
+| `machine.active_wcs`                | Système de coordonnées de travail actif (par ex. `G54`)   |
+| `machine.axis_extents[0]`           | Largeur de la zone de travail (mm)                        |
+| `machine.axis_extents[1]`           | Hauteur de la zone de travail (mm)                        |
+| `wcs_offset[0]` … `wcs_offset[2]`   | Décalage X/Y/Z du système de coordonnées de travail actif |
+| `doc.name`                          | Nom du document exporté                                   |
+| `job.extents[0]` … `job.extents[3]` | Boîte englobante du travail : X min, Y min, X max, Y max  |
+
+Par exemple, certaines machines cadrent le travail par elles-mêmes — même lors de l'exécution hors
+ligne d'un fichier G-code — en lisant les limites du travail depuis un commentaire du préambule :
+
+```gcode
+; Bounds: X{job.extents[0]} Y{job.extents[1]} to X{job.extents[2]} Y{job.extents[3]}
+```
+
 ### Conseils
 
-- Les **spécifications de formatage** sont prises en charge : `{power:.0f}` formate la puissance
-  en nombre entier, `{power:.2f}` avec deux décimales.
-- Le paramètre **« Omettre les coordonnées inchangées »** contrôle si `x_cmd`, `y_cmd`
-  et `z_cmd` sont laissés vides lorsque la position de l'axe n'a pas changé depuis
-  la dernière commande. Cela réduit la taille du G-code.
-- Le paramètre **« Vitesse modale »** contrôle si `f_command` est omise lorsque
-  la vitesse d'avance n'a pas changé.
-- Laissez un champ de modèle **vide** pour ignorer complètement cette commande
-  (par ex., régler `bezier_cubic` sur `""` désactive la sortie Bézier native
-  et utilise la linéarisation à la place).
+- Les **spécifications de formatage** sont prises en charge : `{power:.0f}` formate la puissance en
+  nombre entier, `{power:.2f}` avec deux décimales.
+- Le paramètre **« Omettre les coordonnées inchangées »** contrôle si `x_cmd`, `y_cmd` et `z_cmd`
+  sont laissés vides lorsque la position de l'axe n'a pas changé depuis la dernière commande. Cela
+  réduit la taille du G-code.
+- Le paramètre **« Vitesse modale »** contrôle si `f_command` est omise lorsque la vitesse d'avance
+  n'a pas changé.
+- Laissez un champ de modèle **vide** pour ignorer complètement cette commande (par ex., régler
+  `bezier_cubic` sur `""` désactive la sortie Bézier native et utilise la linéarisation à la place).
 
 ---
 

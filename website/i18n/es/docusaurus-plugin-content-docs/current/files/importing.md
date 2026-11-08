@@ -1,20 +1,22 @@
 # Importar archivos
 
-Rayforge admite la importación de varios formatos de archivo, tanto vectoriales
-como de mapa de bits. Esta página explica cómo importar archivos y optimizarlos
-para obtener los mejores resultados.
+Rayforge admite la importación de varios formatos de archivo, tanto vectoriales como de mapa de
+bits. Esta página explica cómo importar archivos y optimizarlos para obtener los mejores resultados.
 
 ## Formatos de archivo admitidos
 
 ### Formatos vectoriales
 
-| Formato       | Extensión         | Método de importación     | Mejor para                            |
-| ------------- | ----------------- | ------------------------- | ------------------------------------- |
-| **SVG**       | `.svg`            | Vectores directos o trazo | Gráficos vectoriales, logos, diseños  |
-| **DXF**       | `.dxf`            | Vectores directos         | Planos CAD, diseños técnicos          |
-| **PDF**       | `.pdf`            | Vectores directos o trazo | Documentos con contenido vectorial    |
-| **LightBurn** | `.lbrn`, `.lbrn2` | Vectores directos         | Proyectos LightBurn                   |
-| **Ruida**     | `.rd`             | Vectores directos         | Archivos de trabajo controlador Ruida |
+| Formato         | Extensión         | Método de importación                            | Mejor para                            |
+| --------------- | ----------------- | ------------------------------------------------ | ------------------------------------- |
+| **SVG**         | `.svg`, `.svgz`   | Vectores directos o trazo                        | Gráficos vectoriales, logos, diseños  |
+| **DXF**         | `.dxf`            | Vectores directos                                | Planos CAD, diseños técnicos          |
+| **PDF**         | `.pdf`            | Vectores directos o trazo                        | Documentos con contenido vectorial    |
+| **LightBurn**   | `.lbrn`, `.lbrn2` | Vectores directos                                | Proyectos LightBurn                   |
+| **Ruida**       | `.rd`             | Vectores directos                                | Archivos de trabajo controlador Ruida |
+| **Illustrator** | `.ai`             | Vectores directos o trazo                        | Logotipos de Illustrator              |
+| **EPS**         | `.eps`, `.ps`     | Vectores directos o trazo (requiere Ghostscript) | Logotipos, arte para impresión        |
+| **HPGL**        | `.plt`, `.hpgl`   | Vectores directos                                | Archivos de plóter y plóter de corte  |
 
 ### Formatos de mapa de bits
 
@@ -23,13 +25,16 @@ para obtener los mejores resultados.
 | **PNG**  | `.png`          | Trazo a vectores      | Fotos, imágenes con transparencia      |
 | **JPEG** | `.jpg`, `.jpeg` | Trazo a vectores      | Fotos, imágenes de tono continuo       |
 | **BMP**  | `.bmp`          | Trazo a vectores      | Gráficos simples, capturas de pantalla |
+| **GIF**  | `.gif`          | Trazo a vectores      | Gráficos simples, animaciones          |
+| **TIFF** | `.tif`, `.tiff` | Trazo a vectores      | Escaneos, arte para impresión          |
+| **WebP** | `.webp`         | Trazo a vectores      | Imágenes web                           |
 
-:::note Importación de mapa de bits
+<!-- prettier-ignore-start -->
+:::note[Importación de mapa de bits]
+Todas las imágenes de mapa de bits se **trazan** para crear trazados vectoriales que pueden
+utilizarse en operaciones láser. La calidad depende de la configuración del trazado.
 :::
-
-Todas las imágenes de mapa de bits se **trazan** para crear trazados vectoriales
-que pueden utilizarse en operaciones láser. La calidad depende de la
-configuración del trazado.
+<!-- prettier-ignore-end -->
 
 ---
 
@@ -37,32 +42,29 @@ configuración del trazado.
 
 ### El diálogo de importación
 
-Rayforge cuenta con un diálogo de importación unificado que proporciona vista
-previa en tiempo real y opciones de configuración para todos los tipos de
-archivo admitidos. El diálogo permite:
+Rayforge cuenta con un diálogo de importación unificado que proporciona vista previa en tiempo real
+y opciones de configuración para todos los tipos de archivo admitidos. El diálogo permite:
 
 - **Vista previa de la importación** antes de añadirla al documento
 - **Configurar los ajustes de trazado** para imágenes de mapa de bits
-- **Elegir el método de importación** para archivos SVG (vectores directos o
-  trazo)
+- **Elegir el método de importación** para archivos SVG (vectores directos o trazo)
 - **Ajustar parámetros** como umbral, invertir y umbral automático
 
-![Diálogo de importación](/screenshots/import-dialog.png)
+![Diálogo de importación](/screenshots/import-dialog.webp)
 
 ### Modo de importación de capas
 
-Al importar archivos que contienen múltiples capas (como archivos SVG o PDF
-con capas nombradas), el diálogo ofrece tres formas de manejarlas:
+Al importar archivos que contienen múltiples capas (como archivos SVG o PDF con capas nombradas), el
+diálogo ofrece tres formas de manejarlas:
 
-- **Mapear a existentes**: Coincidir las capas importadas con las capas existentes del
-  documento. La primera capa del documento fuente se coloca en la primera capa
-  de tu proyecto, la segunda en la segunda y así sucesivamente.
-  Esta es la opción por defecto y funciona bien cuando tu documento ya tiene
-  capas configuradas.
-- **Nuevas capas**: Crear una nueva capa en el documento por cada capa importada.
-  Esto mantiene el contenido importado separado del trabajo existente.
-- **Aplanar**: Combinar todas las capas importadas en una sola capa. Útil cuando
-  quieres todo en una capa independientemente de la estructura original.
+- **Mapear a existentes**: Coincidir las capas importadas con las capas existentes del documento. La
+  primera capa del documento fuente se coloca en la primera capa de tu proyecto, la segunda en la
+  segunda y así sucesivamente. Esta es la opción por defecto y funciona bien cuando tu documento ya
+  tiene capas configuradas.
+- **Nuevas capas**: Crear una nueva capa en el documento por cada capa importada. Esto mantiene el
+  contenido importado separado del trabajo existente.
+- **Aplanar**: Combinar todas las capas importadas en una sola capa. Útil cuando quieres todo en una
+  capa independientemente de la estructura original.
 
 ### Método 1: Menú Archivo
 
@@ -92,44 +94,88 @@ rayforge file1.svg file2.dxf
 
 ### Auto-Redimensionar al importar
 
-Al importar archivos más grandes que el área de trabajo de la máquina,
-Rayforge automáticamente:
+Al importar archivos más grandes que el área de trabajo de la máquina, Rayforge automáticamente:
 
-1. **Reduce la escala** del contenido importado para que quepa dentro de los
-   límites de la máquina
+1. **Reduce la escala** del contenido importado para que quepa dentro de los límites de la máquina
 2. **Preserva la relación de aspecto** durante el escalado
 3. **Centra** el contenido escalado en el espacio de trabajo
 4. **Muestra una notificación** con la opción de deshacer el redimensionado
 
 La notificación de redimensionado aparece como un mensaje emergente:
 
-- ⚠️ "El elemento importado era más grande que el área de trabajo y se ha
-  reducido de escala para ajustarse."
+- ⚠️ "El elemento importado era más grande que el área de trabajo y se ha reducido de escala para
+  ajustarse."
 - Incluye un botón **"Restablecer"** para deshacer el auto-redimensionado
-- El mensaje permanece visible hasta que se descarta o se ejecuta la acción de
-  restablecimiento
+- El mensaje permanece visible hasta que se descarta o se ejecuta la acción de restablecimiento
 
-Esto garantiza que tus diseños siempre se ajusten a las capacidades de tu
-máquina, dándote la flexibilidad de restaurar el tamaño original si es necesario.
+Esto garantiza que tus diseños siempre se ajusten a las capacidades de tu máquina, dándote la
+flexibilidad de restaurar el tamaño original si es necesario.
+
+### Mantener los archivos importados sincronizados
+
+Al importar un archivo, Rayforge conserva un enlace a este en el disco. Si el archivo cambia más
+tarde — por ejemplo después de editarlo y guardarlo de nuevo en Inkscape o en tu programa de CAD —
+Rayforge ofrece recargar el contenido importado, para que tu proyecto no conserve geometría
+obsoleta.
+
+![El diálogo de archivo importado modificado](/screenshots/source-changed-dialog.webp)
+
+Esta función se controla con la opción **Vigilar archivos importados** en Configuración → General.
+Cuando está activada (el valor predeterminado), Rayforge comprueba los archivos enlazados mientras
+el proyecto está abierto — también justo después de abrirlo — y muestra un diálogo para cada archivo
+que haya cambiado en el disco:
+
+- **Recargar** sustituye el contenido importado por la nueva versión. La posición, el tamaño y la
+  configuración de las piezas de trabajo afectadas se conservan, y toda la recarga es un único paso
+  de deshacer.
+- **Ignorar** conserva el contenido actual. Se te preguntará de nuevo la próxima vez que cambie el
+  archivo.
+- Activa **Recargar siempre este archivo sin preguntar** para recargar ese archivo automáticamente
+  de ahora en adelante. Los archivos marcados así se recargan sin preguntar.
+
+Cuando varios archivos enlazados han cambiado a la vez, el diálogo los enumera y te permite elegir
+cuáles recargar.
+
+<!-- prettier-ignore-start -->
+:::note[La recarga ajusta el documento]
+Al recargar, el documento vuelve a coincidir con el archivo: los elementos que se le añadieron
+aparecen en el proyecto, los elementos que ya no están en él se eliminan, y las pestañas de
+sujeción que queden a más de 1 mm del nuevo contorno se descartan. Los elementos que editaste en
+Rayforge se dejan sin cambios. Una notificación resume lo que cambió la recarga.
+:::
+<!-- prettier-ignore-end -->
+
+### Recarga y reenlace manuales
+
+También puedes recargar o reenlazar manualmente en cualquier momento mediante **Archivo → Recargar
+desde el disco** y **Archivo → Reenlazar archivo de origen…**, o a través del menú contextual de la
+selección en el lienzo, de la lista de capas o del explorador de activos. **Recargar desde el
+disco** vuelve a leer los archivos detrás de las piezas de trabajo seleccionadas. Cuando no se puede
+encontrar el archivo enlazado, Rayforge sugiere reenlazarlo en su lugar.
+
+**Reenlazar archivo de origen…** apunta una fuente importada a un archivo diferente. Esto es útil
+cuando un archivo se movió o renombró, o cuando un proyecto se abre en otro ordenador y falta el
+archivo enlazado. Las piezas de trabajo conservan su posición y configuración y muestran el
+contenido del nuevo archivo.
 
 ---
 
 ## Importación SVG
 
-SVG (Scalable Vector Graphics) es el **formato recomendado** para diseños
-vectoriales.
+SVG (Scalable Vector Graphics) es el **formato recomendado** para diseños vectoriales.
 
-:::tip Automatizar la asignación de pasos
-Puedes configurar [Reglas de color](../application-settings/color-rules.md)
-para asignar automáticamente tipos de paso (Contorno, Grabado, etc.) según los
-colores de tu SVG. Cuando existen reglas, el diálogo de importación agrupa las
-formas por color por defecto para que las reglas surtan efecto.
+<!-- prettier-ignore-start -->
+:::tip[Automatizar la asignación de pasos]
+Puedes configurar
+[Reglas de color](../application-settings/color-rules.md) para asignar automáticamente tipos de paso
+(Contorno, Grabado, etc.) según los colores de tu SVG. Cuando existen reglas, el diálogo de
+importación agrupa las formas por color por defecto para que las reglas surtan efecto.
 :::
+<!-- prettier-ignore-end -->
 
 ### Opciones de importación en el diálogo
 
-Al importar SVG, el diálogo de importación proporciona un interruptor para
-elegir entre dos métodos:
+Al importar SVG, el diálogo de importación proporciona un interruptor para elegir entre dos métodos:
 
 #### 1. Usar vectores originales (Recomendado)
 
@@ -188,8 +234,7 @@ Desactiva "Usar vectores originales" para utilizar este método.
 
 ### Vista previa en tiempo real
 
-El diálogo de importación muestra una vista previa en tiempo real de cómo se
-importará tu SVG:
+El diálogo de importación muestra una vista previa en tiempo real de cómo se importará tu SVG:
 
 - Los trazados vectoriales se muestran en una superposición azul
 - En modo de trazo, se muestra la imagen original con los trazados trazados
@@ -247,6 +292,22 @@ Rayforge admite formatos DXF estándar:
 
 **Consejo:** Exporta como DXF R12/LT2 para máxima compatibilidad.
 
+### Aplanado de coordenadas Z
+
+Algunos exportadores CAD escriben archivos DXF con geometría a diferentes alturas Z — por ejemplo,
+un modelo 3D exportado con los contornos de las caras superior e inferior de una pieza. Rayforge es
+un programa 2D: en una máquina con eje Z, dichos valores Z se convierten en movimientos Z reales
+dentro del trabajo, y la cabeza puede hundirse por debajo de la superficie del material y chocar.
+
+Cuando un archivo DXF contiene geometría a más de una altura Z, el diálogo de importación ofrece por
+ello una opción **Aplanar coordenadas Z** (dentro de "Modo de importación"). Viene activada por
+defecto y proyecta toda la geometría importada sobre el plano Z=0. Puedes desactivarla para
+conservar las alturas Z originales — el diálogo te avisará entonces de que la trayectoria se moverá
+en Z, lo que solo es seguro si sabes que tu archivo lo necesita (por ejemplo, para recrear una
+altura de enfoque específica por forma).
+
+En los dibujos planos no se muestra la opción; no hay nada que aplanar.
+
 ### Consejos para importación DXF
 
 **Antes de exportar desde CAD:**
@@ -278,107 +339,107 @@ Rayforge admite formatos DXF estándar:
 
 ## Importación PDF
 
-Los archivos PDF pueden contener gráficos vectoriales, imágenes de mapa de
-bits, o ambos.
+Los archivos PDF pueden contener gráficos vectoriales, imágenes de mapa de bits, o ambos.
 
 ### Importación directa de vectores
 
-Al importar un PDF que contiene trazados vectoriales, Rayforge puede importarlos
-directamente, igual que archivos SVG o DXF. Esto proporciona geometría limpia y
-escalable sin pérdida de calidad por rasterización.
+Al importar un PDF que contiene trazados vectoriales, Rayforge puede importarlos directamente, igual
+que archivos SVG o DXF. Esto proporciona geometría limpia y escalable sin pérdida de calidad por
+rasterización.
 
-Si el PDF contiene capas, Rayforge las detecta y permite seleccionar cuáles
-importar. Cada capa se convierte en una pieza de trabajo separada en tu
-documento. Esto funciona de la misma manera que la importación de capas SVG:
-habilita o deshabilita capas individuales en el diálogo de importación antes de
-importar.
+Si el PDF contiene capas, Rayforge las detecta y permite seleccionar cuáles importar. Cada capa se
+convierte en una pieza de trabajo separada en tu documento. Esto funciona de la misma manera que la
+importación de capas SVG: habilita o deshabilita capas individuales en el diálogo de importación
+antes de importar.
 
-Esto es especialmente útil para PDF exportados desde software de diseño como
-Illustrator o Inkscape, donde los trazados vectoriales son limpios y están bien
-organizados.
+Esto es especialmente útil para PDF exportados desde software de diseño como Illustrator o Inkscape,
+donde los trazados vectoriales son limpios y están bien organizados.
 
 ### Alternativa: Renderizar y trazar
 
-Para PDF que no contienen datos vectoriales utilizables — documentos escaneados,
-fotos incrustadas, o PDF donde el texto no se ha convertido a contornos —
-Rayforge puede recurrir a renderizar el PDF como imagen y trazarlo. Esto
-funciona igual que la importación de imágenes de mapa de bits.
+Para PDF que no contienen datos vectoriales utilizables — documentos escaneados, fotos incrustadas,
+o PDF donde el texto no se ha convertido a contornos — Rayforge puede recurrir a renderizar el PDF
+como imagen y trazarlo. Esto funciona igual que la importación de imágenes de mapa de bits.
 
 ### Consejos para importación PDF
 
 **Mejores resultados:**
 
-1. **Usar PDF vectoriales**: Los PDF creados desde software vectorial (Illustrator,
-   Inkscape) producen los resultados más limpios con importación directa.
+1. **Usar PDF vectoriales**: Los PDF creados desde software vectorial (Illustrator, Inkscape)
+   producen los resultados más limpios con importación directa.
 
-2. **Verificar capas**: Si tu PDF tiene capas, las verás listadas en el diálogo
-   de importación. Selecciona solo las capas que necesites.
+2. **Verificar capas**: Si tu PDF tiene capas, las verás listadas en el diálogo de importación.
+   Selecciona solo las capas que necesites.
 
-3. **Para documentos con texto**: Exporta como SVG con fuentes convertidas a
-   trazados para la mejor calidad, o usa la alternativa de renderizar y trazar.
+3. **Para documentos con texto**: Exporta como SVG con fuentes convertidas a trazados para la mejor
+   calidad, o usa la alternativa de renderizar y trazar.
 
-4. **Usar la vista previa del diálogo de importación**: Ajusta los ajustes de
-   umbral e invertir al usar el modo de trazo. La vista previa muestra
-   exactamente cómo se trazará el PDF.
+4. **Usar la vista previa del diálogo de importación**: Ajusta los ajustes de umbral e invertir al
+   usar el modo de trazo. La vista previa muestra exactamente cómo se trazará el PDF.
 
 ---
 
 ## Importación Ruida
 
-Los archivos Ruida (.rd) son archivos de trabajo binarios propietarios utilizados
-por los controladores Ruida en muchas máquinas de corte láser. Estos archivos
-contienen tanto geometría vectorial como ajustes del láser organizados en capas
-(colores).
+Los archivos Ruida (.rd) son archivos de trabajo binarios propietarios utilizados por los
+controladores Ruida en muchas máquinas de corte láser. Estos archivos contienen tanto geometría
+vectorial como ajustes del láser organizados en capas (colores).
 
 **Después de importar:**
 
-- **Verificar escala** - Comprobar que las dimensiones coinciden con el tamaño
-  esperado
+- **Verificar escala** - Comprobar que las dimensiones coinciden con el tamaño esperado
 - **Revisar capas** - Asegurar que todas las capas se importaron correctamente
-- **Validar trazados** - Confirmar que todos los trazados de corte están
-  presentes
+- **Validar trazados** - Confirmar que todos los trazados de corte están presentes
 
 ### Limitaciones
 
-- **Importación de solo lectura** - Los archivos Ruida solo pueden importarse,
-  no exportarse
-- **Formato binario** - La edición directa de archivos .rd originales no es
-  compatible
-- **Funciones propietarias** - Algunas funciones avanzadas de Ruida pueden no ser
-  totalmente compatibles
+- **Importación de solo lectura** - Los archivos Ruida solo pueden importarse, no exportarse
+- **Formato binario** - La edición directa de archivos .rd originales no es compatible
+- **Funciones propietarias** - Algunas funciones avanzadas de Ruida pueden no ser totalmente
+  compatibles
 
 ---
 
 ## Importación LightBurn
 
-Los archivos LightBurn (.lbrn / .lbrn2) son archivos de proyecto propietarios
-utilizados por el software de corte láser LightBurn. Almacenan geometría
-vectorial organizada en capas de colores con configuraciones láser ajustables.
+Los archivos LightBurn (.lbrn / .lbrn2) son archivos de proyecto propietarios utilizados por el
+software de corte láser LightBurn. Almacenan geometría vectorial organizada en capas de colores con
+configuraciones láser ajustables.
 
 **Después de la importación:**
 
-- **Revisar capas** — Las capas de LightBurn se asignan a las capas del
-  documento con nombres correspondientes
-- **Verificar configuraciones láser** — Los ajustes de potencia, velocidad y
-  pasadas de las capas de LightBurn se conservan
-- **Validar trazados** — Confirmar que todos los trazados de corte están
-  presentes y correctamente posicionados
+- **Revisar capas** — Las capas de LightBurn se asignan a las capas del documento con nombres
+  correspondientes
+- **Verificar configuraciones láser** — Los ajustes de potencia, velocidad y pasadas de las capas de
+  LightBurn se conservan
+- **Validar trazados** — Confirmar que todos los trazados de corte están presentes y correctamente
+  posicionados
 
 ### Limitaciones
 
-- **Importación de solo lectura** — Los archivos LightBurn solo pueden
-  importarse, no exportarse
-- **Formato binario** — La edición directa de archivos .lbrn originales no es
-  compatible
-- **Funciones propietarias** — Algunas funciones avanzadas de LightBurn pueden
-  no ser totalmente compatibles
+- **Importación de solo lectura** — Los archivos LightBurn solo pueden importarse, no exportarse
+- **Formato binario** — La edición directa de archivos .lbrn originales no es compatible
+- **Funciones propietarias** — Algunas funciones avanzadas de LightBurn pueden no ser totalmente
+  compatibles
 
 ---
 
-## Importación de imágenes de mapa de bits (PNG, JPG, BMP)
+## Importación de Illustrator y EPS
 
-Las imágenes de mapa de bits se **trazan** para crear trazados vectoriales
-utilizando el diálogo de importación.
+Los archivos de Illustrator guardados con compatibilidad con PDF, lo predeterminado desde
+Illustrator 9, se importan igual que los archivos PDF, con la misma selección de capas y las mismas
+opciones de trazo.
+
+Los archivos EPS, PostScript y los de Illustrator más antiguos se convierten primero a PDF con
+Ghostscript. Instala Ghostscript si el diálogo de importación indica que falta. Si no puedes
+instalarlo, exporta el diseño como PDF o SVG desde el programa que lo creó.
+
+---
+
+## Importación de imágenes de mapa de bits (PNG, JPG, BMP, GIF, TIFF, WebP)
+
+Las imágenes de mapa de bits se **trazan** para crear trazados vectoriales utilizando el diálogo de
+importación.
 
 ### Proceso de trazado en el diálogo
 
@@ -400,9 +461,9 @@ El diálogo de importación proporciona estos parámetros ajustables:
 | **Umbral**            | Corte blanco/negro   | Menor = más detalle, mayor = más simple                    |
 | **Invertir**          | Invertir colores     | Traza objetos claros sobre fondo oscuro                    |
 
-**Los ajustes predeterminados** funcionan bien para la mayoría de las imágenes.
-El diálogo muestra una vista previa en tiempo real que se actualiza al ajustar
-estos parámetros, permitiéndote afinar el trazado antes de importar.
+**Los ajustes predeterminados** funcionan bien para la mayoría de las imágenes. El diálogo muestra
+una vista previa en tiempo real que se actualiza al ajustar estos parámetros, permitiéndote afinar
+el trazado antes de importar.
 
 ### Preparar imágenes para trazado
 
@@ -458,5 +519,5 @@ estos parámetros, permitiéndote afinar el trazado antes de importar.
 - [Formatos admitidos](formats) - Especificaciones detalladas de formatos
 - [Exportar G-code](exporting) - Opciones de salida
 - [Inicio rápido](../getting-started/quick-start.md) - Tutorial de primera importación
-- [Reglas de color](../application-settings/color-rules.md) - Asigna los
-  colores SVG a tipos de paso al importar
+- [Reglas de color](../application-settings/color-rules.md) - Asigna los colores SVG a tipos de paso
+  al importar

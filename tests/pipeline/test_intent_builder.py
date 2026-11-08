@@ -9,6 +9,7 @@ and the position-sensitive folding rule.
 import math
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 from raygeo.cnc.execution.intent import create_intent_from_nodes
 from raygeo.cnc.execution.specs import (
@@ -26,28 +27,38 @@ from raygeo.geo import Geometry, Matrix
 from raygeo.ops.assembly import Assembler
 from raygeo.ops.assembly.contour import ContourSpec
 from raygeo.ops.axis import Axis
-from raygeo.ops.convert import Encoder, GcodeSpec
+from raygeo.ops.convert import Encoder, GcodeSpec, PythonEncoder
+from raygeo.ops.material.spec import CylinderStock, MaterialFoldSpec
 from raygeo.ops.part import Part
+from raygeo.ops.transform.bidir_scan_offset import BidirScanOffsetSpec
 from raygeo.pipeline.execute import execute_stages
 from raygeo.pipeline.request import NodeRequest
 from raygeo.pipeline.stage import StageSpec
 
+import rayforge.machine.driver as driver_module
 from rayforge.core.doc import Doc
+from rayforge.core.image_edit import ImageEditStep
 from rayforge.core.layer import Layer
 from rayforge.core.step import Step
 from rayforge.core.stock import StockItem
 from rayforge.core.stock_asset import StockAsset
 from rayforge.core.workpiece import WorkPiece
+from rayforge.machine.driver.dummy import NoDeviceDriver
 from rayforge.machine.models.dialect.grbl import GRBL_DIALECT
+from rayforge.machine.models.laser import LaserHead
 from rayforge.machine.models.machine import Machine, Origin
+from rayforge.machine.models.machine_panel import PanelOrientation
 from rayforge.machine.models.rotary_module import RotaryMode, RotaryModule
 from rayforge.pipeline.encoder.rust_helpers import dialect_to_spec
 from rayforge.pipeline.intent_builder import (
     IntentBuilder,
+    UnsupportedRotaryPanelOrientationError,
     job_encode_key,
     job_key,
     job_machinexform_key,
+    parse_stock_key,
     step_key,
+    stock_key,
     workpiece_key,
 )
 
@@ -102,6 +113,39 @@ def test_builds_one_node_per_workpiece_plus_step_and_job(isolated_machine):
     assert len(keys) == 6
 
 
+def test_step_with_workpiece_filter_only_applies_to_listed_workpieces(
+    isolated_machine,
+):
+    """A step with a workpiece filter (e.g. material test) must not be
+    applied to the other workpieces in its layer."""
+    step = _TestStep(name="s1")
+    step.workpiece_uids = ["wp-gen"]
+    wp_gen = WorkPiece(name="wp-gen")
+    wp_gen.uid = "wp-gen"
+    wp_other = WorkPiece(name="wp-other")
+    doc = _make_doc(step, wp_gen, wp_other)
+
+    nodes = IntentBuilder(machine=isolated_machine).build(doc)
+    keys = [n.key for n in nodes]
+    assert workpiece_key("wp-gen", step.uid) in keys
+    assert workpiece_key("wp-other", step.uid) not in keys
+
+
+def test_step_with_missing_filtered_workpiece_emits_no_nodes(
+    isolated_machine,
+):
+    """When a step's filter matches no workpiece in the layer, the step
+    emits no workpiece or step aggregate nodes."""
+    step = _TestStep(name="s1")
+    step.workpiece_uids = ["wp-gone"]
+    doc = _make_doc(step, WorkPiece(name="wp-other"))
+
+    nodes = IntentBuilder(machine=isolated_machine).build(doc)
+    keys = [n.key for n in nodes]
+    assert step_key(step.uid) not in keys
+    assert job_key() not in keys
+
+
 def test_keys_are_stable_across_rebuilds(isolated_machine):
     step = _TestStep(name="s1")
     wp1 = WorkPiece(name="wp1")
@@ -110,6 +154,20 @@ def test_keys_are_stable_across_rebuilds(isolated_machine):
     n1 = IntentBuilder(machine=isolated_machine).build(doc)
     n2 = IntentBuilder(machine=isolated_machine).build(doc)
     assert [n.key for n in n1] == [n.key for n in n2]
+
+
+def test_rotary_layer_rejects_rotated_panel(isolated_machine):
+    """Rotary uses its own cylindrical coordinate space, not the
+    rotated flat-bed presentation."""
+    doc = _make_doc(_TestStep(name="s1"), WorkPiece(name="wp"))
+    doc.active_layer.set_rotary_enabled(True)
+    isolated_machine.set_panel_orientation(PanelOrientation.ROTATED_RIGHT)
+
+    with pytest.raises(
+        UnsupportedRotaryPanelOrientationError,
+        match="Rotary layers require the Native panel orientation",
+    ):
+        IntentBuilder(machine=isolated_machine).build(doc)
 
 
 # ----------------------------------------------------------------------
@@ -496,6 +554,33 @@ def test_compute_token_changes_on_machine_arc_tolerance(
     assert before_t != after_t
 
 
+def test_compute_token_changes_on_laser_power_change(
+    contour_step_class, test_machine_and_config
+):
+    """Changing the machine's laser optical power invalidates the
+    compute cache.
+
+    The burn fluence model scales with ``max_power_watts``; without
+    folding it into the compute token, the pipeline would keep serving
+    the pre-change burn until an unrelated edit (e.g. a workpiece
+    resize) bumped the token.
+    """
+    machine, context = test_machine_and_config
+    step = contour_step_class.create(context, name="cut")
+    wp = WorkPiece(name="wp")
+    doc = _make_doc(step, wp)
+
+    laser = next(h for h in machine.heads if isinstance(h, LaserHead))
+    before = IntentBuilder(machine=machine).build(doc)
+    wpk = workpiece_key(wp.uid, step.uid)
+    before_t = next(n.version_token for n in before if n.key == wpk)
+
+    laser.max_power_watts = 55.0
+    after = IntentBuilder(machine=machine).build(doc)
+    after_t = next(n.version_token for n in after if n.key == wpk)
+    assert before_t != after_t
+
+
 def test_contour_compute_node_executes_through_raygeo(
     contour_step_class, test_machine_and_config
 ):
@@ -643,6 +728,45 @@ def test_job_encode_node_emits_encode_spec(
     assert encode_nodes[0].stage.source_key == job_machinexform_key()
 
 
+class _NativeGcodeDriver(NoDeviceDriver):
+    """A dummy G-code driver for encoder routing tests."""
+
+
+class _NonGcodeDriver(NoDeviceDriver):
+    """A dummy non-G-code driver for encoder routing tests."""
+
+    uses_gcode = False
+
+
+driver_module.register_driver(_NativeGcodeDriver)
+driver_module.register_driver(_NonGcodeDriver)
+
+
+def test_encode_routes_grbl_driver_to_native_gcode_spec(isolated_machine):
+    """A G-code driver on the Grbl dialect encodes via the native
+    Rust GcodeSpec."""
+    isolated_machine.driver_name = _NativeGcodeDriver.__name__
+    doc = _make_doc(_TestStep(name="s1"), WorkPiece(name="wp"))
+
+    nodes = IntentBuilder(machine=isolated_machine).build(doc)
+    ek = job_encode_key()
+    spec = next(n.stage for n in nodes if n.key == ek)
+    assert isinstance(spec.encoder.spec, GcodeSpec)
+
+
+def test_encode_routes_non_gcode_driver_to_driver_encoder(isolated_machine):
+    """A non-G-code driver encodes via its own encoder even when the
+    machine carries a leftover Grbl dialect (issue #420)."""
+    isolated_machine.driver_name = _NonGcodeDriver.__name__
+    assert isolated_machine.dialect is not None
+    doc = _make_doc(_TestStep(name="s1"), WorkPiece(name="wp"))
+
+    nodes = IntentBuilder(machine=isolated_machine).build(doc)
+    ek = job_encode_key()
+    spec = next(n.stage for n in nodes if n.key == ek)
+    assert isinstance(spec.encoder.spec, PythonEncoder)
+
+
 def test_job_encode_token_changes_on_machine_swap(
     contour_step_class, test_machine_and_config
 ):
@@ -661,6 +785,41 @@ def test_job_encode_token_changes_on_machine_swap(
     after = IntentBuilder(machine=machine).build(doc)
     after_t = next(n.version_token for n in after if n.key == ek)
     assert before_t != after_t
+
+
+def test_machine_token_ignores_unused_wcs_offset(isolated_machine):
+    step = _TestStep(name="s1")
+    doc = _make_doc(step, WorkPiece(name="wp"))
+    before = IntentBuilder(machine=isolated_machine).build(doc)
+
+    isolated_machine.update_wcs_offset("G55", (10.0, 20.0, 0.0))
+    after = IntentBuilder(machine=isolated_machine).build(doc)
+
+    before_t = next(
+        n.version_token for n in before if n.key == job_machinexform_key()
+    )
+    after_t = next(
+        n.version_token for n in after if n.key == job_machinexform_key()
+    )
+    assert after_t == before_t
+
+
+def test_machine_token_tracks_effective_layer_wcs_offset(isolated_machine):
+    step = _TestStep(name="s1")
+    doc = _make_doc(step, WorkPiece(name="wp"))
+    doc.active_layer.set_wcs("G55")
+    before = IntentBuilder(machine=isolated_machine).build(doc)
+
+    isolated_machine.update_wcs_offset("G55", (10.0, 20.0, 0.0))
+    after = IntentBuilder(machine=isolated_machine).build(doc)
+
+    before_t = next(
+        n.version_token for n in before if n.key == job_machinexform_key()
+    )
+    after_t = next(
+        n.version_token for n in after if n.key == job_machinexform_key()
+    )
+    assert after_t != before_t
 
 
 def test_contour_job_encodes_through_raygeo(
@@ -720,6 +879,53 @@ def test_machine_transform_node_present(
     mx_idx = keys.index(job_machinexform_key())
     enc_idx = keys.index(job_encode_key())
     assert job_idx < mx_idx < enc_idx
+
+
+def test_machine_transform_ignores_panel_rotation(isolated_machine):
+    """The output stage is native: the panel rotation never reaches the
+    encoder, because the document lives in WORLD space."""
+    isolated_machine.set_axis_extents(400.0, 800.0)
+    isolated_machine.set_panel_orientation(PanelOrientation.ROTATED_RIGHT)
+    doc = _make_doc(_TestStep())
+
+    spec = IntentBuilder(
+        machine=isolated_machine
+    )._build_machine_transform_stage(doc)
+
+    assert spec.world_to_machine == [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+
+
+def test_panel_rotation_keeps_machine_transform_token(
+    contour_step_class, test_machine_and_config
+):
+    """Changing the panel orientation does not invalidate cached
+    machine-space output."""
+    machine, context = test_machine_and_config
+    doc = _make_doc(
+        contour_step_class.create(context, name="cut"),
+        WorkPiece(name="wp"),
+    )
+    before = IntentBuilder(machine=machine).build(doc)
+
+    machine.set_panel_orientation(PanelOrientation.ROTATED_LEFT)
+    after = IntentBuilder(machine=machine).build(doc)
+
+    before_token = next(
+        node.version_token
+        for node in before
+        if node.key == job_machinexform_key()
+    )
+    after_token = next(
+        node.version_token
+        for node in after
+        if node.key == job_machinexform_key()
+    )
+    assert before_token == after_token
 
 
 def test_machine_transform_linearizes_curves(
@@ -1089,6 +1295,75 @@ def test_disabled_per_workpiece_transformer_not_wired(
     assert payload.transformers == []
 
 
+def _bidir_offset_spec(machine, step) -> BidirScanOffsetSpec:
+    wp = WorkPiece(name="wp")
+    wp.set_size(10.0, 10.0)
+    doc = _make_doc(step, wp)
+    nodes = IntentBuilder(machine=machine).build(doc)
+    wpk = workpiece_key(wp.uid, step.uid)
+    wp_node = next(n for n in nodes if n.key == wpk)
+    specs = [
+        t
+        for t in wp_node.stage.params.transformers
+        if isinstance(t, BidirScanOffsetSpec)
+    ]
+    assert len(specs) == 1
+    return specs[0]
+
+
+def test_engrave_step_bidir_offset_reaches_transformer(
+    engrave_step_class, test_machine_and_config
+):
+    """The per-step bidirectional scan offset must arrive in the
+    BidirScanOffset spec of the workpiece compute node."""
+    machine, context = test_machine_and_config
+    step = engrave_step_class.create(context, name="engrave")
+    step.bidir_x_offset_mm = 0.3
+
+    assert _bidir_offset_spec(machine, step).offset_mm == pytest.approx(0.3)
+
+
+def test_engrave_step_falls_back_to_machine_offset_table(
+    engrave_step_class, test_machine_and_config
+):
+    """Without a per-step offset the machine's speed table decides,
+    interpolated at the step's engrave speed."""
+    machine, context = test_machine_and_config
+    machine.set_bidir_offset_table([(1000, 0.1), (3000, 0.3)])
+    step = engrave_step_class.create(context, name="engrave")
+    step.bidir_x_offset_mm = 0.0
+    step.cut_speed = 2000
+
+    assert _bidir_offset_spec(machine, step).offset_mm == pytest.approx(0.2)
+
+
+def test_bidir_offset_changes_invalidate_the_compute_node(
+    engrave_step_class, test_machine_and_config
+):
+    """The offset is applied inside the compute stage, so changing it
+    on the step or in the machine table must change the node token."""
+    machine, context = test_machine_and_config
+    step = engrave_step_class.create(context, name="engrave")
+    step.cut_speed = 2000
+    wp = WorkPiece(name="wp")
+    wp.set_size(10.0, 10.0)
+    doc = _make_doc(step, wp)
+    wpk = workpiece_key(wp.uid, step.uid)
+
+    def token():
+        nodes = IntentBuilder(machine=machine).build(doc)
+        return next(n for n in nodes if n.key == wpk).version_token
+
+    base = token()
+    step.bidir_x_offset_mm = 0.2
+    with_step_offset = token()
+    step.bidir_x_offset_mm = 0.0
+    machine.set_bidir_offset_table([(1000, 0.1), (3000, 0.3)])
+    with_table = token()
+
+    assert len({base, with_step_offset, with_table}) == 3
+
+
 # ----------------------------------------------------------------------
 # Workpiece-move cache invalidation (regression: 3D canvas stale)
 # ----------------------------------------------------------------------
@@ -1176,6 +1451,71 @@ def test_raster_step_is_position_sensitive(engrave_step_class):
     compute token."""
     step = engrave_step_class(name="engrave")
     assert step.is_position_sensitive() is True
+
+
+@pytest.mark.parametrize(
+    "attr,value",
+    [
+        ("auto_levels", False),
+        ("black_point", 80),
+        ("white_point", 200),
+        ("threshold", 200),
+        ("dither_algorithm", "BAYER4"),
+    ],
+)
+def test_raster_compute_token_changes_on_image_preprocess_params(
+    engrave_step_class,
+    test_machine_and_config,
+    attr,
+    value,
+):
+    """Changing any raster image-preprocessing setting must invalidate
+    the workpiece compute cache.
+
+    The levels (black/white points), threshold and dither
+    are baked into the preprocessed image the assembler consumes, so a
+    token that omits them would replay the exact same ops regardless of
+    the brightness settings.
+    """
+    machine, context = test_machine_and_config
+    step = engrave_step_class.create(context, name="engrave")
+    wp = WorkPiece(name="wp")
+    wp.set_size(20.0, 20.0)
+    doc = _make_doc(step, wp)
+
+    before = IntentBuilder(machine=machine).build(doc)
+    wpk = workpiece_key(wp.uid, step.uid)
+    before_t = next(n.version_token for n in before if n.key == wpk)
+
+    if attr == "dither_algorithm":
+        step.set_dither_algorithm(value)
+    else:
+        setattr(step, attr, value)
+    after = IntentBuilder(machine=machine).build(doc)
+    after_t = next(n.version_token for n in after if n.key == wpk)
+    assert before_t != after_t
+
+
+def test_compute_token_changes_on_workpiece_image_edits(
+    engrave_step_class, test_machine_and_config
+):
+    """Image edits live on the workpiece and are baked into the image
+    every raster step consumes, so changing them must invalidate the
+    workpiece compute cache."""
+    machine, context = test_machine_and_config
+    step = engrave_step_class.create(context, name="engrave")
+    wp = WorkPiece(name="wp")
+    wp.set_size(20.0, 20.0)
+    doc = _make_doc(step, wp)
+
+    before = IntentBuilder(machine=machine).build(doc)
+    wpk = workpiece_key(wp.uid, step.uid)
+    before_t = next(n.version_token for n in before if n.key == wpk)
+
+    wp.image_edits = [ImageEditStep("invert")]
+    after = IntentBuilder(machine=machine).build(doc)
+    after_t = next(n.version_token for n in after if n.key == wpk)
+    assert before_t != after_t
 
 
 # ----------------------------------------------------------------------
@@ -1392,4 +1732,476 @@ def test_machine_transform_wcs_offset_in_gcode(
 
     # First G1 cut: world (95.5, -4.5) minus WCS (50, 30) = (45.5, -34.5).
     assert coords[1][0] == pytest.approx(45.5, abs=0.1)
-    assert coords[1][1] == pytest.approx(-34.5, abs=0.1)
+
+
+@pytest.mark.parametrize("origin", list(Origin))
+@pytest.mark.parametrize("reverse_x", [False, True])
+@pytest.mark.parametrize("reverse_y", [False, True])
+def test_machine_transform_wcs_with_axis_reversal(
+    contour_step_class,
+    test_machine_and_config,
+    origin,
+    reverse_x,
+    reverse_y,
+):
+    """WCS offset must be subtracted in machine space (after w2m), not
+    in world space (before w2m).
+
+    A 10x10 square at world (0,0) is zeroed at world (10,20) via WCS.
+    The G-code for the first corner must equal the machine-space
+    distance from the WCS origin to that corner — regardless of origin
+    corner or axis reversal settings.
+    """
+    machine, context = test_machine_and_config
+    machine.set_axis_extents(200, 150)
+    machine.set_origin(origin)
+    machine.set_reverse_x_axis(reverse_x)
+    machine.set_reverse_y_axis(reverse_y)
+    machine.set_active_wcs("G54")
+
+    # WCS zeroed at world (10, 20): stores the machine coordinate.
+    space = machine.get_coordinate_space()
+    wcs_machine = space.world_point_to_machine(10.0, 20.0)
+    machine.update_wcs_offset("G54", (wcs_machine[0], wcs_machine[1], 0.0))
+
+    gcode = _run_full_pipeline(machine, context, contour_step_class)
+    coords = _extract_cut_coords(gcode)
+    assert len(coords) >= 4
+
+    # Independently compute expected G-code for the first corner
+    # (world point after kerf offset ≈ (-4.5, -4.5)).
+    w2m = space.get_world_to_machine_matrix()
+    cmd = space.get_command_offset(
+        wcs_offset=(wcs_machine[0], wcs_machine[1], 0.0),
+        wcs_is_workarea_origin=False,
+    )
+    # The kerf offset shifts the first point to approximately (-4.5, -4.5)
+    first_world = np.array([-4.5, -4.5, 0.0, 1.0])
+    first_machine = w2m @ first_world
+    expected_x = first_machine[0] - cmd[0]
+    expected_y = first_machine[1] - cmd[1]
+
+    assert coords[0][0] == pytest.approx(expected_x, abs=0.5)
+    assert coords[0][1] == pytest.approx(expected_y, abs=0.5)
+
+
+@pytest.mark.parametrize(
+    "orientation",
+    [
+        PanelOrientation.ROTATED_RIGHT,
+        PanelOrientation.ROTATED_LEFT,
+    ],
+)
+def test_panel_rotation_does_not_change_gcode(
+    contour_step_class,
+    test_machine_and_config,
+    orientation,
+):
+    """The panel rotation is display-only: it never reaches G-code."""
+    machine, context = test_machine_and_config
+    machine.set_origin(Origin.BOTTOM_LEFT)
+
+    native_gcode = _run_full_pipeline(machine, context, contour_step_class)
+    native_coords = _extract_cut_coords(native_gcode)
+
+    machine.set_panel_orientation(orientation)
+    rotated_gcode = _run_full_pipeline(machine, context, contour_step_class)
+    rotated_coords = _extract_cut_coords(rotated_gcode)
+
+    assert len(native_coords) >= 4
+    assert rotated_coords == native_coords
+
+
+# ----------------------------------------------------------------------
+# Stock fold nodes
+# ----------------------------------------------------------------------
+
+
+def _wp_with_geometry(name: str = "wp") -> WorkPiece:
+    """A WorkPiece whose world geometry overlaps the stock's
+    ``(0,0)-(100,100)`` rect: a 50×50 mm piece at the origin."""
+    wp = WorkPiece(name=name)
+    geo = Geometry()
+    geo.move_to(0, 0)
+    geo.line_to(1, 0)
+    geo.line_to(1, 1)
+    geo.line_to(0, 1)
+    geo.close_path()
+    # The boundaries are a 1x1 normalized box; scale it to 50×50 mm
+    # via the workpiece matrix so its world rect overlaps the stock.
+    wp._boundaries_cache = geo
+    wp.matrix = Matrix.scale(50.0, 50.0)
+    return wp
+
+
+def _make_doc_with_stock_and_wp(
+    step: _TestStep,
+    wp: WorkPiece,
+    stock_visible: bool = True,
+    thickness: float = 18.0,
+) -> tuple[Doc, StockItem]:
+    """Build a Doc with *step*, *wp*, and a 100×80 mm stock item that
+    overlaps the workpiece, returning ``(doc, stock_item)``."""
+    doc = _make_doc(step, wp)
+    asset = StockAsset(name="sheet", geometry=None)
+    asset.set_thickness(thickness)
+    geo = Geometry()
+    geo.move_to(0, 0)
+    geo.line_to(100, 0)
+    geo.line_to(100, 80)
+    geo.line_to(0, 80)
+    geo.close_path()
+    asset.geometry = geo
+    doc.add_asset(asset)
+    item = StockItem(stock_asset_uid=asset.uid, name="sheet")
+    item.visible = stock_visible
+    doc.add_child(item)
+    return doc, item
+
+
+def test_stock_key_roundtrip():
+    """``stock_key``/``parse_stock_key`` are inverse."""
+    key = stock_key("abc-123")
+    assert key == "stock:abc-123"
+    assert parse_stock_key(key) == "abc-123"
+    assert parse_stock_key("workpiece:x:y") is None
+    assert parse_stock_key("stock:") is None
+    assert parse_stock_key("stock:a:b") is None
+
+
+def test_builds_one_fold_node_per_visible_stock(isolated_machine):
+    """Two visible stock items → two ``stock:{uid}`` fold nodes."""
+    step = _TestStep(name="s1")
+    wp = _wp_with_geometry()
+    doc, item = _make_doc_with_stock_and_wp(step, wp)
+    # Add a second stock item.
+    asset2 = StockAsset(name="sheet2")
+    asset2.set_thickness(5.0)
+    geo2 = Geometry()
+    geo2.move_to(0, 0)
+    geo2.line_to(50, 0)
+    geo2.line_to(50, 50)
+    geo2.line_to(0, 50)
+    geo2.close_path()
+    asset2.geometry = geo2
+    doc.add_asset(asset2)
+    item2 = StockItem(stock_asset_uid=asset2.uid, name="sheet2")
+    doc.add_child(item2)
+
+    nodes = IntentBuilder(machine=isolated_machine).build(doc)
+    keys = [n.key for n in nodes]
+    assert stock_key(item.uid) in keys
+    assert stock_key(item2.uid) in keys
+
+
+def test_no_fold_node_for_invisible_stock(isolated_machine):
+    """An invisible stock item emits no fold node."""
+    step = _TestStep(name="s1")
+    wp = _wp_with_geometry()
+    doc, item = _make_doc_with_stock_and_wp(step, wp, stock_visible=False)
+
+    nodes = IntentBuilder(machine=isolated_machine).build(doc)
+    keys = [n.key for n in nodes]
+    assert stock_key(item.uid) not in keys
+
+
+def test_fold_node_token_stability(isolated_machine):
+    """Building twice with unchanged inputs yields equal fold tokens."""
+    step = _TestStep(name="s1")
+    wp = _wp_with_geometry()
+    doc, item = _make_doc_with_stock_and_wp(step, wp)
+
+    before = IntentBuilder(machine=isolated_machine).build(doc)
+    after = IntentBuilder(machine=isolated_machine).build(doc)
+    sk = stock_key(item.uid)
+    before_t = next(n.version_token for n in before if n.key == sk)
+    after_t = next(n.version_token for n in after if n.key == sk)
+    assert before_t == after_t
+
+
+def test_fold_node_token_changes_on_stock_move(isolated_machine):
+    """Moving the stock changes its fold node token."""
+    step = _TestStep(name="s1")
+    wp = _wp_with_geometry()
+    doc, item = _make_doc_with_stock_and_wp(step, wp)
+    sk = stock_key(item.uid)
+
+    before = IntentBuilder(machine=isolated_machine).build(doc)
+    # Small move keeps the stock overlapping the workpiece so the fold
+    # node is still emitted, while changing the token.
+    item.matrix = Matrix.translation(10.0, 0.0)
+    after = IntentBuilder(machine=isolated_machine).build(doc)
+    before_t = next(n.version_token for n in before if n.key == sk)
+    after_t = next(n.version_token for n in after if n.key == sk)
+    assert before_t != after_t
+
+
+def test_fold_node_token_changes_on_thickness_change(isolated_machine):
+    """Changing the stock thickness changes its fold node token."""
+    step = _TestStep(name="s1")
+    wp = _wp_with_geometry()
+    doc, item = _make_doc_with_stock_and_wp(step, wp, thickness=18.0)
+    sk = stock_key(item.uid)
+
+    before = IntentBuilder(machine=isolated_machine).build(doc)
+    asset = item.stock_asset
+    assert asset is not None
+    asset.set_thickness(5.0)
+    after = IntentBuilder(machine=isolated_machine).build(doc)
+    before_t = next(n.version_token for n in before if n.key == sk)
+    after_t = next(n.version_token for n in after if n.key == sk)
+    assert before_t != after_t
+
+
+def test_fold_node_no_intersecting_workpieces_skipped(isolated_machine):
+    """A stock item with no intersecting workpiece emits no fold node."""
+    step = _TestStep(name="s1")
+    wp = _wp_with_geometry()
+    doc, item = _make_doc_with_stock_and_wp(step, wp)
+    # Move the stock far away from the workpiece.
+    item.matrix = Matrix.translation(10000.0, 10000.0)
+
+    nodes = IntentBuilder(machine=isolated_machine).build(doc)
+    keys = [n.key for n in nodes]
+    assert stock_key(item.uid) not in keys
+
+
+def test_fold_node_is_material_fold_stage(isolated_machine):
+    """The fold node's stage is a ``MaterialFoldSpec`` (passed directly,
+    not wrapped in a ``StageSpec`` — pipeline is domain-free)."""
+    step = _TestStep(name="s1")
+    wp = _wp_with_geometry()
+    doc, item = _make_doc_with_stock_and_wp(step, wp)
+    sk = stock_key(item.uid)
+
+    nodes = IntentBuilder(machine=isolated_machine).build(doc)
+    fold_node = next(n for n in nodes if n.key == sk)
+    assert isinstance(fold_node.stage, MaterialFoldSpec)
+
+
+def test_fold_node_entries_cover_intersecting_workpieces(isolated_machine):
+    """The fold spec's entries list every intersecting workpiece compute
+    node; non-intersecting workpieces are absent."""
+    step = _TestStep(name="s1")
+    wp_far = _wp_with_geometry("wp_far")
+    wp_far.matrix = Matrix.translation(10000.0, 10000.0)
+    wp_near = _wp_with_geometry("wp_near")
+    doc, item = _make_doc_with_stock_and_wp(step, wp_near)
+    doc.active_layer.add_child(wp_far)
+
+    nodes = IntentBuilder(machine=isolated_machine).build(doc)
+    sk = stock_key(item.uid)
+    fold_node = next(n for n in nodes if n.key == sk)
+    spec = fold_node.stage
+    source_keys = {e.source_key for e in spec.entries}
+    near_key = workpiece_key(wp_near.uid, step.uid)
+    far_key = workpiece_key(wp_far.uid, step.uid)
+    assert near_key in source_keys
+    assert far_key not in source_keys
+
+
+def test_fold_node_includes_image_workpiece_without_geometry(
+    isolated_machine,
+):
+    """An image/raster workpiece (no vector geometry) still contributes
+    a fold entry when its size-based world AABB intersects the stock.
+
+    Raster workpieces carry no ``boundaries`` geometry, so
+    ``get_world_geometry`` returns ``None``; the fold wiring must fall
+    back to the workpiece's ``size`` transformed into world space,
+    otherwise scanline burns never reach the stock.
+    """
+    step = _TestStep(name="s1")
+    wp = WorkPiece(name="wp")
+    wp.set_size(50.0, 50.0)
+    doc, item = _make_doc_with_stock_and_wp(step, wp)
+
+    nodes = IntentBuilder(machine=isolated_machine).build(doc)
+    sk = stock_key(item.uid)
+    fold_node = next(n for n in nodes if n.key == sk)
+    assert isinstance(fold_node.stage, MaterialFoldSpec)
+    source_keys = {e.source_key for e in fold_node.stage.entries}
+    assert workpiece_key(wp.uid, step.uid) in source_keys
+
+
+def test_fold_node_skips_image_workpiece_outside_stock(isolated_machine):
+    """An image workpiece whose world AABB does not intersect the
+    stock is still excluded from the fold."""
+    step = _TestStep(name="s1")
+    wp = WorkPiece(name="wp")
+    wp.set_size(50.0, 50.0)
+    wp.matrix = Matrix.translation(10000.0, 10000.0)
+    doc, item = _make_doc_with_stock_and_wp(step, wp)
+
+    nodes = IntentBuilder(machine=isolated_machine).build(doc)
+    keys = [n.key for n in nodes]
+    assert stock_key(item.uid) not in keys
+
+
+def test_existing_node_count_unchanged_with_stock(isolated_machine):
+    """Adding a stock item does not change the count of workpiece/step/
+    job nodes — fold nodes are additive."""
+    step = _TestStep(name="s1")
+    wp1 = _wp_with_geometry("wp1")
+    wp2 = _wp_with_geometry("wp2")
+    doc_no_stock = _make_doc(step, wp1, wp2)
+
+    # Build a separate doc with its own workpieces + a stock item, so
+    # workpieces are not re-parented between docs.
+    step2 = _TestStep(name="s1")
+    wp1b = _wp_with_geometry("wp1")
+    wp2b = _wp_with_geometry("wp2")
+    doc_with_stock, _item = _make_doc_with_stock_and_wp(step2, wp1b)
+    doc_with_stock.active_layer.add_child(wp2b)
+
+    no_stock = IntentBuilder(machine=isolated_machine).build(doc_no_stock)
+    with_stock = IntentBuilder(machine=isolated_machine).build(doc_with_stock)
+
+    non_stock_keys = [
+        n.key for n in with_stock if not n.key.startswith("stock:")
+    ]
+    assert len(non_stock_keys) == len(no_stock)
+
+
+# ----------------------------------------------------------------------
+# Rotary layer fold nodes
+# ----------------------------------------------------------------------
+
+
+def _with_default_rotary(machine) -> RotaryModule:
+    module = RotaryModule()
+    module.max_workpiece_length = 300.0
+    machine.rotary_modules[module.uid] = module
+    machine.default_rotary_module_uid = module.uid
+    return module
+
+
+def _make_doc_with_rotary_wp(step: _TestStep, wp: WorkPiece) -> Doc:
+    """A Doc whose active layer is rotary-enabled with a workpiece in
+    the unrolled domain."""
+    doc = _make_doc(step, wp)
+    doc.active_layer.rotary_enabled = True
+    doc.active_layer.rotary_diameter = 50.0
+    return doc
+
+
+def test_rotary_layer_emits_fold_node(isolated_machine):
+    """A rotary layer with an intersecting workpiece emits a fold node
+    keyed by the layer's uid."""
+    _with_default_rotary(isolated_machine)
+    step = _TestStep(name="s1")
+    wp = _wp_with_geometry()
+    doc = _make_doc_with_rotary_wp(step, wp)
+
+    nodes = IntentBuilder(machine=isolated_machine).build(doc)
+    sk = stock_key(doc.active_layer.uid)
+    assert sk in [n.key for n in nodes]
+
+
+def test_rotary_fold_node_uses_cylinder_stock(isolated_machine):
+    """The rotary fold node's stage is a ``MaterialFoldSpec`` against
+    a ``CylinderStock`` spanning the module's max workpiece length."""
+    module = _with_default_rotary(isolated_machine)
+    step = _TestStep(name="s1")
+    wp = _wp_with_geometry()
+    doc = _make_doc_with_rotary_wp(step, wp)
+
+    nodes = IntentBuilder(machine=isolated_machine).build(doc)
+    sk = stock_key(doc.active_layer.uid)
+    spec = next(n for n in nodes if n.key == sk).stage
+    assert isinstance(spec, MaterialFoldSpec)
+    assert isinstance(spec.stock, CylinderStock)
+    assert spec.stock.diameter == 50.0
+    assert spec.stock.length == module.max_workpiece_length
+    near_key = workpiece_key(wp.uid, step.uid)
+    assert {e.source_key for e in spec.entries} == {near_key}
+
+
+def test_rotary_fold_node_skipped_without_module(isolated_machine):
+    """Without a default rotary module, no rotary fold node is
+    emitted even when a layer is rotary-enabled."""
+    step = _TestStep(name="s1")
+    wp = _wp_with_geometry()
+    doc = _make_doc_with_rotary_wp(step, wp)
+
+    nodes = IntentBuilder(machine=isolated_machine).build(doc)
+    sk = stock_key(doc.active_layer.uid)
+    assert sk not in [n.key for n in nodes]
+
+
+def test_rotary_fold_node_includes_far_workpieces(isolated_machine):
+    """Workpieces far from the unrolled domain still contribute fold
+    entries: image workpieces may not resolve world geometry, and the
+    fold's raster sampling is harmless for misses."""
+    _with_default_rotary(isolated_machine)
+    step = _TestStep(name="s1")
+    wp = _wp_with_geometry()
+    wp.matrix = Matrix.translation(10000.0, 10000.0)
+    doc = _make_doc_with_rotary_wp(step, wp)
+
+    nodes = IntentBuilder(machine=isolated_machine).build(doc)
+    sk = stock_key(doc.active_layer.uid)
+    spec = next(n for n in nodes if n.key == sk).stage
+    assert {e.source_key for e in spec.entries} == {
+        workpiece_key(wp.uid, step.uid)
+    }
+
+
+def test_flat_stock_node_not_emitted_for_rotary_layer(isolated_machine):
+    """Rotary layers don't emit flat-stock keys and vice versa."""
+    _with_default_rotary(isolated_machine)
+    step = _TestStep(name="s1")
+    wp = _wp_with_geometry()
+    doc = _make_doc_with_rotary_wp(step, wp)
+
+    nodes = IntentBuilder(machine=isolated_machine).build(doc)
+    stock_keys = [n.key for n in nodes if n.key.startswith("stock:")]
+    assert stock_keys == [stock_key(doc.active_layer.uid)]
+
+
+def test_rotary_fold_executes_end_to_end(
+    contour_step_class, test_machine_and_config
+):
+    """A rotary layer's fold node runs through ``execute_stages`` and
+    produces a cylindrical material state."""
+    machine, context = test_machine_and_config
+    module = RotaryModule()
+    module.max_workpiece_length = 300.0
+    machine.rotary_modules[module.uid] = module
+    machine.default_rotary_module_uid = module.uid
+
+    step = contour_step_class.create(context, name="cut")
+    geo = Geometry()
+    geo.move_to(0.0, 0.0)
+    geo.line_to(10.0, 0.0)
+    geo.line_to(10.0, 10.0)
+    geo.line_to(0.0, 10.0)
+    geo.close_path()
+    wp = WorkPiece(name="rect")
+    wp._edited_boundaries = geo
+    wp.set_size(50.0, 30.0)
+    doc = _make_doc(step, wp)
+    doc.active_layer.rotary_enabled = True
+    doc.active_layer.rotary_diameter = 50.0
+
+    nodes = IntentBuilder(machine=machine, generation_id=1).build(doc)
+    sk = stock_key(doc.active_layer.uid)
+
+    completed = []
+
+    def on_completed(node):
+        completed.append(node)
+
+    assert sk in [n.key for n in nodes], [n.key for n in nodes]
+
+    execute_stages(nodes, on_completed)
+
+    fold_result = next(c for c in completed if c.key == sk)
+    assert fold_result.error is None, fold_result.error
+    state = fold_result.output
+    assert state.profile == "cylindrical"
+    assert state.surface_map is not None
+    assert state.grid is not None
+    # Arc axis centered on the machine origin (diameter 50).
+    assert state.grid.origin_mm[0] == 0.0
+    assert state.grid.origin_mm[1] == pytest.approx(-np.pi * 25.0)

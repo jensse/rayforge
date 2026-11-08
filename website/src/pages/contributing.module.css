@@ -4,17 +4,6 @@
 
 .hero {
   padding: 3.5rem 0 2.25rem;
-  background:
-    radial-gradient(
-      900px 450px at 15% 15%,
-      rgba(94, 234, 212, 0.18),
-      transparent 60%
-    ),
-    radial-gradient(
-      900px 450px at 85% 25%,
-      rgba(168, 85, 247, 0.14),
-      transparent 60%
-    );
 }
 
 .heroInner {
@@ -39,10 +28,11 @@
 }
 
 .heroTitleGradient {
-  background: linear-gradient(90deg, #5eead4, #a855f7 55%, #fb923c);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: inherit;
+}
+
+html[data-theme='dark'] .heroTitleGradient {
+  color: inherit;
 }
 
 .heroSubtitle {
@@ -198,16 +188,19 @@
   color: #fff;
 }
 
-.iconCyan {
-  background: linear-gradient(145deg, #06b6d4, #0ea5e9);
+.iconCyan,
+.iconPurple,
+.iconOrange,
+.iconRed {
+  background: #1a1a2e;
 }
 
-.iconPurple {
-  background: linear-gradient(145deg, #a855f7, #6366f1);
-}
-
-.iconOrange {
-  background: linear-gradient(145deg, #fb923c, #ef4444);
+html[data-theme='dark'] .iconCyan,
+html[data-theme='dark'] .iconPurple,
+html[data-theme='dark'] .iconOrange,
+html[data-theme='dark'] .iconRed {
+  background: #ececf1;
+  color: #1a1a2e;
 }
 
 .cardBody {
@@ -226,40 +219,122 @@
   line-height: 1.35;
 }
 
-.twoCol {
+.impactGrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1.25rem;
+  align-items: stretch;
 }
 
-.block {
+.impactCard {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
   background: var(--ifm-background-surface-color);
   border: 1px solid var(--ifm-color-emphasis-200);
-  border-radius: 1.1rem;
-  padding: 1.1rem 1.1rem;
+  border-radius: 1.25rem;
+  padding: 1.5rem;
   overflow: hidden;
 }
 
-.block::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(
-    500px 220px at 10% 0%,
-    rgba(94, 234, 212, 0.14),
-    transparent 60%
-  );
-  opacity: 0.5;
-  pointer-events: none;
+.impactTutorial {
+  border: 1px solid var(--ifm-color-emphasis-300);
+  scroll-margin-top: 5.5rem;
 }
 
-.blockHeader {
+.impactBadge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: fit-content;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.impactBadgeTutorial {
+  background: rgba(232, 89, 12, 0.12);
+  color: #e8590c;
+}
+
+.impactBadgeSupport {
+  background: rgba(26, 26, 46, 0.1);
+  color: #1a1a2e;
+}
+
+.impactCardHeader {
   position: relative;
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  margin-bottom: 0.85rem;
+}
+
+.impactCardTitle {
+  position: relative;
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.impactCardBody {
+  position: relative;
+  margin: 0;
+  color: var(--ifm-color-emphasis-700);
+  line-height: 1.55;
+}
+
+.impactLinks {
+  position: relative;
+  display: grid;
+  gap: 0.75rem;
+  margin-top: auto;
+}
+
+.impactCta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+  text-decoration: none;
+}
+
+.impactCta:hover {
+  text-decoration: none;
+}
+
+.wishlist {
+  position: relative;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.wishlistTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.wishlistChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.wishlistChip {
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--ifm-color-emphasis-800);
+  background: rgba(26, 26, 46, 0.08);
+  border: 1px solid rgba(26, 26, 46, 0.22);
 }
 
 .blockIcon {
@@ -269,18 +344,6 @@
   display: grid;
   place-items: center;
   color: #fff;
-}
-
-.blockTitle {
-  position: relative;
-  margin: 0;
-  font-size: 1.15rem;
-}
-
-.blockBody {
-  position: relative;
-  margin: 0;
-  color: var(--ifm-color-emphasis-700);
 }
 
 .steps {
@@ -311,38 +374,17 @@
   border-radius: 0.75rem;
   display: grid;
   place-items: center;
-  background: #ff9f43;
-  border: 1px solid #ff9f43;
-  color: #1b1b1d;
+  background: #1a1a2e;
+  border: 1px solid #1a1a2e;
+  color: #ffffff;
   font-weight: 800;
   font-size: 0.85rem;
 }
 
-.bullets {
-  position: relative;
-  margin: 0 0 0.85rem;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 0.55rem;
-  color: var(--ifm-color-emphasis-800);
-}
-
-.bullets li {
-  position: relative;
-  padding-left: 1.35rem;
-  line-height: 1.45;
-}
-
-.bullets li::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0.55rem;
-  width: 0.55rem;
-  height: 0.55rem;
-  border-radius: 999px;
-  background: linear-gradient(145deg, #fb923c, #ef4444);
+html[data-theme='dark'] .step::before {
+  background: #ececf1;
+  border-color: #ececf1;
+  color: #1a1a2e;
 }
 
 @media (max-width: 1100px) {
@@ -360,7 +402,7 @@
     padding: 3rem 0 2rem;
   }
 
-  .twoCol {
+  .impactGrid {
     grid-template-columns: 1fr;
   }
 }

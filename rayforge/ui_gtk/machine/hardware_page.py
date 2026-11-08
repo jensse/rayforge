@@ -1,12 +1,13 @@
 from gettext import gettext as _
-from typing import cast
 
 from gi.repository import Adw, Gtk
-from raygeo.ops.axis import Axis
 
 from ...machine.models.machine import Machine, Origin
+from ...machine.models.machine_panel import PanelOrientation
 from ..shared.pref_rows.length_spin_row import LengthSpinRow
 from ..shared.preferences_page import TrackedPreferencesPage
+
+_PANEL_ORIENTATIONS = tuple(PanelOrientation)
 
 
 class HardwarePage(TrackedPreferencesPage):
@@ -60,17 +61,6 @@ class HardwarePage(TrackedPreferencesPage):
             ),
             model=origin_store,
         )
-
-        # In languages with long text, the combo row doesn't allocate enough
-        # width for the dropdown, so we have to manually set the list box
-        # width. This is a bit hacky but it works.
-        combo_child_box = origin_combo_row.get_last_child()
-        if combo_child_box:
-            suffix_box = combo_child_box.get_last_child()
-            if suffix_box:
-                list_box = cast(Gtk.ListBox, suffix_box.get_first_child())
-                if list_box:
-                    list_box.set_size_request(100, -1)
         origin_combo_row.set_selected(
             {
                 Origin.BOTTOM_LEFT: 0,
@@ -83,10 +73,26 @@ class HardwarePage(TrackedPreferencesPage):
         self.origin_combo_row = origin_combo_row
         axes_group.add(origin_combo_row)
 
+        self.panel_orientation_row = Adw.ComboRow(
+            title=_("Panel Orientation"),
+            subtitle=_(
+                "Rotate the flat workspace and remap output to the "
+                "machine; rotary layers require Native"
+            ),
+            model=Gtk.StringList.new([o.label for o in _PANEL_ORIENTATIONS]),
+        )
+        self.panel_orientation_row.set_selected(
+            _PANEL_ORIENTATIONS.index(self.machine.panel.orientation)
+        )
+        self.panel_orientation_row.connect(
+            "notify::selected", self.on_panel_orientation_changed
+        )
+        axes_group.add(self.panel_orientation_row)
+
         self.reverse_x_axis_row = Adw.SwitchRow()
         self.reverse_x_axis_row.set_title(_("Reverse X-Axis Direction"))
         self.reverse_x_axis_row.set_subtitle(
-            _("Makes coordinate values negative")
+            _("Machine coordinates count down from the origin")
         )
         self.reverse_x_axis_row.set_active(machine.reverse_x_axis)
         self.reverse_x_axis_row.connect(
@@ -97,13 +103,24 @@ class HardwarePage(TrackedPreferencesPage):
         self.reverse_y_axis_row = Adw.SwitchRow()
         self.reverse_y_axis_row.set_title(_("Reverse Y-Axis Direction"))
         self.reverse_y_axis_row.set_subtitle(
-            _("Makes coordinate values negative")
+            _("Machine coordinates count down from the origin")
         )
         self.reverse_y_axis_row.set_active(machine.reverse_y_axis)
         self.reverse_y_axis_row.connect(
             "notify::active", self.on_reverse_y_changed
         )
         axes_group.add(self.reverse_y_axis_row)
+
+        self.has_z_axis_row = Adw.SwitchRow()
+        self.has_z_axis_row.set_title(_("Has Z-Axis"))
+        self.has_z_axis_row.set_subtitle(
+            _("Enable if this machine has a Z axis (focus motor, movable bed)")
+        )
+        self.has_z_axis_row.set_active(machine.has_z_axis)
+        self.has_z_axis_row.connect(
+            "notify::active", self.on_has_z_axis_changed
+        )
+        axes_group.add(self.has_z_axis_row)
 
         self.reverse_z_axis_row = Adw.SwitchRow()
         self.reverse_z_axis_row.set_title(_("Reverse Z-Axis Direction"))
@@ -118,6 +135,28 @@ class HardwarePage(TrackedPreferencesPage):
             "notify::active", self.on_reverse_z_changed
         )
         axes_group.add(self.reverse_z_axis_row)
+
+        z_extents = machine.z_extents or (-50.0, 50.0)
+
+        self.z_min_row = LengthSpinRow(
+            _("Z Min"),
+            _("Lowest Z coordinate (machine frame)"),
+            lower=-10000,
+            upper=10000,
+            value_in_base=z_extents[0],
+        )
+        self.z_min_row.value_changed.connect(self.on_z_extents_changed)
+        axes_group.add(self.z_min_row)
+
+        self.z_max_row = LengthSpinRow(
+            _("Z Max"),
+            _("Highest Z coordinate (machine frame)"),
+            lower=-10000,
+            upper=10000,
+            value_in_base=z_extents[1],
+        )
+        self.z_max_row.value_changed.connect(self.on_z_extents_changed)
+        axes_group.add(self.z_max_row)
 
         work_area_group = Adw.PreferencesGroup(title=_("Work Area"))
         work_area_group.set_description(
@@ -181,62 +220,78 @@ class HardwarePage(TrackedPreferencesPage):
         soft_limits_group.set_description(
             _(
                 "Configurable safety bounds for jogging. "
-                "Leave disabled to use work surface bounds."
+                "Leave disabled to jog without limit checks."
             )
         )
         self.add(soft_limits_group)
 
         self.soft_limits_enabled_row = Adw.SwitchRow()
-        self.soft_limits_enabled_row.set_title(_("Enable Custom Soft Limits"))
+        self.soft_limits_enabled_row.set_title(_("Enable Soft Limits"))
         self.soft_limits_enabled_row.set_subtitle(
-            _("Override work surface bounds with custom limits")
+            _("Limit jogging to custom bounds instead of the work surface")
         )
-        has_custom_limits = self.machine.soft_limits is not None
+        limits_enabled = self.machine.soft_limits_enabled
         limits = self.machine.soft_limits or (0, 0, *self.machine.axis_extents)
-        self.soft_limits_enabled_row.set_active(has_custom_limits)
+        self.soft_limits_enabled_row.set_active(limits_enabled)
         self.soft_limits_enabled_row.connect(
             "notify::active", self.on_soft_limits_enabled_changed
         )
         soft_limits_group.add(self.soft_limits_enabled_row)
 
         self.soft_x_min_row = LengthSpinRow(
-            _("X Min"),
-            _("Minimum X coordinate"),
+            _("X Min Distance from Origin"),
+            _(
+                "Distance from the origin corner into the bed "
+                "(not a coordinate). Fixed to the physical bed, "
+                "independent of the WCS."
+            ),
             upper=self.machine.axis_extents[0],
             value_in_base=limits[0],
         )
         self.soft_x_min_row.value_changed.connect(self.on_soft_limits_changed)
-        self.soft_x_min_row.set_sensitive(has_custom_limits)
+        self.soft_x_min_row.set_sensitive(limits_enabled)
         soft_limits_group.add(self.soft_x_min_row)
 
         self.soft_y_min_row = LengthSpinRow(
-            _("Y Min"),
-            _("Minimum Y coordinate"),
+            _("Y Min Distance from Origin"),
+            _(
+                "Distance from the origin corner into the bed "
+                "(not a coordinate). Fixed to the physical bed, "
+                "independent of the WCS."
+            ),
             upper=self.machine.axis_extents[1],
             value_in_base=limits[1],
         )
         self.soft_y_min_row.value_changed.connect(self.on_soft_limits_changed)
-        self.soft_y_min_row.set_sensitive(has_custom_limits)
+        self.soft_y_min_row.set_sensitive(limits_enabled)
         soft_limits_group.add(self.soft_y_min_row)
 
         self.soft_x_max_row = LengthSpinRow(
-            _("X Max"),
-            _("Maximum X coordinate"),
+            _("X Max Distance from Origin"),
+            _(
+                "Distance from the origin corner into the bed "
+                "(not a coordinate). Fixed to the physical bed, "
+                "independent of the WCS."
+            ),
             upper=self.machine.axis_extents[0],
             value_in_base=limits[2],
         )
         self.soft_x_max_row.value_changed.connect(self.on_soft_limits_changed)
-        self.soft_x_max_row.set_sensitive(has_custom_limits)
+        self.soft_x_max_row.set_sensitive(limits_enabled)
         soft_limits_group.add(self.soft_x_max_row)
 
         self.soft_y_max_row = LengthSpinRow(
-            _("Y Max"),
-            _("Maximum Y coordinate"),
+            _("Y Max Distance from Origin"),
+            _(
+                "Distance from the origin corner into the bed "
+                "(not a coordinate). Fixed to the physical bed, "
+                "independent of the WCS."
+            ),
             upper=self.machine.axis_extents[1],
             value_in_base=limits[3],
         )
         self.soft_y_max_row.value_changed.connect(self.on_soft_limits_changed)
-        self.soft_y_max_row.set_sensitive(has_custom_limits)
+        self.soft_y_max_row.set_sensitive(limits_enabled)
         soft_limits_group.add(self.soft_y_max_row)
 
         self.machine.changed.connect(self._on_machine_changed)
@@ -252,6 +307,11 @@ class HardwarePage(TrackedPreferencesPage):
         self._update_z_axis_state()
         self._update_axis_extents_ui()
         self._update_soft_limits_ui()
+        self._update_panel_orientation_ui()
+
+    def _update_panel_orientation_ui(self):
+        selected = _PANEL_ORIENTATIONS.index(self.machine.panel.orientation)
+        self.panel_orientation_row.set_selected(selected)
 
     def _update_axis_extents_ui(self):
         self.x_extent_row.set_value_in_base_units(self.machine.axis_extents[0])
@@ -283,6 +343,13 @@ class HardwarePage(TrackedPreferencesPage):
         origin = origin_map.get(selected_index, Origin.BOTTOM_LEFT)
         self.machine.set_origin(origin)
 
+    def on_panel_orientation_changed(self, row, _):
+        selected = row.get_selected()
+        if selected >= len(_PANEL_ORIENTATIONS):
+            return
+        orientation = _PANEL_ORIENTATIONS[selected]
+        self.machine.set_panel_orientation(orientation)
+
     def on_reverse_x_changed(self, row, _):
         self.machine.set_reverse_x_axis(row.get_active())
 
@@ -291,6 +358,14 @@ class HardwarePage(TrackedPreferencesPage):
 
     def on_reverse_z_changed(self, row, _):
         self.machine.set_reverse_z_axis(row.get_active())
+
+    def on_z_extents_changed(self, row):
+        z_min = self.z_min_row.get_value_in_base_units()
+        z_max = self.z_max_row.get_value_in_base_units()
+        self.machine.set_z_extents(z_min, z_max)
+
+    def on_has_z_axis_changed(self, row, _):
+        self.machine.set_has_z_axis(row.get_active())
 
     def on_x_extent_changed(self, row):
         x = self.x_extent_row.get_value_in_base_units()
@@ -321,6 +396,7 @@ class HardwarePage(TrackedPreferencesPage):
 
     def on_soft_limits_enabled_changed(self, row, _):
         enabled = row.get_active()
+        self.machine.set_soft_limits_enabled(enabled)
         self.soft_x_min_row.set_sensitive(enabled)
         self.soft_y_min_row.set_sensitive(enabled)
         self.soft_x_max_row.set_sensitive(enabled)
@@ -348,5 +424,13 @@ class HardwarePage(TrackedPreferencesPage):
         if self._is_initializing:
             return
 
-        has_z = self.machine.can_jog(Axis.Z)
+        has_z = self.machine.has_z_axis
+        if self.has_z_axis_row.get_active() != has_z:
+            self.has_z_axis_row.set_active(has_z)
         self.reverse_z_axis_row.set_visible(has_z)
+        self.z_min_row.set_visible(has_z)
+        self.z_max_row.set_visible(has_z)
+        if has_z:
+            z_extents = self.machine.z_extents or (-50.0, 50.0)
+            self.z_min_row.set_value_in_base_units(z_extents[0])
+            self.z_max_row.set_value_in_base_units(z_extents[1])

@@ -1,11 +1,16 @@
+from gettext import gettext as _
+
 from .angle_constraint_tool import AngleConstraintTool
 from .arc_tool import ArcTool
+from .array_base import ArrayToolBase
 from .aspect_ratio_constraint_tool import AspectRatioConstraintTool
 from .base import SketcherKey, SketchTool
 from .chamfer_tool import ChamferTool
 from .circle_tool import CircleTool
+from .circular_array_tool import CircularArrayTool
 from .coincident_constraint_tool import CoincidentConstraintTool
 from .construction_tool import ConstructionTool
+from .curve_along_array_tool import CurveAlongArrayTool
 from .delete_tool import DeleteTool
 from .diameter_constraint_tool import DiameterConstraintTool
 from .distance_constraint_tool import DistanceConstraintTool
@@ -14,8 +19,11 @@ from .fill_tool import FillTool
 from .fillet_tool import FilletTool
 from .grid_tool import GridTool
 from .horizontal_constraint_tool import HorizontalConstraintTool
+from .mirror_tool import MirrorHorizontalTool, MirrorVerticalTool
+from .offset_tool import OffsetTool
 from .path_tool import PathTool
 from .perpendicular_constraint_tool import PerpendicularConstraintTool
+from .polygon_tool import PolygonTool
 from .radius_constraint_tool import RadiusConstraintTool
 from .rectangle_tool import RectangleTool
 from .rounded_rect_tool import RoundedRectTool
@@ -36,8 +44,10 @@ TOOL_REGISTRY = {
     "aspect_ratio": AspectRatioConstraintTool,
     "chamfer": ChamferTool,
     "circle": CircleTool,
+    "circular_array": CircularArrayTool,
     "coincident": CoincidentConstraintTool,
     "construction": ConstructionTool,
+    "curve_along_array": CurveAlongArrayTool,
     "delete": DeleteTool,
     "diameter": DiameterConstraintTool,
     "distance": DistanceConstraintTool,
@@ -46,8 +56,12 @@ TOOL_REGISTRY = {
     "fillet": FilletTool,
     "grid": GridTool,
     "horizontal": HorizontalConstraintTool,
+    "mirror_vertical": MirrorVerticalTool,
+    "mirror_horizontal": MirrorHorizontalTool,
+    "offset": OffsetTool,
     "path": PathTool,
     "perpendicular": PerpendicularConstraintTool,
+    "polygon": PolygonTool,
     "radius": RadiusConstraintTool,
     "rectangle": RectangleTool,
     "rounded_rect": RoundedRectTool,
@@ -60,6 +74,16 @@ TOOL_REGISTRY = {
     "waypoint_sharp": WaypointSharpTool,
     "waypoint_smooth": WaypointSmoothTool,
     "waypoint_symmetric": WaypointSymmetricTool,
+}
+
+# Display metadata for SketchTool.PIE_GROUP keys: group key ->
+# (icon name, label) of the collapsed pie menu entry.
+PIE_GROUPS: dict[str, tuple[str, str]] = {
+    "array": ("sketch-array-symbolic", _("Array")),
+    "constrain": ("sketch-constrain-point-symbolic", _("Constrain")),
+    "dimension": ("sketch-distance-symbolic", _("Dimension")),
+    "rectangle": ("sketch-rect-symbolic", _("Rectangle")),
+    "waypoint": ("sketch-bezier-symbolic", _("Waypoint")),
 }
 
 
@@ -87,14 +111,18 @@ ACTION_TOOL_MAP = build_action_tool_map()
 __all__ = [
     "ACTION_TOOL_MAP",
     "KEY_TO_TOOL",
+    "PIE_GROUPS",
     "TOOL_REGISTRY",
     "AngleConstraintTool",
     "ArcTool",
+    "ArrayToolBase",
     "AspectRatioConstraintTool",
     "ChamferTool",
     "CircleTool",
+    "CircularArrayTool",
     "CoincidentConstraintTool",
     "ConstructionTool",
+    "CurveAlongArrayTool",
     "DeleteTool",
     "DiameterConstraintTool",
     "DistanceConstraintTool",
@@ -103,8 +131,11 @@ __all__ = [
     "FilletTool",
     "GridTool",
     "HorizontalConstraintTool",
+    "MirrorHorizontalTool",
+    "MirrorVerticalTool",
     "PathTool",
     "PerpendicularConstraintTool",
+    "PolygonTool",
     "RadiusConstraintTool",
     "RectangleTool",
     "RoundedRectTool",

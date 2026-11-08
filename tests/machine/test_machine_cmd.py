@@ -1,17 +1,63 @@
 import asyncio
 from functools import partial
-from unittest.mock import MagicMock, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
+import pluggy
 import pytest
 import pytest_asyncio
 from raygeo.ops import Ops
 from raygeo.ops.axis import Axis
+from raygeo.ops.state import PowerMode
+from raygeo.ops.types import CommandType
 
 from rayforge.core.config import ConfigManager
-from rayforge.machine.cmd import MachineCmd
+from rayforge.machine.cmd import (
+    JobAlreadyRunningError,
+    MachineCmd,
+    _build_frame_trace,
+    _frame_rect_corners,
+    _frame_trace_corners,
+    _job_frame_rect,
+)
+from rayforge.machine.driver.driver import (
+    FRAME_LAYER_UID,
+    FRAME_WORKPIECE_UID,
+    FrameCorner,
+    build_frame_ops,
+)
+from rayforge.machine.job_status import JobKind, JobOutcome
 from rayforge.machine.models.machine import Machine
 from rayforge.pipeline.artifact import JobArtifact
 from rayforge.shared.tasker.manager import TaskManager
+
+hookimpl = pluggy.HookimplMarker("rayforge")
+
+
+class HookRecorder:
+    """A rayforge plugin that records every job monitoring hook call."""
+
+    def __init__(self):
+        self.events: list[tuple] = []
+
+    @hookimpl
+    def on_job_started(self, status):
+        self.events.append(("on_job_started", status))
+
+    @hookimpl
+    def on_job_updated(self, status):
+        self.events.append(("on_job_updated", status))
+
+    @hookimpl
+    def on_job_paused(self, status):
+        self.events.append(("on_job_paused", status))
+
+    @hookimpl
+    def on_job_resumed(self, status):
+        self.events.append(("on_job_resumed", status))
+
+    @hookimpl
+    def on_job_finished(self, status, outcome, message=""):
+        self.events.append(("on_job_finished", status, outcome, message))
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -102,7 +148,13 @@ class TestMachineCmdJobMonitoring:
 
     @pytest.mark.asyncio
     async def test_send_job_granular_progress(
-        self, machine_cmd, machine, simple_ops, job_artifact, mocker
+        self,
+        machine_cmd,
+        doc_editor,
+        machine,
+        simple_ops,
+        job_artifact,
+        mocker,
     ):
         """
         Tests the full monitoring flow for a driver that reports
@@ -136,6 +188,11 @@ class TestMachineCmdJobMonitoring:
         # to run before we proceed with assertions.
         await asyncio.sleep(0)
 
+        # The job's machine hours update re-emits machine.changed via
+        # the scheduler, which arms a debounced rebuild. Settle the
+        # editor so no rebuild task lingers into teardown.
+        await doc_editor.wait_until_settled()
+
         # --- Assert ---
         # 1. Verify job lifecycle signals
         job_started_spy.assert_called_once()
@@ -144,14 +201,48 @@ class TestMachineCmdJobMonitoring:
 
         # 2. Verify granular progress updates
         # The JobMonitor sends updates for all commands, including those with
-        # zero distance (like MoveToCommand).
+        # zero distance (like MoveToCommand), plus a final 100% update when
+        # the job completes.
         # We must calculate the expected number of calls by counting all cmds.
-        expected_call_count = len(simple_ops)
+        expected_call_count = len(simple_ops) + 1
         assert progress_updated_spy.call_count == expected_call_count
 
     @pytest.mark.asyncio
+    async def test_current_monitor_lifecycle(
+        self,
+        machine_cmd,
+        doc_editor,
+        machine,
+        job_artifact,
+    ):
+        """
+        The monitor exists while the job runs and is cleaned up after.
+        """
+        assert machine_cmd.current_monitor is None
+
+        def on_job_started(sender):
+            assert machine_cmd.current_monitor is not None
+
+        machine_cmd.job_started.connect(on_job_started)
+
+        await machine_cmd._run_send_action(
+            job_artifact, machine, on_progress=lambda metrics: None
+        )
+
+        await asyncio.sleep(0)
+        await doc_editor.wait_until_settled()
+
+        assert machine_cmd.current_monitor is None
+
+    @pytest.mark.asyncio
     async def test_send_job_non_granular_progress(
-        self, machine_cmd, machine, simple_ops, job_artifact, mocker
+        self,
+        machine_cmd,
+        doc_editor,
+        machine,
+        simple_ops,
+        job_artifact,
+        mocker,
     ):
         """
         Tests the monitoring flow for a driver that does not report
@@ -192,6 +283,11 @@ class TestMachineCmdJobMonitoring:
         # handler to run. This eliminates the race condition.
         await asyncio.wait_for(job_finished_event.wait(), timeout=1)
 
+        # The job's machine hours update re-emits machine.changed via
+        # the scheduler, which arms a debounced rebuild. Settle the
+        # editor so no rebuild task lingers into teardown.
+        await doc_editor.wait_until_settled()
+
         # --- Assert ---
         # 1. Verify driver was called correctly
         run_mock.assert_called_once()
@@ -202,6 +298,365 @@ class TestMachineCmdJobMonitoring:
 
         # 3. Verify cleanup happened
         assert machine_cmd._current_monitor is None
+
+    @pytest.mark.asyncio
+    async def test_second_job_rejected_with_actionable_error(
+        self, machine_cmd, machine, job_artifact
+    ):
+        """
+        Starting a second job while one runs must raise a dedicated
+        error whose message tells the user what to do (Stop), and must
+        not clobber the running job's monitor.
+        """
+        running_monitor = MagicMock()
+        machine_cmd._current_monitor = running_monitor
+
+        with pytest.raises(JobAlreadyRunningError) as excinfo:
+            await machine_cmd._run_send_action(
+                job_artifact, machine, on_progress=lambda metrics: None
+            )
+
+        assert "Stop" in str(excinfo.value)
+        assert machine_cmd._current_monitor is running_monitor
+
+    @pytest.mark.asyncio
+    async def test_send_job_notifies_user_of_running_job(
+        self, machine_cmd, machine, mocker
+    ):
+        """
+        The rejection must surface as a user notification carrying the
+        actionable message. Unlike real failures, the refusal is fully
+        handled: it is not re-raised and is not prefixed with
+        'Sending failed'.
+        """
+        notification_spy = MagicMock()
+        machine_cmd._editor.notification_requested.connect(notification_spy)
+        mocker.patch.object(
+            machine_cmd,
+            "_start_job",
+            new_callable=mocker.AsyncMock,
+            side_effect=JobAlreadyRunningError("A job is already running."),
+        )
+
+        await machine_cmd.send_job(machine)
+
+        notification_spy.assert_called_once()
+        message = notification_spy.call_args.kwargs["message"]
+        assert "already running" in message
+        assert "Sending failed" not in message
+
+
+class TestMachineCmdJobEventHooks:
+    """End-to-end emission of the addon job monitoring hooks."""
+
+    @pytest.fixture
+    def recorder(self, lite_context):
+        """Registers a hook recorder plugin with the app context."""
+        recorder = HookRecorder()
+        lite_context.plugin_mgr.register(recorder)
+        return recorder
+
+    @pytest.mark.asyncio
+    async def test_send_job_reports_lifecycle(
+        self,
+        machine_cmd,
+        doc_editor,
+        machine,
+        job_artifact,
+        recorder,
+    ):
+        await machine_cmd._run_send_action(
+            job_artifact, machine, on_progress=None
+        )
+        await asyncio.sleep(0)
+        await doc_editor.wait_until_settled()
+
+        names = [event[0] for event in recorder.events]
+        assert names[0] == "on_job_started"
+        assert names[-1] == "on_job_finished"
+
+        started_status = recorder.events[0][1]
+        assert started_status.kind == JobKind.SEND
+        assert started_status.machine_id == machine.id
+
+        _, final_status, outcome, message = recorder.events[-1]
+        assert outcome == JobOutcome.COMPLETED
+        assert message == ""
+        assert final_status.progress_fraction == 1.0
+        assert machine.current_job is None
+
+    @pytest.mark.asyncio
+    async def test_current_job_snapshot_is_live_during_job(
+        self,
+        machine_cmd,
+        doc_editor,
+        machine,
+        job_artifact,
+        recorder,
+    ):
+        snapshots = []
+
+        def on_job_started(sender):
+            snapshots.append(machine.current_job)
+
+        machine_cmd.job_started.connect(on_job_started)
+
+        await machine_cmd._run_send_action(
+            job_artifact, machine, on_progress=None
+        )
+        await asyncio.sleep(0)
+        await doc_editor.wait_until_settled()
+
+        assert len(snapshots) == 1
+        assert snapshots[0] is not None
+        assert snapshots[0].kind == JobKind.SEND
+        assert snapshots[0].machine_id == machine.id
+        assert machine.current_job is None
+
+    @pytest.mark.asyncio
+    async def test_cancelled_job_reports_cancelled(
+        self,
+        machine_cmd,
+        doc_editor,
+        machine,
+        job_artifact,
+        recorder,
+        mocker,
+    ):
+        mocker.patch.object(
+            machine.driver, "run", side_effect=asyncio.CancelledError
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            await machine_cmd._run_send_action(
+                job_artifact, machine, on_progress=None
+            )
+        await asyncio.sleep(0)
+        await doc_editor.wait_until_settled()
+
+        names = [event[0] for event in recorder.events]
+        assert names[0] == "on_job_started"
+        _, final_status, outcome, _message = recorder.events[-1]
+        assert outcome == JobOutcome.CANCELLED
+        assert final_status.progress_fraction < 1.0
+        assert machine.current_job is None
+
+    @pytest.mark.asyncio
+    async def test_failed_job_reports_error_message(
+        self,
+        machine_cmd,
+        doc_editor,
+        machine,
+        job_artifact,
+        recorder,
+        mocker,
+    ):
+        mocker.patch.object(
+            machine.driver, "run", side_effect=ValueError("boom")
+        )
+
+        with pytest.raises(ValueError):
+            await machine_cmd._run_send_action(
+                job_artifact, machine, on_progress=None
+            )
+        await asyncio.sleep(0)
+        await doc_editor.wait_until_settled()
+
+        _, _final_status, outcome, message = recorder.events[-1]
+        assert outcome == JobOutcome.FAILED
+        assert message == "boom"
+        assert machine.current_job is None
+
+    @pytest.mark.asyncio
+    async def test_frame_job_reports_frame_kind(
+        self,
+        machine_cmd,
+        doc_editor,
+        machine,
+        job_artifact,
+        recorder,
+        mocker,
+    ):
+        mocker.patch.object(machine.driver, "frame", new_callable=AsyncMock)
+
+        await machine_cmd._run_frame_action(
+            job_artifact, machine, on_progress=None
+        )
+        await asyncio.sleep(0)
+        await doc_editor.wait_until_settled()
+
+        started_status = recorder.events[0][1]
+        assert started_status.kind == JobKind.FRAME
+        outcome = recorder.events[-1][2]
+        assert outcome == JobOutcome.COMPLETED
+        assert machine.current_job is None
+
+
+class TestMachineCmdPointerDryRun:
+    """Tests for pointer dry-run generation in _start_job."""
+
+    @pytest.fixture
+    def pipeline_mocks(self, machine_cmd, mocker):
+        pipeline = machine_cmd._editor.pipeline
+        invalidate_spy = MagicMock()
+        mocker.patch.object(
+            pipeline, "invalidate_job_output", side_effect=invalidate_spy
+        )
+        return pipeline, invalidate_spy
+
+    @pytest.mark.asyncio
+    async def test_dry_run_shifts_only_during_generation(
+        self,
+        machine_cmd,
+        machine,
+        job_artifact,
+        pipeline_mocks,
+        mocker,
+    ):
+        """The shift flag is set for job generation and cleared right
+        after; the shifted output is invalidated before and after so a
+        regular send regenerates unshifted G-code."""
+        self._enable_pointer_offset(machine)
+        pipeline, invalidate_spy = pipeline_mocks
+        handle = pipeline.artifact_store.put(job_artifact, creator_tag="test")
+        flags_during_generation = []
+
+        async def fake_generate():
+            flags_during_generation.append(machine.pointer_job_shift_enabled)
+            return handle
+
+        mocker.patch.object(
+            pipeline,
+            "generate_job_artifact_async",
+            side_effect=fake_generate,
+        )
+        actions = []
+
+        async def final_job_action(
+            artifact, machine, on_progress, dry_run=False
+        ):
+            actions.append(artifact)
+
+        await machine_cmd._start_job(
+            machine,
+            final_job_action=final_job_action,
+            pointer_dry_run=True,
+        )
+
+        assert flags_during_generation == [True]
+        assert machine.pointer_job_shift_enabled is False
+        assert invalidate_spy.call_count == 2
+        assert actions == [job_artifact]
+
+    @pytest.mark.asyncio
+    async def test_dry_run_ignored_without_pointer_offset(
+        self, machine_cmd, machine, job_artifact, pipeline_mocks, mocker
+    ):
+        """Without an enabled pointer offset, a dry-run send behaves
+        like a regular send."""
+        pipeline, invalidate_spy = pipeline_mocks
+        handle = pipeline.artifact_store.put(job_artifact, creator_tag="test")
+
+        async def fake_generate():
+            return handle
+
+        mocker.patch.object(
+            pipeline,
+            "generate_job_artifact_async",
+            side_effect=fake_generate,
+        )
+        actions = []
+
+        async def final_job_action(
+            artifact, machine, on_progress, dry_run=False
+        ):
+            actions.append(artifact)
+
+        await machine_cmd._start_job(
+            machine,
+            final_job_action=final_job_action,
+            pointer_dry_run=True,
+        )
+
+        assert machine.pointer_job_shift_enabled is False
+        assert invalidate_spy.call_count == 0
+        assert actions == [job_artifact]
+
+    @pytest.mark.asyncio
+    async def test_regular_send_never_shifts(
+        self, machine_cmd, machine, job_artifact, pipeline_mocks, mocker
+    ):
+        self._enable_pointer_offset(machine)
+        pipeline, invalidate_spy = pipeline_mocks
+        handle = pipeline.artifact_store.put(job_artifact, creator_tag="test")
+
+        async def fake_generate():
+            return handle
+
+        mocker.patch.object(
+            pipeline,
+            "generate_job_artifact_async",
+            side_effect=fake_generate,
+        )
+
+        async def final_job_action(
+            artifact, machine, on_progress, dry_run=False
+        ):
+            pass
+
+        await machine_cmd._start_job(
+            machine, final_job_action=final_job_action
+        )
+
+        assert machine.pointer_job_shift_enabled is False
+        assert invalidate_spy.call_count == 0
+
+    @staticmethod
+    def _enable_pointer_offset(machine):
+        head = machine.get_default_laser_head()
+        assert head is not None
+        head.set_pointer_offset(10.0, 20.0)
+        head.set_pointer_offset_enabled(True)
+        return machine
+
+
+class TestMachineCmdJobPowerCap:
+    """The pointer dry-run caps encoded power at the framing power."""
+
+    def test_power_cap_none_without_dry_run(self, machine):
+        assert machine.get_job_power_cap() is None
+
+    def test_power_cap_is_framing_power_during_dry_run(self, machine):
+        head = machine.get_default_laser_head()
+        assert head is not None
+        head.set_frame_power(0.1)
+
+        machine.pointer_job_shift_enabled = True
+        try:
+            assert machine.get_job_power_cap() == pytest.approx(0.1)
+        finally:
+            machine.pointer_job_shift_enabled = False
+
+        assert machine.get_job_power_cap() is None
+
+    def test_power_cap_zero_disables_beam(self, machine):
+        head = machine.get_default_laser_head()
+        assert head is not None
+        head.set_frame_power(0.0)
+
+        machine.pointer_job_shift_enabled = True
+        try:
+            assert machine.get_job_power_cap() == 0.0
+        finally:
+            machine.pointer_job_shift_enabled = False
+
+    def test_power_cap_none_without_head(self, machine):
+        machine.heads.clear()
+        machine.pointer_job_shift_enabled = True
+        try:
+            assert machine.get_job_power_cap() is None
+        finally:
+            machine.pointer_job_shift_enabled = False
 
 
 class TestMachineCmdJog:
@@ -256,6 +711,45 @@ class TestMachineCmdJog:
         jog_mock.assert_called_once_with(deltas, 1500)
 
 
+class TestMachineCmdMoveTo:
+    """Test suite for the absolute move_to command in MachineCmd."""
+
+    @pytest.mark.asyncio
+    async def test_move_to_xy(self, machine_cmd, machine, mocker, task_mgr):
+        move_mock = mocker.patch.object(
+            machine.driver, "move_to", new_callable=mocker.AsyncMock
+        )
+
+        machine_cmd.move_to(machine, 10.0, 20.0)
+
+        await wait_for_tasks_to_finish(task_mgr)
+        move_mock.assert_called_once_with(10.0, 20.0, None, None)
+
+    @pytest.mark.asyncio
+    async def test_move_to_xyz(self, machine_cmd, machine, mocker, task_mgr):
+        move_mock = mocker.patch.object(
+            machine.driver, "move_to", new_callable=mocker.AsyncMock
+        )
+
+        machine_cmd.move_to(machine, 10.0, 20.0, 5.0)
+
+        await wait_for_tasks_to_finish(task_mgr)
+        move_mock.assert_called_once_with(10.0, 20.0, 5.0, None)
+
+    @pytest.mark.asyncio
+    async def test_move_to_with_speed(
+        self, machine_cmd, machine, mocker, task_mgr
+    ):
+        move_mock = mocker.patch.object(
+            machine.driver, "move_to", new_callable=mocker.AsyncMock
+        )
+
+        machine_cmd.move_to(machine, 10.0, 20.0, speed=6000)
+
+        await wait_for_tasks_to_finish(task_mgr)
+        move_mock.assert_called_once_with(10.0, 20.0, None, 6000)
+
+
 class TestMachineCmdLaserPower:
     """Test suite for manual laser power commands."""
 
@@ -288,3 +782,305 @@ class TestMachineCmdLaserPower:
         await wait_for_tasks_to_finish(task_mgr)
 
         set_power_mock.assert_called_once_with(head, 0.5)
+
+    @pytest.mark.asyncio
+    async def test_set_focus_power_reports_success(
+        self, machine_cmd, machine, mocker, task_mgr
+    ):
+        head = machine.get_default_head()
+        mocker.patch.object(
+            machine, "set_focus_power", new_callable=mocker.AsyncMock
+        )
+        done = []
+
+        machine_cmd.set_focus_power(head, 0.25, machine, when_done=done.append)
+
+        await wait_for_tasks_to_finish(task_mgr)
+        await asyncio.sleep(0.05)
+
+        assert len(done) == 1
+        assert done[0].get_status() == "completed"
+
+    @pytest.mark.asyncio
+    async def test_set_focus_power_reports_failure(
+        self, machine_cmd, machine, mocker, task_mgr
+    ):
+        head = machine.get_default_head()
+        mocker.patch.object(
+            machine,
+            "set_focus_power",
+            side_effect=RuntimeError("no session"),
+        )
+        done = []
+
+        machine_cmd.set_focus_power(head, 0.25, machine, when_done=done.append)
+
+        await wait_for_tasks_to_finish(task_mgr)
+        await asyncio.sleep(0.05)
+
+        assert len(done) == 1
+        assert done[0].get_status() == "failed"
+
+
+def _frame_corners() -> list[FrameCorner]:
+    """A closed flat frame outline in trace order."""
+    return [
+        (10.0, 20.0, None),
+        (10.0, 40.0, None),
+        (30.0, 40.0, None),
+        (30.0, 20.0, None),
+        (10.0, 20.0, None),
+    ]
+
+
+class TestBuildFrameOps:
+    """The default frame opstream is a well-formed job for encoders."""
+
+    def test_structured_markers_wrap_the_trace(self):
+        ops = build_frame_ops(_frame_corners(), 6000, "head0")
+
+        assert ops.command_type(0) == CommandType.JOB_START
+        assert ops.command_type(1) == CommandType.LAYER_START
+        assert ops.command_type(2) == CommandType.WORKPIECE_START
+        assert ops.layer_uid(1) == FRAME_LAYER_UID
+        assert ops.workpiece_uid(2) == FRAME_WORKPIECE_UID
+        count = ops.len()
+        assert ops.command_type(count - 3) == CommandType.WORKPIECE_END
+        assert ops.command_type(count - 2) == CommandType.LAYER_END
+        assert ops.command_type(count - 1) == CommandType.JOB_END
+
+    def test_state_ops_come_from_arguments(self):
+        ops = build_frame_ops(
+            _frame_corners(), 1234, "head0", power_fraction=0.5
+        )
+
+        assert ops.command_type(3) == CommandType.SET_HEAD
+        assert ops.head_uid(3) == "head0"
+        assert ops.command_type(4) == CommandType.SET_POWER
+        assert ops.power(4) == pytest.approx(0.5)
+        assert ops.command_type(5) == CommandType.SET_POWER_MODE
+        assert ops.power_mode(5) == PowerMode.CONSTANT
+        assert ops.command_type(6) == CommandType.SET_FEED_RATE
+        assert ops.rate(6) == 1234
+
+    def test_headless_frame_omits_set_head(self):
+        ops = build_frame_ops(_frame_corners(), 6000, None)
+
+        assert not any(
+            ops.command_type(i) == CommandType.SET_HEAD
+            for i in range(ops.len())
+        )
+
+    def test_trace_follows_corners(self):
+        ops = build_frame_ops(_frame_corners(), 6000, "head0")
+
+        moves = [ops.endpoint(i) for i in range(7, ops.len() - 3)]
+        assert moves == [
+            (10.0, 20.0, 0.0),
+            (10.0, 40.0, 0.0),
+            (10.0, 40.0, 0.0),
+            (30.0, 40.0, 0.0),
+            (30.0, 40.0, 0.0),
+            (30.0, 20.0, 0.0),
+            (30.0, 20.0, 0.0),
+            (10.0, 20.0, 0.0),
+        ]
+
+    def test_rotary_extra_axes_are_carried(self):
+        corners = [
+            (0.0, 0.0, {Axis.A: 0.0}),
+            (10.0, 0.0, {Axis.A: 90.0}),
+            (10.0, 5.0, {Axis.A: 180.0}),
+            (0.0, 5.0, {Axis.A: 270.0}),
+            (0.0, 0.0, {Axis.A: 0.0}),
+        ]
+
+        ops = build_frame_ops(corners, 6000, "head0")
+
+        moves = [
+            (ops.endpoint(i), ops.extra_axes(i))
+            for i in range(7, ops.len() - 3)
+        ]
+        assert moves[0] == ((0.0, 0.0, 0.0), {Axis.A: 0.0})
+        assert moves[1] == ((10.0, 0.0, 0.0), {Axis.A: 90.0})
+        assert moves[2] == ((10.0, 0.0, 0.0), {Axis.A: 90.0})
+        assert moves[3] == ((10.0, 5.0, 0.0), {Axis.A: 180.0})
+
+    def test_corner_pause_emits_dwell(self):
+        ops = build_frame_ops(
+            _frame_corners(), 6000, "head0", corner_pause_s=0.5
+        )
+
+        dwells = [
+            ops.dwell_duration(i)
+            for i in range(ops.len())
+            if ops.command_type(i) == CommandType.DWELL
+        ]
+        assert dwells == [500.0, 500.0, 500.0, 500.0]
+
+    def test_repeat_does_not_duplicate_markers(self):
+        ops = build_frame_ops(_frame_corners(), 6000, "head0", repeat_count=3)
+
+        def count(command_type):
+            return sum(
+                1
+                for i in range(ops.len())
+                if ops.command_type(i) == command_type
+            )
+
+        assert count(CommandType.JOB_START) == 1
+        assert count(CommandType.LAYER_START) == 1
+        assert count(CommandType.WORKPIECE_START) == 1
+        assert count(CommandType.WORKPIECE_END) == 1
+        assert count(CommandType.LAYER_END) == 1
+        assert count(CommandType.JOB_END) == 1
+        assert count(CommandType.MOVE_TO) == 12
+
+
+class TestFrameTrace:
+    """cmd builds a moves-only trace and reads the corners back."""
+
+    def test_rect_corners_form_closed_outline(self):
+        assert _frame_rect_corners((10.0, 20.0, 30.0, 40.0)) == [
+            (10.0, 20.0),
+            (10.0, 40.0),
+            (30.0, 40.0),
+            (30.0, 20.0),
+            (10.0, 20.0),
+        ]
+
+    def test_trace_is_moves_only(self):
+        trace = _build_frame_trace((0.0, 0.0, 10.0, 10.0), 1)
+
+        assert all(
+            trace.command_type(i) == CommandType.MOVE_TO
+            for i in range(trace.len())
+        )
+
+    def test_trace_repeats_the_outline(self):
+        trace = _build_frame_trace((0.0, 0.0, 10.0, 10.0), 3)
+
+        moves = sum(
+            1
+            for i in range(trace.len())
+            if trace.command_type(i) == CommandType.MOVE_TO
+        )
+        assert moves == 15
+
+    def test_trace_corners_read_back_in_order(self):
+        trace = _build_frame_trace((0.0, 0.0, 10.0, 10.0), 2)
+
+        corners = _frame_trace_corners(trace, corner_count=5)
+
+        assert corners == [
+            (0.0, 0.0, None),
+            (0.0, 10.0, None),
+            (10.0, 10.0, None),
+            (10.0, 0.0, None),
+            (0.0, 0.0, None),
+        ]
+
+
+class TestFrameOverscan:
+    """The frame traces the burned area, not the overscan margin."""
+
+    @pytest.fixture
+    def overscan_artifact(self, machine):
+        """A job artifact whose ops carry overscan-style lead-out.
+
+        The powered content spans x 10..30; a zero-power move extends
+        the path to x 35, the way the overscan transformer does.
+        """
+        ops = Ops()
+        ops.move_to(10, 10, 0)
+        ops.set_power(0.8)
+        ops.line_to(30, 10, 0)
+        ops.set_power(0.0)
+        ops.move_to(30, 10, 0)
+        ops.line_to(35, 10, 0)
+        encoded = machine.driver.get_encoder().encode(ops, machine, None)
+        return JobArtifact(
+            ops=ops,
+            distance=ops.distance(),
+            generation_id=1,
+            encoded_output=encoded,
+        )
+
+    async def _run_and_capture_corners(
+        self, machine_cmd, machine, artifact, mocker, include_overscan
+    ):
+        frame_mock = mocker.patch.object(
+            machine.driver, "frame", new_callable=AsyncMock
+        )
+        await machine_cmd._run_frame_action(
+            artifact,
+            machine,
+            on_progress=None,
+            include_overscan=include_overscan,
+        )
+        await asyncio.sleep(0)
+        assert frame_mock.await_count == 1
+        return frame_mock.await_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_frame_excludes_overscan_by_default(
+        self, machine_cmd, doc_editor, machine, overscan_artifact, mocker
+    ):
+        corners = await self._run_and_capture_corners(
+            machine_cmd,
+            machine,
+            overscan_artifact,
+            mocker,
+            include_overscan=False,
+        )
+
+        xs = [corner[0] for corner in corners]
+        assert min(xs) == pytest.approx(10.0)
+        assert max(xs) == pytest.approx(30.0)
+
+    @pytest.mark.asyncio
+    async def test_frame_includes_overscan_when_requested(
+        self, machine_cmd, doc_editor, machine, overscan_artifact, mocker
+    ):
+        corners = await self._run_and_capture_corners(
+            machine_cmd,
+            machine,
+            overscan_artifact,
+            mocker,
+            include_overscan=True,
+        )
+
+        xs = [corner[0] for corner in corners]
+        assert min(xs) == pytest.approx(10.0)
+        assert max(xs) == pytest.approx(35.0)
+
+    def test_job_frame_rect_includes_full_rect_when_requested(self):
+        ops = MagicMock(spec=["rect"])
+        ops.rect.return_value = (0.0, 0.0, 50.0, 40.0)
+
+        assert _job_frame_rect(ops, include_overscan=True) == (
+            0.0,
+            0.0,
+            50.0,
+            40.0,
+        )
+        ops.rect.assert_called_with()
+
+
+class TestDriverFrameDefault:
+    """Driver.frame() falls back to an encoded job run."""
+
+    @pytest.mark.asyncio
+    async def test_frame_encodes_and_runs_the_opstream(
+        self, machine, doc_editor, mocker
+    ):
+        run_spy = mocker.spy(machine.driver, "run")
+
+        await machine.driver.frame(
+            _frame_corners(), 6000, doc_editor.doc, power_fraction=0.5
+        )
+
+        run_spy.assert_called_once()
+        encoded = run_spy.call_args.args[0]
+        assert "F6000" in encoded.text
+        assert "M3" in encoded.text

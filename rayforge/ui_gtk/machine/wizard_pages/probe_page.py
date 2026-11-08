@@ -1,8 +1,9 @@
 """Step 4 — Connect + auto-detect.
 
 Only shown when the chosen driver's ``supports_probing`` is True
-(GRBL and Marlin today). Reuses the driver's classmethod ``probe()``
-plumbing originally developed for the legacy ``ConfigWizard``.
+(GRBL, Marlin, Smoothie, and OctoPrint today). Reuses the driver's
+classmethod ``probe()`` plumbing originally developed for the legacy
+``ConfigWizard``.
 
 The page offers:
 
@@ -35,8 +36,8 @@ if TYPE_CHECKING:
 
 
 class ProbePage(WizardPage):
-    step_number = 4
-    title = _("Discover Device")
+    step_number = 5
+    title = _("Probe Device")
     subtitle = _(
         "Connect to the device and read its configuration, "
         "or skip to enter the values manually."

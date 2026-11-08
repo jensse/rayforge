@@ -15,15 +15,7 @@ from rayforge.ui_gtk.canvas2d.elements.camera_image import CameraImageElement
 from rayforge.ui_gtk.shared.expression_entry import ExpressionEntry
 
 from ..core.commands import ModifyConstraintCommand
-from ..core.constraints import (
-    AngleConstraint,
-    Constraint,
-    DiameterConstraint,
-    DistanceConstraint,
-    HorizontalConstraint,
-    RadiusConstraint,
-    VerticalConstraint,
-)
+from ..core.constraints import Constraint
 from ..core.sketch import Sketch
 from .editor import SketchEditor
 from .sketchelement import SketchElement
@@ -100,33 +92,13 @@ class SketchCanvas(WorldSurface):
             self.set_camera_controllers([])
             return
 
-        current_elements = self._camera_elements
-        current_controllers = set(current_elements.keys())
-
-        machine_controllers: list[CameraController] = []
+        controllers: list[CameraController] = []
         for camera_model in machine.cameras:
-            controller = camera_mgr.get_controller(camera_model.device_id)
+            controller = camera_mgr.get_controller(camera_model.id)
             if controller:
-                machine_controllers.append(controller)
+                controllers.append(controller)
 
-        new_controllers = set(machine_controllers)
-
-        for controller in current_controllers - new_controllers:
-            element = current_elements[controller]
-            element.remove()
-            controller.unsubscribe()
-            del self._camera_elements[controller]
-
-        for controller in new_controllers - current_controllers:
-            element = CameraImageElement(controller)
-            element.set_visible(
-                self._cam_visible and controller.config.enabled
-            )
-            self.root.insert(0, element)
-            controller.subscribe()
-            self._camera_elements[controller] = element
-
-        self.queue_draw()
+        self.set_camera_controllers(controllers)
 
     def set_camera_controllers(self, controllers: list[CameraController]):
         """Sets the camera controllers and creates/removes camera elements."""
@@ -166,6 +138,15 @@ class SketchCanvas(WorldSurface):
         data being edited, ensuring signal connections are updated.
         """
         self.sketch_editor.deactivate()
+
+        # History commands hold direct references to the Sketch object
+        # they were created against. When the model is swapped (e.g.
+        # after finishing an edit the document stores a freshly
+        # deserialized copy of the sketch), stale entries would undo
+        # into an orphaned object with no visible effect, so they must
+        # be discarded.
+        if self.sketch_element.sketch is not sketch:
+            self.sketch_editor.history_manager.clear()
 
         # Force a solve immediately. The sketch data has just been loaded from
         # disk, so the 'constrained' flags on points/entities are all False.
@@ -299,19 +280,7 @@ class SketchCanvas(WorldSurface):
             initial_text = f"{float(getattr(constraint, 'value', 0)):g}"
 
         # Determine the user-friendly label and description based on type
-        if isinstance(constraint, RadiusConstraint):
-            row_subtitle = _("Enter radius or expression (e.g. 'width/2').")
-        elif isinstance(constraint, DiameterConstraint):
-            row_subtitle = _("Enter diameter or expression.")
-        elif isinstance(constraint, AngleConstraint):
-            row_subtitle = _("Enter angle in degrees or expression.")
-        elif isinstance(
-            constraint,
-            (DistanceConstraint, HorizontalConstraint, VerticalConstraint),
-        ):
-            row_subtitle = _("Enter length or expression.")
-        else:
-            row_subtitle = _("Enter value or expression.")
+        row_subtitle = constraint.get_edit_subtitle()
 
         # Create ExpressionContext
         var_set = self.sketch_element.sketch.input_parameters
@@ -397,7 +366,7 @@ class SketchCanvas(WorldSurface):
                     new_value=new_value,
                     new_expression=new_expr,
                 )
-                self.sketch_editor.history_manager.execute(cmd)
+                self.sketch_editor.history_manager.coalesce(cmd)
 
             # Explicitly close the dialog
             dialog.close()
@@ -409,7 +378,7 @@ class SketchCanvas(WorldSurface):
         self._active_dialog.connect("response", on_response)
         self._active_dialog.present()
 
-    def on_right_click_pressed(
+    def on_right_click_released(
         self, gesture: Gtk.GestureClick, n_press: int, x: float, y: float
     ):
         """
@@ -452,6 +421,7 @@ class SketchCanvas(WorldSurface):
         world_x, world_y = self._get_world_coords(x, y)
 
         state = gesture.get_current_event_state()
+        self._sync_modifier_state(state)
         shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
         ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
 

@@ -1,6 +1,71 @@
-My quick and dirty changes to build and install on Debian 13. and use my Ortur CNC-Laser.  This is truly a great application, and it deserves a Debian package maintainer, It now builds, and installs. Unfortunately I dont have the time to maintain it right now.
+# Rayforge for Debian 13
 
+**This is an unofficial fork of [Rayforge](https://github.com/barebaric/rayforge)
+that builds and installs on Debian 13 "trixie".** The upstream packages target
+Ubuntu 24.04 and do not install on Debian 13. This fork changes only the
+packaging; the application is upstream's, unchanged.
 
+It is not made or supported by the Rayforge developers. Report problems with
+this Debian package [here](https://github.com/jensse/rayforge/issues), and everything else
+[upstream](https://github.com/barebaric/rayforge/issues).
+
+Tested on Debian 13 amd64 with an Ortur laser engraver.
+
+## Install
+
+1. Download the `.deb` from the latest [release](https://github.com/jensse/rayforge/releases).
+2. Install it with apt, which also installs its dependencies:
+
+   ```sh
+   sudo apt-get install ./rayforge_*_amd64.deb
+   ```
+
+   Rayforge pulls in a lot of dependencies: on a desktop install expect
+   about 90 packages and 700 MB, mostly VTK, LLVM and SciPy.
+
+3. If the Ubuntu PPA is in your apt sources, hold the package so that
+   `apt upgrade` does not replace it with the Ubuntu build:
+
+   ```sh
+   sudo apt-mark hold rayforge
+   ```
+
+Ignore the note `Download is performed unsandboxed as root` when the `.deb`
+is in your home directory. It is harmless.
+
+## Build it yourself
+
+With [mise](https://mise.jdx.dev/) on a Debian 13 machine:
+
+```sh
+mise run deb:deps     # install the build dependencies (uses sudo)
+mise run deb          # build the .deb into dist/
+mise run deb:install  # install it
+```
+
+The `mise.toml` comments explain the two traps this avoids: a non-system
+`python3` on `PATH`, and a `rustup` toolchain that the build cannot see.
+
+## How the packages are built
+
+[`.github/workflows/build-deb-debian13.yml`](.github/workflows/build-deb-debian13.yml)
+builds the package in a Debian 13 container, installs it and starts
+Rayforge as a smoke test, on every push. Each run keeps the `.deb` as a
+workflow artifact. Pushing a tag such as `1.13.2+deb13.1` (the upstream
+version, then a packaging revision) also publishes it as a release.
+
+## Help wanted
+
+Rayforge deserves a proper Debian package and a Debian maintainer. This
+fork only gets it working. If you want to take that on, you are welcome
+to build on it.
+
+Thanks to the Rayforge developers for an excellent tool. The packaging
+here was made with help from AI tools.
+
+---
+
+The upstream README follows.
 
 [![GitHub Release](https://img.shields.io/github/release/barebaric/rayforge.svg?style=flat)](https://github.com/barebaric/rayforge/releases/)
 [![PyPI version](https://img.shields.io/pypi/v/rayforge)](https://pypi.org/project/rayforge/)
@@ -8,7 +73,7 @@ My quick and dirty changes to build and install on Debian 13. and use my Ortur C
 [![Launchpad PPA](https://img.shields.io/badge/PPA-blue)](https://launchpad.net/~knipknap/+archive/ubuntu/rayforge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-[![Get it from the Snap Store](https://snapcraft.io/en/light/install.svg)](https://snapcraft.io/rayforge)
+<a href="https://snapcraft.io/rayforge"><img alt="Get it from the Snap Store" src="https://snapcraft.io/en/light/install.svg" height="55"/></a>
 <a href="https://flathub.org/apps/org.rayforge.rayforge"><img alt="Get it from Flathub" src="website/static/images/flathub-badge.svg" height="55"/></a>
 <a href="https://www.patreon.com/c/knipknap"><img src="https://c5.patreon.com/external/logo/become_a_patron_button.png" alt="Become a Patron" height="55"/></a>
 
@@ -19,7 +84,7 @@ Smoothieware-based laser cutters and engravers.
 Built with Gtk4 and Libadwaita, it provides a clean, native interface for Linux, MacOS and Windows, offering a full suite of tools
 for both hobbyists and professionals.
 
-![Screenshot](website/static/screenshots/main-3d-rotary.png)
+![Screenshot](website/static/screenshots/main-3d-rotary.webp)
 
 You can also check the [official Rayforge homepage](https://rayforge.org).
 We also have a [Discord](https://discord.gg/sTHNdTtpQJ).
@@ -35,7 +100,7 @@ We also have a [Discord](https://discord.gg/sTHNdTtpQJ).
 | **Multi-Layer Operations**   | Assign different operations (e.g., engrave then cut) to layers in your design.          |
 | **Stock Material System**    | Document-level stock with geometry, thickness, and material assignment.                 |
 | **Undo/Redo**                | Full undo/redo support across all document operations.                                  |
-| **Broad File Support**       | Import from SVG, DXF, PDF, JPEG, PNG, BMP, and Ruida (`.rd`). Export to SVG and DXF.    |
+| **Broad File Support**       | Import from SVG, DXF, PDF, Illustrator (`.ai`), EPS, HPGL (`.plt`), JPEG, PNG, BMP, GIF, TIFF, WebP, and Ruida (`.rd`). Export to SVG and DXF.    |
 | **Project Files (.ryp)**     | Compressed project format preserving all assets, layers, and configurations.            |
 
 ### Operations & Toolpaths
@@ -48,7 +113,7 @@ We also have a [Discord](https://discord.gg/sTHNdTtpQJ).
 | **Animated 3D Simulation**   | Simulate toolpaths in 3D with animated playback, scrubber, and speed control.                        |
 | **Holding Tabs**             | Add tabs to contour cuts. Supports manual and automatic placement.                                   |
 | **Overscan & Kerf Comp.**    | Improve engraving quality with overscan; ensure dimensional accuracy with kerf compensation.         |
-| **Dithering Algorithms**     | Floyd-Steinberg and Bayer ordered dithering for high-quality raster engraving.                       |
+| **Dithering Algorithms**     | Floyd-Steinberg, Stucki, Jarvis, Atkinson, Sierra, Burkes, Bayer, newsprint and halftone screens.    |
 | **Post-Processors**          | Lead-in/lead-out, merge overlapping lines, and crop toolpaths to stock boundary.                     |
 | **Advanced Path Generation** | Image tracing, travel time optimization, path smoothing, and spot size interpolation.                |
 
