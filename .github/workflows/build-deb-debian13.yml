@@ -1,0 +1,114 @@
+name: Build .deb for Debian 13
+
+# Builds Rayforge for Debian 13 "trixie" inside a Debian 13 container, so the
+# package matches trixie's Python 3.13 and libraries. Every run keeps the
+# .deb as a workflow artifact; a pushed tag also publishes it as a GitHub
+# release, which anyone can download without signing in.
+#
+# Release tags look like 1.13.2+deb13.1: the upstream version, then a
+# packaging revision. That sorts above the Ubuntu PPA's 1.13.2-1~ppa1, and
+# Rayforge's own version check reads it as 1.13.2.
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "*"
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-deb:
+    name: Build and smoke-test on Debian 13
+    runs-on: ubuntu-24.04
+    container: debian:trixie
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install git and packaging tools
+        # Needed before checkout so that it makes a real git clone, which
+        # build-deb.sh uses to derive the version.
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates devscripts equivs gettext git rsync
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Install build dependencies from debian/control
+        run: |
+          mk-build-deps --install --remove \
+            --tool 'apt-get -y --no-install-recommends' debian/control
+
+      - name: Fetch upstream release tags
+        # Untagged commits get their version from the nearest tag. Without
+        # the upstream tags `git describe` yields a bare commit hash, which
+        # is not a valid Debian version.
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git fetch --quiet https://github.com/barebaric/rayforge \
+            '+refs/tags/*:refs/tags/*'
+          git describe --tags --long
+
+      - name: Compile translations
+        run: bash scripts/update_translations.sh --compile-only
+
+      - name: Build package
+        # On a tag, build-deb.sh uses the tag name as the version.
+        run: bash scripts/build-deb.sh
+
+      - name: Install package
+        run: |
+          DEB=$(find dist -maxdepth 1 -name 'rayforge_*.deb' -type f)
+          if [ -z "$DEB" ] || [ "$(echo "$DEB" | wc -l)" != 1 ]; then
+            echo "::error::Expected one .deb in dist/, found: $DEB"
+            exit 1
+          fi
+          apt-get install -y "./$DEB"
+
+      - name: Smoke test
+        run: |
+          dpkg -l rayforge
+          rayforge --version
+          apt-get install -y --no-install-recommends xvfb xauth
+          xvfb-run rayforge --exit
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: rayforge-debian13-amd64
+          path: dist/rayforge_*.deb
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    needs: build-deb
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: rayforge-debian13-amd64
+          path: dist
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Rayforge ${{ github.ref_name }} for Debian 13
+          files: dist/rayforge_*.deb
+          fail_on_unmatched_files: true
+          body: |
+            Unofficial Rayforge package for Debian 13 "trixie", amd64.
+            Install it with:
+
+                sudo apt-get install ./rayforge_*_amd64.deb
