@@ -16,19 +16,23 @@ compare_pot_files() {
   diff -I '^"POT-Creation-Date:' "$old_pot" "$new_pot" >/dev/null 2>&1
 }
 
-# Check gettext version
-GETTEXT_VERSION=$(gettext --version | head -n1 | awk '{print $NF}')
-REQUIRED_VERSION="0.25"
-
-if [ "$(printf '%s\n' "$REQUIRED_VERSION" "$GETTEXT_VERSION" | sort -V | head -n1)" != "$REQUIRED_VERSION" ]; then
-  echo "Error: gettext version $GETTEXT_VERSION is too old. Version $REQUIRED_VERSION or higher is required."
-  exit 1
-fi
-
 # Parse arguments
 COMPILE_ONLY=false
 if [[ "$1" == "--compile-only" ]]; then
   COMPILE_ONLY=true
+fi
+
+# msgfmt alone is enough for --compile-only, and Debian 13 ships gettext 0.23.
+# Only string extraction needs the newer version.
+if [ "$COMPILE_ONLY" = false ]; then
+  # Check gettext version
+  GETTEXT_VERSION=$(gettext --version | head -n1 | awk '{print $NF}')
+  REQUIRED_VERSION="0.25"
+
+  if [ "$(printf '%s\n' "$REQUIRED_VERSION" "$GETTEXT_VERSION" | sort -V | head -n1)" != "$REQUIRED_VERSION" ]; then
+    echo "Error: gettext version $GETTEXT_VERSION is too old. Version $REQUIRED_VERSION or higher is required."
+    exit 1
+  fi
 fi
 
 # Get list of supported languages from main app
